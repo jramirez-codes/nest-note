@@ -1,12 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { GestureResponderEvent } from 'react-native';
-import { Keyboard, ScrollView, StyleSheet } from 'react-native';
-import {
-  MarkdownTextInput,
-  parseExpensiMark,
-} from '@expensify/react-native-live-markdown';
+import { Keyboard, ScrollView, StyleSheet, View } from 'react-native';
+import { MarkdownTextInput } from '@expensify/react-native-live-markdown';
 import { useTheme } from '../theme/colors';
 import { createMarkdownStyle } from '../theme/markdownStyle';
+import { parseMarkdown } from '../theme/markdownParser';
 
 /** How long a finger must rest on the editor before the press "counts" as
  *  intent to edit and brings up the keyboard. Matched to the OS long-press
@@ -34,11 +32,25 @@ interface NoteEditorProps {
  * Holds its own local text state (seeded once from `initialContent`) and
  * reports changes upward for persistence. Because one instance is mounted per
  * note id, local state stays correctly scoped to its page.
+ *
+ * Editing is gated behind an explicit `editing` mode rather than the native
+ * focus-on-touch. While browsing, the input is wrapped in a `pointerEvents:
+ * "none"` view: a multiline TextInput's native scroller otherwise swallows the
+ * vertical drag before the surrounding ScrollView can (the well-known Android
+ * nested-scroll bug — and `editable={false}` doesn't stop it), so making the
+ * whole input subtree untouchable lets the drag fall straight through to the
+ * ScrollView. It also means the OS can't focus the field on a tap, so the
+ * keyboard never flickers up-then-down. A deliberate long-press — detected on
+ * the ScrollView, which now receives every touch — flips the wrapper back to
+ * `pointerEvents: "auto"`, makes the field editable, and focuses it.
  */
 function NoteEditor({ initialContent, isActive, onChangeContent }: NoteEditorProps) {
   const colors = useTheme();
   const [text, setText] = useState(initialContent);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
+  // Edit mode: the input is only `editable` (and thus focusable/scroll-eating)
+  // while this is true. Entered by a long-press, left when the keyboard goes.
+  const [editing, setEditing] = useState(false);
   const markdownStyle = createMarkdownStyle(colors);
   const inputRef = useRef<React.ComponentRef<typeof MarkdownTextInput>>(null);
 
@@ -49,8 +61,9 @@ function NoteEditor({ initialContent, isActive, onChangeContent }: NoteEditorPro
   const hasSelection = useRef(false);
   const longPressLanded = useRef(false);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Latest keyboard visibility, readable synchronously inside touch handlers.
-  const keyboardUp = useRef(false);
+  // Latest edit-mode flag, readable synchronously inside touch handlers (which
+  // fire between renders, before the `editing` state has propagated).
+  const editingRef = useRef(false);
 
   const clearLongPressTimer = useCallback(() => {
     if (longPressTimer.current) {
@@ -59,134 +72,125 @@ function NoteEditor({ initialContent, isActive, onChangeContent }: NoteEditorPro
     }
   }, []);
 
-  // Drop focus unless the user is mid-selection — selecting text must keep the
-  // keyboard up (that's the whole point of selecting).
-  const blurUnlessSelecting = useCallback(() => {
-    if (!hasSelection.current) inputRef.current?.blur();
+  // Enter edit mode: make the field editable. Actually focusing it (and so
+  // raising the keyboard) is deferred to the effect below, because the input
+  // has to render as `editable` before a `focus()` will take.
+  const beginEditing = useCallback(() => {
+    editingRef.current = true;
+    setEditing(true);
+  }, []);
+
+  // Leave edit mode: drop focus and make the field inert again so the note
+  // scrolls freely. Kept as a no-op if a selection is live (see the keyboard
+  // listener) so the selection toolbar's brief keyboard hide can't end editing.
+  const endEditing = useCallback(() => {
+    editingRef.current = false;
+    setEditing(false);
+    inputRef.current?.blur();
   }, []);
 
   const handleTouchStart = useCallback(
     (e: GestureResponderEvent) => {
-      // Once the keyboard is up the user is editing; let the native input handle
-      // taps (moving the caret, selecting) untouched — no gating, no blur.
-      if (keyboardUp.current) return;
+      // Already editing: let the native input own taps (caret, selection) — no
+      // gating, no re-focus.
+      if (editingRef.current) return;
       touchStart.current = { x: e.nativeEvent.pageX, y: e.nativeEvent.pageY };
       isScrollGesture.current = false;
       longPressLanded.current = false;
       clearLongPressTimer();
-      // The keyboard does NOT come up on its own for a press-and-hold, so once
-      // the finger has rested long enough to be a long-press (the same instant a
-      // text selection begins), actively raise it by focusing the field.
+      // A press-and-hold doesn't raise the keyboard on its own (the field is
+      // inert until we say so), so once the finger has rested long enough to be
+      // a long-press, flip into edit mode and focus.
       longPressTimer.current = setTimeout(() => {
         longPressTimer.current = null;
         if (isScrollGesture.current) return;
         longPressLanded.current = true;
-        inputRef.current?.focus();
+        beginEditing();
       }, LONG_PRESS_MS);
     },
-    [clearLongPressTimer],
+    [beginEditing, clearLongPressTimer],
   );
 
-  // A drift *before* the long-press lands is a scroll (or page swipe): flag it,
-  // cancel the pending long-press, and drop focus so the keyboard never pops up
-  // mid-scroll — the note's native scroller keeps the drag and its fling
-  // momentum. A drift *after* the long-press lands (or once a selection exists)
-  // is the user dragging out a selection, so leave focus alone.
-  const handleTouchMove = useCallback(
-    (e: GestureResponderEvent) => {
-      if (keyboardUp.current) return;
-      if (
-        isScrollGesture.current ||
-        hasSelection.current ||
-        longPressLanded.current
-      ) {
-        return;
-      }
-      const dx = Math.abs(e.nativeEvent.pageX - touchStart.current.x);
-      const dy = Math.abs(e.nativeEvent.pageY - touchStart.current.y);
-      if (dx > SCROLL_SLOP || dy > SCROLL_SLOP) {
-        isScrollGesture.current = true;
-        clearLongPressTimer();
-        blurUnlessSelecting();
-      }
-    },
-    [blurUnlessSelecting, clearLongPressTimer],
-  );
-
-  const settleTouch = useCallback(() => {
-    if (keyboardUp.current) return;
-    clearLongPressTimer();
-    if (longPressLanded.current || hasSelection.current) {
-      // A real long-press or selection: make sure the keyboard is up even if the
-      // OS resigned focus when the finger lifted.
-      inputRef.current?.focus();
-      return;
+  // A drift before the long-press lands means the touch is a scroll (or page
+  // swipe), not a press to edit: flag it and cancel the pending long-press so
+  // edit mode is never entered mid-scroll. There's no focus to drop — the field
+  // is still inert — so the ScrollView just keeps the drag and its fling.
+  const handleTouchMove = useCallback((e: GestureResponderEvent) => {
+    if (editingRef.current) return;
+    if (isScrollGesture.current || longPressLanded.current) return;
+    const dx = Math.abs(e.nativeEvent.pageX - touchStart.current.x);
+    const dy = Math.abs(e.nativeEvent.pageY - touchStart.current.y);
+    if (dx > SCROLL_SLOP || dy > SCROLL_SLOP) {
+      isScrollGesture.current = true;
+      clearLongPressTimer();
     }
-    // A quick tap or a scroll: reject any focus the native input grabbed so
-    // neither pops the keyboard. Re-check next frame in case native commits the
-    // focus a frame late.
-    blurUnlessSelecting();
-    requestAnimationFrame(blurUnlessSelecting);
-  }, [blurUnlessSelecting, clearLongPressTimer]);
+  }, [clearLongPressTimer]);
+
+  // On lift/cancel just retire the pending long-press. A quick tap or a scroll
+  // never made the field editable, so there's no stray focus (or keyboard) to
+  // undo — the flicker the old code fought is gone by construction.
+  const settleTouch = useCallback(() => {
+    if (editingRef.current) return;
+    clearLongPressTimer();
+  }, [clearLongPressTimer]);
 
   // The ScrollView taking over the gesture is the authoritative "this is a
-  // scroll" signal: cancel any pending long-press and keep the keyboard down so
-  // a flick just glides the page (webpage-style) without ever focusing.
+  // scroll" signal: cancel any pending long-press so a flick just glides the
+  // page (webpage-style) without ever entering edit mode.
   const handleScrollBeginDrag = useCallback(() => {
-    if (keyboardUp.current) return;
+    if (editingRef.current) return;
     isScrollGesture.current = true;
     clearLongPressTimer();
-    blurUnlessSelecting();
-  }, [blurUnlessSelecting, clearLongPressTimer]);
+  }, [clearLongPressTimer]);
 
-  // Selecting text (long-press, double-tap, drag over a range) is a deliberate
-  // edit action, so surface the keyboard for it even if the raw press timing
-  // would otherwise have been rejected.
+  // Track whether a range is selected so the keyboard listener below doesn't
+  // tear down edit mode while the selection toolbar has momentarily hidden the
+  // keyboard.
   const handleSelectionChange = useCallback(
     (e: { nativeEvent: { selection: { start: number; end: number } } }) => {
       const { start, end } = e.nativeEvent.selection;
       hasSelection.current = start !== end;
-      if (hasSelection.current) {
-        inputRef.current?.focus();
-      }
     },
     [],
   );
 
-  // When this page is no longer the one on top, drop focus so the caret and
+  // Once the field is editable, focus it to raise the keyboard. Running this in
+  // an effect (rather than inline in beginEditing) guarantees the input has
+  // already re-rendered as `editable`, so the focus actually takes.
+  useEffect(() => {
+    if (editing) inputRef.current?.focus();
+  }, [editing]);
+
+  // When this page is no longer the one on top, leave edit mode so the caret and
   // keyboard don't stay tied to a note the user has swiped past.
   useEffect(() => {
     if (!isActive) {
       clearLongPressTimer();
-      inputRef.current?.blur();
+      endEditing();
     }
-  }, [isActive, clearLongPressTimer]);
+  }, [isActive, clearLongPressTimer, endEditing]);
 
   // Never leave a pending long-press timer dangling if the editor unmounts.
   useEffect(() => clearLongPressTimer, [clearLongPressTimer]);
 
-  // Keep the caret bound to the keyboard: it should only blink while the
-  // keyboard is up. When the keyboard is dismissed by other means (Android
-  // back button, a swipe) the input can stay focused with a lingering caret, so
-  // blur it too, leaving the field inert until the user taps back in.
+  // Keep edit mode tied to the keyboard. When the keyboard is dismissed by any
+  // means (Android back button, a page swipe, the "done" key) leave edit mode so
+  // the field goes inert and the note is scrollable again — but not while a
+  // selection is live, since some platforms briefly hide the keyboard to show
+  // the selection toolbar and tearing down here would drop the selection.
   useEffect(() => {
     const showSub = Keyboard.addListener('keyboardDidShow', () => {
-      keyboardUp.current = true;
       setKeyboardVisible(true);
     });
     const hideSub = Keyboard.addListener('keyboardDidHide', () => {
-      keyboardUp.current = false;
       setKeyboardVisible(false);
-      // Don't blur while a selection is live: some platforms briefly hide the
-      // keyboard to show the selection toolbar, and blurring here would drop the
-      // selection and stop the keyboard from coming back.
-      blurUnlessSelecting();
+      if (!hasSelection.current) endEditing();
     });
     return () => {
       showSub.remove();
       hideSub.remove();
     };
-  }, [blurUnlessSelecting]);
+  }, [endEditing]);
 
   const handleChangeText = useCallback(
     (value: string) => {
@@ -198,8 +202,10 @@ function NoteEditor({ initialContent, isActive, onChangeContent }: NoteEditorPro
 
   return (
     // The note scrolls inside a ScrollView (not the TextInput's own scroller) so
-    // a flick glides with native, webpage-style momentum. keyboardShouldPersistTaps
-    // lets a press-and-hold still reach the input to focus/select while scrolling.
+    // a flick glides with native, webpage-style momentum. The input is inert
+    // until a long-press (see above), so it never steals this scroll gesture.
+    // keyboardShouldPersistTaps keeps a tap from being eaten just to dismiss the
+    // keyboard while editing.
     <ScrollView
       style={styles.fill}
       contentContainerStyle={styles.content}
@@ -211,24 +217,34 @@ function NoteEditor({ initialContent, isActive, onChangeContent }: NoteEditorPro
       onTouchEnd={settleTouch}
       onTouchCancel={settleTouch}
       onScrollBeginDrag={handleScrollBeginDrag}>
-      <MarkdownTextInput
-        ref={inputRef}
-        value={text}
-        onChangeText={handleChangeText}
-        onSelectionChange={handleSelectionChange}
-        parser={parseExpensiMark}
-        markdownStyle={markdownStyle}
-        multiline
-        // The ScrollView owns scrolling; the input just grows to fit its text.
-        scrollEnabled={false}
-        // Only show the caret when this page is on top and the keyboard is up.
-        caretHidden={!(isActive && keyboardVisible)}
-        autoCapitalize="sentences"
-        placeholder="Start writing…"
-        placeholderTextColor={colors.muted}
-        textAlignVertical="top"
-        style={[styles.input, { color: colors.text }]}
-      />
+      {/* While browsing, this wrapper is untouchable so the drag passes through
+          to the ScrollView instead of being eaten by the TextInput's native
+          scroller. It flips interactive only once we're editing. */}
+      <View
+        pointerEvents={editing ? 'auto' : 'none'}
+        style={styles.inputWrap}>
+        <MarkdownTextInput
+          ref={inputRef}
+          value={text}
+          onChangeText={handleChangeText}
+          onSelectionChange={handleSelectionChange}
+          parser={parseMarkdown}
+          markdownStyle={markdownStyle}
+          multiline
+          // Only editable in edit mode: keeps the OS from focusing on a plain
+          // tap (which would flash the keyboard) and from accepting stray input.
+          editable={editing}
+          // The ScrollView owns scrolling; the input just grows to fit its text.
+          scrollEnabled={false}
+          // Only show the caret when this page is on top and the keyboard is up.
+          caretHidden={!(isActive && keyboardVisible)}
+          autoCapitalize="sentences"
+          placeholder="Start writing…"
+          placeholderTextColor={colors.muted}
+          textAlignVertical="top"
+          style={[styles.input, { color: colors.text }]}
+        />
+      </View>
     </ScrollView>
   );
 }
@@ -242,8 +258,17 @@ const styles = StyleSheet.create({
   content: {
     flexGrow: 1,
   },
+  // Grows with the input so its content height (not the viewport) drives the
+  // ScrollView's scrollable range, and fills a short page so the whole sheet
+  // stays holdable.
+  inputWrap: {
+    flexGrow: 1,
+  },
   input: {
-    flex: 1,
+    // flexGrow (NOT flex:1) so the input's height is its content height, then
+    // stretches to fill a short page. flex:1 would collapse the basis to 0 and
+    // cap the input at the viewport, leaving a long note with nothing to scroll.
+    flexGrow: 1,
     fontSize: 17,
     lineHeight: 26,
     paddingHorizontal: 24,

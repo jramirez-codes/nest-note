@@ -11,3 +11,68 @@ index 98c3bf4..8166b41 100644
        attributedString,
        paragraphAttributes,
        getYogaSize(minWidth, maxWidth),
+diff --git a/node_modules/@expensify/react-native-live-markdown/lib/typescript/src/commonTypes.d.ts b/node_modules/@expensify/react-native-live-markdown/lib/typescript/src/commonTypes.d.ts
+index 1000000..2000000 100644
+--- a/node_modules/@expensify/react-native-live-markdown/lib/typescript/src/commonTypes.d.ts
++++ b/node_modules/@expensify/react-native-live-markdown/lib/typescript/src/commonTypes.d.ts
+@@ -1,4 +1,4 @@
+-type MarkdownType = 'bold' | 'italic' | 'strikethrough' | 'emoji' | 'mention-here' | 'mention-user' | 'mention-short' | 'mention-report' | 'link' | 'code' | 'pre' | 'blockquote' | 'h1' | 'syntax' | 'inline-image' | 'codeblock';
++type MarkdownType = 'bold' | 'italic' | 'strikethrough' | 'emoji' | 'mention-here' | 'mention-user' | 'mention-short' | 'mention-report' | 'link' | 'code' | 'pre' | 'blockquote' | 'h1' | 'syntax' | 'inline-image' | 'codeblock' | 'listitem';
+ interface MarkdownRange {
+     type: MarkdownType;
+     start: number;
+diff --git a/node_modules/@expensify/react-native-live-markdown/android/src/main/java/com/expensify/livemarkdown/MarkdownFormatter.java b/node_modules/@expensify/react-native-live-markdown/android/src/main/java/com/expensify/livemarkdown/MarkdownFormatter.java
+index 1000000..2000000 100644
+--- a/node_modules/@expensify/react-native-live-markdown/android/src/main/java/com/expensify/livemarkdown/MarkdownFormatter.java
++++ b/node_modules/@expensify/react-native-live-markdown/android/src/main/java/com/expensify/livemarkdown/MarkdownFormatter.java
+@@ -14,6 +14,9 @@
+ import java.util.Objects;
+ 
+ public class MarkdownFormatter {
++  // Left inset (in dip) applied per depth level to `listitem` block ranges.
++  private static final float LIST_ITEM_INDENT_DIP = 24f;
++
+   private final @NonNull AssetManager mAssetManager;
+ 
+   public MarkdownFormatter(@NonNull AssetManager assetManager) {
+@@ -124,6 +127,19 @@
+           markdownRange.getDepth());
+         setSpan(ssb, span, start, end);
+         break;
++      case "listitem":
++        // Custom bullet-list block type (see the app's markdownParser). Reuses
++        // the blockquote leading-margin span with a transparent, zero-width
++        // border so the line is inset with no visible bar. LIST_ITEM_INDENT_DIP
++        // is fixed here to keep this type independent of blockquote styling.
++        MarkdownBlockquoteSpan listItemSpan = new MarkdownBlockquoteSpan(
++          0,
++          0f,
++          0f,
++          LIST_ITEM_INDENT_DIP,
++          markdownRange.getDepth());
++        setSpan(ssb, listItemSpan, start, end);
++        break;
+     }
+   }
+ 
+diff --git a/node_modules/@expensify/react-native-live-markdown/apple/MarkdownFormatter.mm b/node_modules/@expensify/react-native-live-markdown/apple/MarkdownFormatter.mm
+index 1000000..2000000 100644
+--- a/node_modules/@expensify/react-native-live-markdown/apple/MarkdownFormatter.mm
++++ b/node_modules/@expensify/react-native-live-markdown/apple/MarkdownFormatter.mm
+@@ -120,6 +120,16 @@
+     paragraphStyle.headIndent = indent;
+     [attributedString addAttribute:NSParagraphStyleAttributeName value:paragraphStyle range:range];
+     [attributedString addAttribute:RCTLiveMarkdownBlockquoteDepthAttributeName value:@(depth) range:range];
++  } else if (type == "listitem") {
++    // Custom bullet-list block type (see the app's markdownParser). Inset like a
++    // blockquote but with no depth attribute, so the bar layout manager draws
++    // nothing. The indent is fixed here to stay independent of blockquote style.
++    CGFloat indent = 24 * depth;
++    NSParagraphStyle *defaultParagraphStyle = defaultTextAttributes[NSParagraphStyleAttributeName];
++    NSMutableParagraphStyle *paragraphStyle = defaultParagraphStyle != nil ? [defaultParagraphStyle mutableCopy] : [NSMutableParagraphStyle new];
++    paragraphStyle.firstLineHeadIndent = indent;
++    paragraphStyle.headIndent = indent;
++    [attributedString addAttribute:NSParagraphStyleAttributeName value:paragraphStyle range:range];
+   } else if (type == "pre") {
+     [attributedString addAttribute:NSForegroundColorAttributeName value:markdownStyle.preColor range:range];
+     NSRange rangeForBackground = [[attributedString string] characterAtIndex:range.location] == '\n' ? NSMakeRange(range.location + 1, range.length - 1) : range;
