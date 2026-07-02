@@ -48,6 +48,11 @@ export default function NotebookScreen() {
     fireAndForget(createNote(), 'create note');
   }, [createNote]);
 
+  // Flip to the trailing "tap to add a note" sheet (the last page).
+  const goToNewPage = useCallback(() => {
+    pagerRef.current?.flipTo(notes.length);
+  }, [notes.length]);
+
   // After a create commits, flip to the freshly added note (last note page).
   useEffect(() => {
     if (pendingFlipToNewNote.current && notes.length > 0) {
@@ -120,7 +125,11 @@ export default function NotebookScreen() {
         </>
       )}
 
-      <PageIndicator currentIndex={currentIndex} totalPages={pages.length} />
+      <PageIndicator
+        currentIndex={currentIndex}
+        noteCount={notes.length}
+        onPressNew={goToNewPage}
+      />
     </View>
   );
 }
