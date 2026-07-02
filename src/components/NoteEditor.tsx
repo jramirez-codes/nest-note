@@ -273,6 +273,10 @@ const styles = StyleSheet.create({
     lineHeight: 26,
     paddingHorizontal: 24,
     paddingTop: 8,
+    // Breathing room past the last line so the tail of a long note can scroll
+    // clear of the bottom edge (and any keyboard/toolbar) instead of butting
+    // right up against it.
+    paddingBottom: 120,
   },
 });
 
