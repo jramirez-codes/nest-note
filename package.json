@@ -10,10 +10,16 @@
     "test": "jest"
   },
   "dependencies": {
+    "@expensify/react-native-live-markdown": "^0.1.330",
+    "@react-native/new-app-screen": "0.86.0",
+    "expensify-common": "^2.0.189",
+    "html-entities": "2.5.3",
+    "nativewind": "^4.2.6",
     "react": "19.2.3",
     "react-native": "0.86.0",
-    "@react-native/new-app-screen": "0.86.0",
-    "react-native-safe-area-context": "^5.5.2"
+    "react-native-reanimated": "^4.5.0",
+    "react-native-safe-area-context": "^5.5.2",
+    "react-native-worklets": "^0.10.1"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
@@ -32,7 +38,9 @@
     "eslint": "^8.19.0",
     "jest": "^29.6.3",
     "prettier": "2.8.8",
+    "prettier-plugin-tailwindcss": "^0.5.11",
     "react-test-renderer": "19.2.3",
+    "tailwindcss": "^3.4.17",
     "typescript": "^5.8.3"
   },
   "engines": {
