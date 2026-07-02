@@ -1,4 +1,105 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# ainotepad
+
+A markdown notepad you flip through **page by page**, like a physical pad. Each
+note is a full-screen page; swipe left/right to move between them, and tap the
+blank sheet at the end to start a new note. Text is edited as live markdown via
+[`@expensify/react-native-live-markdown`](https://github.com/Expensify/react-native-live-markdown).
+
+## Architecture
+
+The code is organized into small, single-responsibility layers so features can
+be added without churn. Everything app-specific lives under `src/`:
+
+```
+src/
+  types/       Domain models (Note) and pure helpers (deriveTitle)
+  data/        NotesRepository interface + swappable implementations
+  hooks/       useNotes — state + actions, mediated through the repository
+  theme/       Semantic color tokens and the markdown editor style
+  components/  Presentational pieces (NoteEditor, NotePage, NewNotePage, PageIndicator)
+  screens/     NotebookScreen — composes the paged pad
+  utils/       Framework-agnostic helpers (id, date, async)
+```
+
+Key design choices that keep it scalable:
+
+- **Persistence is behind an interface.** The UI only knows `NotesRepository`.
+  It's backed by `MmkvNotesRepository` (on-device [MMKV](https://github.com/mrousavy/react-native-mmkv)),
+  with each note stored under its own `note.<id>` key so a single edit is one
+  small write. `InMemoryNotesRepository` remains as a reference/test double. To
+  change storage, drop in a new implementation and edit the single wiring line
+  in `src/data/index.ts` — nothing else changes. The seed note is applied only
+  when the store is empty, so it appears once and never clobbers real notes.
+- **Derived data isn't stored.** Titles/previews come from `deriveTitle(content)`,
+  so there's nothing to keep in sync.
+- **Pages are memoized and self-scoped.** Editing one page doesn't re-render its
+  neighbors, and each editor owns its text so the caret never jumps.
+
+## Roadmap hooks
+
+Natural next features slot into the existing seams: search/sort in `useNotes`,
+tags/folders on the `Note` type, and sync by adding a repository implementation.
+
+## Native dependency note
+
+MMKV 4 is a [Nitro module](https://nitro.margelo.com/), so after pulling deps
+you must rebuild the native app (JS-only fast refresh isn't enough):
+
+```sh
+# iOS
+bundle exec pod install
+yarn ios
+
+# Android
+yarn android
+```
+
+## react-native-live-markdown on RN 0.86
+
+Heads up: `@expensify/react-native-live-markdown@0.1.330` (its latest release)
+was built against **React Native 0.85.3 / react-native-worklets 0.9.1**, but we
+run **RN 0.86 / Reanimated 4.5 / worklets 0.10**. That gap requires three
+`patch-package` patches. Expect to revisit them — and watch for new ones — until
+Expensify ships an RN 0.86-compatible release.
+
+### Patched dependencies
+
+We use [`patch-package`](https://github.com/ds300/patch-package) to carry fixes
+that have no upstream release yet. Patches live in `patches/` and are re-applied
+automatically on every install via the `postinstall` script — no manual steps.
+
+- **`@expensify/react-native-live-markdown@0.1.330`** — its Android
+  `CustomFabricUIManager.java` passes a `ReactContext` to
+  `TextLayoutManager.measureText`, which as of **React Native 0.86** requires an
+  `AssetManager`. The patch changes that argument to `context.getAssets()`.
+  `0.1.330` is the latest published version, so there is nothing to upgrade to.
+
+- **`html-entities@2.5.3`** — `parseExpensiMark` runs on the Reanimated/worklets
+  runtime and calls into `html-entities`, so that module must be workletizable.
+  The patch prepends a `"worklet";` directive to `html-entities/lib/index.js`.
+  This is required by react-native-live-markdown itself (its error message asks
+  for exactly this), and it's why `html-entities` is pinned to an exact `2.5.3`
+  — the patch targets that specific built file.
+
+- **`expensify-common@2.0.189`** — react-native-live-markdown workletizes the
+  `ExpensiMark` class (its parser runs on the worklet runtime), and worklets 0.10
+  refuses to serialize class instances (`[Worklets] Cannot copy value of type
+  Logger`). `ExpensiMark` reaches a `Logger` *instance* via **two** paths, both
+  patched in this one patch:
+    1. its own static `ExpensiMark.Log` (`dist/ExpensiMark.js`), and
+    2. the shared `Log` singleton it pulls in through `str.js` (`dist/Log.js`).
+  Each is replaced with a plain-object logger (same call surface; only `.alert`
+  is used). After the patch there are **zero** `new Logger(...)` calls in the
+  bundle, so nothing of type `Logger` can ever be serialized. Because the class
+  is workletized at Metro-transform time, a runtime `setLogger()` is too late —
+  it must be a source patch. Pinned to exact `2.0.189` since the patch targets
+  that build.
+
+When Expensify ships an RN 0.86-compatible release, bump the dependency and
+remove these patches. patch-package fails loudly if a patch goes stale, so
+you'll know when each one is safe to drop.
+
+Tracking issue: <!-- TODO: link the Expensify/react-native-live-markdown issue -->
 
 # Getting Started
 

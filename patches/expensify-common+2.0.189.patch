@@ -1,0 +1,54 @@
+diff --git a/node_modules/expensify-common/dist/ExpensiMark.js b/node_modules/expensify-common/dist/ExpensiMark.js
+index a9e6b04..700bbc4 100644
+--- a/node_modules/expensify-common/dist/ExpensiMark.js
++++ b/node_modules/expensify-common/dist/ExpensiMark.js
+@@ -1403,10 +1403,17 @@ class ExpensiMark {
+         return Utils.escapeText(originalContent);
+     }
+ }
+-ExpensiMark.Log = new Logger_1.default({
+-    serverLoggingCallback: () => undefined,
+-    // eslint-disable-next-line no-console
+-    clientLoggingCallback: (message) => console.warn(message),
+-    isDebug: true,
+-});
++// patched(ainotepad): `Log` was a `Logger` class instance. react-native-live-markdown
++// workletizes this class, and react-native-worklets 0.10 refuses to serialize class
++// instances ("Cannot copy value of type Logger"). A plain object with the same call
++// surface (ExpensiMark only uses `.alert`) is serializable. See README.
++ExpensiMark.Log = {
++    alert: function () { },
++    info: function () { },
++    warn: function () { },
++    hmmm: function () { },
++    client: function () { },
++    add: function () { },
++    logToServer: function () { },
++};
+ exports.default = ExpensiMark;
+diff --git a/node_modules/expensify-common/dist/Log.js b/node_modules/expensify-common/dist/Log.js
+index 2c791a4..909d322 100644
+--- a/node_modules/expensify-common/dist/Log.js
++++ b/node_modules/expensify-common/dist/Log.js
+@@ -66,8 +66,16 @@ function clientLoggingCallback(message) {
+         console.log(message);
+     }
+ }
+-exports.default = new Logger_1.default({
+-    serverLoggingCallback,
+-    clientLoggingCallback,
+-    isDebug: Utils.isWindowAvailable() ? window.DEBUG : false,
+-});
++// patched(ainotepad): this `Log` singleton was a `Logger` class instance. It is
++// reached from the workletized `ExpensiMark` (via `str.js`), and react-native-worklets
++// 0.10 refuses to serialize class instances ("Cannot copy value of type Logger").
++// A plain object with the same call surface is serializable. See README.
++exports.default = {
++    alert: function () { },
++    info: function () { },
++    warn: function () { },
++    hmmm: function () { },
++    client: function () { },
++    add: function () { },
++    logToServer: function () { },
++};

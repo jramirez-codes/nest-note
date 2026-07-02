@@ -1,0 +1,13 @@
+diff --git a/node_modules/@expensify/react-native-live-markdown/android/src/reactNativeVersionPatch/CustomMountingManager/latest/com/expensify/livemarkdown/CustomFabricUIManager.java b/node_modules/@expensify/react-native-live-markdown/android/src/reactNativeVersionPatch/CustomMountingManager/latest/com/expensify/livemarkdown/CustomFabricUIManager.java
+index 98c3bf4..8166b41 100644
+--- a/node_modules/@expensify/react-native-live-markdown/android/src/reactNativeVersionPatch/CustomMountingManager/latest/com/expensify/livemarkdown/CustomFabricUIManager.java
++++ b/node_modules/@expensify/react-native-live-markdown/android/src/reactNativeVersionPatch/CustomMountingManager/latest/com/expensify/livemarkdown/CustomFabricUIManager.java
+@@ -72,7 +72,7 @@ public class CustomFabricUIManager extends FabricUIManager {
+     }
+ 
+     return TextLayoutManager.measureText(
+-      context,
++      context.getAssets(),
+       attributedString,
+       paragraphAttributes,
+       getYogaSize(minWidth, maxWidth),
