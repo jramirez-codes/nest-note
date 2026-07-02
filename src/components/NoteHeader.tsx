@@ -30,7 +30,7 @@ function NoteHeader({ note, pageNumber, totalPages, onDelete }: NoteHeaderProps)
           <Text className="text-xs font-semibold uppercase tracking-wider text-faint">
             Page {pageNumber} / {totalPages}
           </Text>
-          <Text className="flex-1 px-3 text-center text-xs text-muted">
+          <Text className="text-center text-xs text-muted">
             {formatNoteDate(note.updatedAt)}
           </Text>
           <Pressable

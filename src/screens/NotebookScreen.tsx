@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useTheme } from '../theme/colors';
 import NewNotePage from '../components/NewNotePage';
 import NoteHeader from '../components/NoteHeader';
 import NotePage from '../components/NotePage';
@@ -26,6 +27,7 @@ const NEW_PAGE_KEY = '__new_note__';
 export default function NotebookScreen() {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
+  const colors = useTheme();
   const { notes, isLoading, createNote, updateNoteContent, deleteNote } =
     useNotes();
 
@@ -125,11 +127,43 @@ export default function NotebookScreen() {
         </>
       )}
 
-      <PageIndicator
-        currentIndex={currentIndex}
-        noteCount={notes.length}
-        onPressNew={goToNewPage}
-      />
+      {/* Floated over the content (not stacked below it) so the note fills the
+          full height of the screen and the pad scrolls beneath the indicator.
+          bottom-0 already clears the safe area — the parent's paddingBottom
+          offsets absolute children in Yoga. box-none lets touches fall through
+          to the note except on the bubbles. */}
+      <View pointerEvents="box-none" className="absolute inset-x-0 bottom-0">
+        {/* Fade the note out as it scrolls up toward the bubbles: transparent at
+            the top → solid background where it meets the strip below, so text
+            dissolves rather than butting against a hard edge. none so it never
+            eats scroll gestures. */}
+        <View
+          pointerEvents="none"
+          className="h-20"
+          style={{
+            experimental_backgroundImage: [
+              {
+                type: 'linear-gradient',
+                direction: 'to bottom',
+                colorStops: [
+                  { color: 'transparent' },
+                  { color: colors.background },
+                ],
+              },
+            ],
+          }}
+        />
+        {/* The bubbles sit on a solid background strip; pb lifts them up off the
+            bottom edge (solid background fills below them). The gradient only
+            lives above the strip. */}
+        <View pointerEvents="box-none" className="bg-background pb-6">
+          <PageIndicator
+            currentIndex={currentIndex}
+            noteCount={notes.length}
+            onPressNew={goToNewPage}
+          />
+        </View>
+      </View>
     </View>
   );
 }

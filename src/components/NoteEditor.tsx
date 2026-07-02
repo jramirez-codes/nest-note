@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { GestureResponderEvent } from 'react-native';
-import { Keyboard, StyleSheet, View } from 'react-native';
+import { Keyboard, ScrollView, StyleSheet } from 'react-native';
 import {
   MarkdownTextInput,
   parseExpensiMark,
@@ -129,6 +129,16 @@ function NoteEditor({ initialContent, isActive, onChangeContent }: NoteEditorPro
     requestAnimationFrame(blurUnlessSelecting);
   }, [blurUnlessSelecting, clearLongPressTimer]);
 
+  // The ScrollView taking over the gesture is the authoritative "this is a
+  // scroll" signal: cancel any pending long-press and keep the keyboard down so
+  // a flick just glides the page (webpage-style) without ever focusing.
+  const handleScrollBeginDrag = useCallback(() => {
+    if (keyboardUp.current) return;
+    isScrollGesture.current = true;
+    clearLongPressTimer();
+    blurUnlessSelecting();
+  }, [blurUnlessSelecting, clearLongPressTimer]);
+
   // Selecting text (long-press, double-tap, drag over a range) is a deliberate
   // edit action, so surface the keyboard for it even if the raw press timing
   // would otherwise have been rejected.
@@ -187,12 +197,20 @@ function NoteEditor({ initialContent, isActive, onChangeContent }: NoteEditorPro
   );
 
   return (
-    <View
+    // The note scrolls inside a ScrollView (not the TextInput's own scroller) so
+    // a flick glides with native, webpage-style momentum. keyboardShouldPersistTaps
+    // lets a press-and-hold still reach the input to focus/select while scrolling.
+    <ScrollView
       style={styles.fill}
+      contentContainerStyle={styles.content}
+      keyboardShouldPersistTaps="always"
+      keyboardDismissMode="none"
+      showsVerticalScrollIndicator={false}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={settleTouch}
-      onTouchCancel={settleTouch}>
+      onTouchCancel={settleTouch}
+      onScrollBeginDrag={handleScrollBeginDrag}>
       <MarkdownTextInput
         ref={inputRef}
         value={text}
@@ -201,6 +219,8 @@ function NoteEditor({ initialContent, isActive, onChangeContent }: NoteEditorPro
         parser={parseExpensiMark}
         markdownStyle={markdownStyle}
         multiline
+        // The ScrollView owns scrolling; the input just grows to fit its text.
+        scrollEnabled={false}
         // Only show the caret when this page is on top and the keyboard is up.
         caretHidden={!(isActive && keyboardVisible)}
         autoCapitalize="sentences"
@@ -209,13 +229,18 @@ function NoteEditor({ initialContent, isActive, onChangeContent }: NoteEditorPro
         textAlignVertical="top"
         style={[styles.input, { color: colors.text }]}
       />
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   fill: {
     flex: 1,
+  },
+  // flexGrow so a short note still fills the page (the whole sheet stays
+  // scrollable/holdable), while a long note grows past it and scrolls.
+  content: {
+    flexGrow: 1,
   },
   input: {
     flex: 1,
