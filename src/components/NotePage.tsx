@@ -7,6 +7,9 @@ interface NotePageProps {
   note: Note;
   /** Exact page width so the sheet fills its slot in the pager. */
   width: number;
+  /** Whether this page is the one currently on top in the pager. Drives blur so
+   *  the caret/keyboard doesn't stay on a page you've swiped away from. */
+  isActive: boolean;
   onChangeContent: (id: string, content: string) => void;
 }
 
@@ -17,19 +20,20 @@ interface NotePageProps {
  * Memoized so that editing one page (which updates the parent's notes array)
  * does not re-render its sibling pages.
  */
-function NotePage({ note, width, onChangeContent }: NotePageProps) {
+function NotePage({ note, width, isActive, onChangeContent }: NotePageProps) {
   const handleChangeContent = useCallback(
     (content: string) => onChangeContent(note.id, content),
     [note.id, onChangeContent],
   );
 
   return (
-    <View style={{ width }} className="flex-1 bg-amber-50 dark:bg-stone-950">
+    <View style={{ width }} className="flex-1 bg-background">
       <KeyboardAvoidingView
         className="flex-1"
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <NoteEditor
           initialContent={note.content}
+          isActive={isActive}
           onChangeContent={handleChangeContent}
         />
       </KeyboardAvoidingView>

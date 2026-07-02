@@ -65,7 +65,7 @@ export default function NotebookScreen() {
   );
 
   const renderPage = useCallback(
-    (index: number) => {
+    (index: number, isActive: boolean) => {
       const page = pages[index];
       if (!page || page.kind === 'new') {
         return <NewNotePage width={width} onCreate={handleCreate} />;
@@ -74,6 +74,7 @@ export default function NotebookScreen() {
         <NotePage
           note={page.note}
           width={width}
+          isActive={isActive}
           onChangeContent={updateNoteContent}
         />
       );
@@ -87,13 +88,11 @@ export default function NotebookScreen() {
 
   return (
     <View
-      className="flex-1 bg-amber-50 dark:bg-stone-950"
+      className="flex-1 bg-background"
       style={{ paddingTop: insets.top, paddingBottom: insets.bottom }}>
       <View className="flex-row items-center justify-between px-6 pb-2 pt-1">
-        <Text className="text-xl font-bold text-stone-900 dark:text-stone-100">
-          Pad
-        </Text>
-        <Text className="text-xs text-stone-400 dark:text-stone-500">
+        <Text className="text-xl font-bold text-text">Pad</Text>
+        <Text className="text-xs text-faint">
           {notes.length} {notes.length === 1 ? 'note' : 'notes'}
         </Text>
       </View>

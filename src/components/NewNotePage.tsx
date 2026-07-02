@@ -12,18 +12,26 @@ interface NewNotePageProps {
  */
 function NewNotePage({ width, onCreate }: NewNotePageProps) {
   return (
-    <View style={{ width }} className="flex-1 bg-amber-50 dark:bg-stone-950">
+    <View
+      style={{ width }}
+      className="flex-1 items-center justify-center bg-background">
       <Pressable
         onPress={onCreate}
+        // The button sits on a sheet that is absolutely positioned and carries
+        // an animated translateX transform; on Android that makes the press
+        // region RN measures unreliable, so a plain tap can be classed as
+        // "moved outside" and cancelled before onPress fires. A generous
+        // retention offset keeps the press alive through that mismeasurement
+        // without enlarging where a tap may start (that stays the button below).
+        pressRetentionOffset={{ top: 2000, bottom: 2000, left: 2000, right: 2000 }}
+        hitSlop={16}
         accessibilityRole="button"
         accessibilityLabel="Add a new note"
-        className="flex-1 items-center justify-center active:opacity-60">
-        <View className="h-20 w-20 items-center justify-center rounded-full border-2 border-dashed border-amber-500 dark:border-amber-400">
-          <Text className="text-4xl leading-none text-amber-600 dark:text-amber-400">
-            +
-          </Text>
+        className="items-center active:opacity-60">
+        <View className="h-20 w-20 items-center justify-center rounded-full border-2 border-dashed border-accent">
+          <Text className="text-4xl leading-none text-accent">+</Text>
         </View>
-        <Text className="mt-5 text-base font-medium text-stone-500 dark:text-stone-400">
+        <Text className="mt-5 text-base font-medium text-muted">
           Tap to add a note
         </Text>
       </Pressable>

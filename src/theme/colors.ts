@@ -1,48 +1,41 @@
-import { useColorScheme } from 'react-native';
+import { semantic } from './catppuccin';
 
 /**
- * Semantic color tokens. Components reference roles (`text`, `surface`, …)
- * rather than raw hex values, so re-theming is a change in one place.
+ * Semantic color tokens for imperative styles (the markdown editor). Components
+ * that render via NativeWind use the matching utility classes instead
+ * (`bg-background`, `text-muted`, …); both are backed by the same palette in
+ * `catppuccin.js`, so the app has a single source of truth.
  *
- * The palette leans warm to evoke a paper notepad.
+ * The app ships a single dark theme: Catppuccin Mocha.
  */
 export interface ThemeColors {
   background: string;
   surface: string;
   text: string;
   muted: string;
+  faint: string;
   border: string;
   accent: string;
+  danger: string;
   /** Color used for markdown syntax characters (the `#`, `*`, backticks). */
   syntax: string;
   codeBackground: string;
 }
 
-const light: ThemeColors = {
-  background: '#fffbeb', // amber-50 — warm paper
-  surface: '#ffffff',
-  text: '#1c1917', // stone-900
-  muted: '#78716c', // stone-500
-  border: '#e7e5e4', // stone-200
-  accent: '#d97706', // amber-600
-  syntax: '#a8a29e', // stone-400
-  codeBackground: '#f5f5f4', // stone-100
+export const theme: ThemeColors = {
+  background: semantic.background,
+  surface: semantic.surface,
+  text: semantic.text,
+  muted: semantic.muted,
+  faint: semantic.faint,
+  border: semantic.border,
+  accent: semantic.accent,
+  danger: semantic.danger,
+  syntax: semantic.syntax,
+  codeBackground: semantic.surface,
 };
 
-const dark: ThemeColors = {
-  background: '#0c0a09', // stone-950
-  surface: '#1c1917', // stone-900
-  text: '#f5f5f4', // stone-100
-  muted: '#a8a29e', // stone-400
-  border: '#292524', // stone-800
-  accent: '#fbbf24', // amber-400
-  syntax: '#57534e', // stone-600
-  codeBackground: '#292524', // stone-800
-};
-
-export const themes = { light, dark };
-
-/** Resolve the active theme from the OS color scheme. */
+/** The active theme. A hook so call sites stay stable if flavors are added. */
 export function useTheme(): ThemeColors {
-  return useColorScheme() === 'dark' ? dark : light;
+  return theme;
 }

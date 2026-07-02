@@ -24,13 +24,13 @@ function NoteHeader({ note, pageNumber, totalPages, onDelete }: NoteHeaderProps)
   );
 
   return (
-    <View className="flex-row items-center justify-between border-b border-stone-200 px-6 py-3 dark:border-stone-800">
+    <View className="flex-row items-center justify-between border-b border-border px-6 py-3">
       {note ? (
         <>
-          <Text className="text-xs font-semibold uppercase tracking-wider text-stone-400 dark:text-stone-500">
+          <Text className="text-xs font-semibold uppercase tracking-wider text-faint">
             Page {pageNumber} / {totalPages}
           </Text>
-          <Text className="flex-1 px-3 text-center text-xs text-stone-500 dark:text-stone-400">
+          <Text className="flex-1 px-3 text-center text-xs text-muted">
             {formatNoteDate(note.updatedAt)}
           </Text>
           <Pressable
@@ -38,13 +38,11 @@ function NoteHeader({ note, pageNumber, totalPages, onDelete }: NoteHeaderProps)
             hitSlop={12}
             accessibilityRole="button"
             accessibilityLabel="Delete note">
-            <Text className="text-xs font-semibold text-amber-600 dark:text-amber-400">
-              Delete
-            </Text>
+            <Text className="text-xs font-semibold text-danger">Delete</Text>
           </Pressable>
         </>
       ) : (
-        <Text className="flex-1 text-center text-xs font-semibold uppercase tracking-wider text-stone-400 dark:text-stone-500">
+        <Text className="flex-1 text-center text-xs font-semibold uppercase tracking-wider text-faint">
           New page
         </Text>
       )}

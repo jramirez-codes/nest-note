@@ -16,7 +16,7 @@ function PageIndicator({ currentIndex, totalPages }: PageIndicatorProps) {
   if (totalPages > MAX_DOTS) {
     return (
       <View className="items-center py-3">
-        <Text className="text-xs font-semibold text-stone-400 dark:text-stone-500">
+        <Text className="text-xs font-semibold text-faint">
           {currentIndex + 1} / {totalPages}
         </Text>
       </View>
@@ -32,8 +32,8 @@ function PageIndicator({ currentIndex, totalPages }: PageIndicatorProps) {
             key={index}
             className={
               isActive
-                ? 'mx-1 h-2 w-5 rounded-full bg-amber-600 dark:bg-amber-400'
-                : 'mx-1 h-2 w-2 rounded-full bg-stone-300 dark:bg-stone-700'
+                ? 'mx-1 h-2 w-5 rounded-full bg-accent'
+                : 'mx-1 h-2 w-2 rounded-full bg-surface'
             }
           />
         );

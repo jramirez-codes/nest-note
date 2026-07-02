@@ -6,16 +6,17 @@
 
 import './global.css';
 
-import { StatusBar, useColorScheme } from 'react-native';
+import { StatusBar } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import NotebookScreen from './src/screens/NotebookScreen';
+import { theme } from './src/theme/colors';
 
+// The app ships a single dark theme (Catppuccin Mocha), so the status bar is
+// always light content over the dark base.
 function App() {
-  const isDarkMode = useColorScheme() === 'dark';
-
   return (
     <SafeAreaProvider>
-      <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
+      <StatusBar barStyle="light-content" backgroundColor={theme.background} />
       <NotebookScreen />
     </SafeAreaProvider>
   );
