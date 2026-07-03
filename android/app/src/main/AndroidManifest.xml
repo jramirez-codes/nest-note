@@ -1,6 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Scanning the companion server's pairing QR (react-native-vision-camera). -->
+    <uses-permission android:name="android.permission.CAMERA" />
 
     <application
       android:name=".MainApplication"
