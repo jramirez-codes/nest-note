@@ -1,8 +1,11 @@
 import { Decoration } from '@codemirror/view';
-import { syntaxTree } from '@codemirror/language';
+import { syntaxTree, StreamLanguage } from '@codemirror/language';
 import { javascript } from '@codemirror/lang-javascript';
 import { css } from '@codemirror/lang-css';
 import { html } from '@codemirror/lang-html';
+import { python } from '@codemirror/lang-python';
+import { go } from '@codemirror/lang-go';
+import { shell } from '@codemirror/legacy-modes/mode/shell';
 import { decoPlugin, decoRanges } from './viewPlugin.js';
 import { CopyButtonWidget } from './widgets.js';
 
@@ -57,5 +60,9 @@ export function codeLanguages(info) {
   }
   if (['css', 'scss', 'less'].includes(lang)) return css().language;
   if (['html', 'htm', 'xml'].includes(lang)) return html().language;
+  if (['py', 'python'].includes(lang)) return python().language;
+  if (['go', 'golang'].includes(lang)) return go().language;
+  // Bash/shell has no dedicated lang package — use the legacy stream mode.
+  if (['sh', 'bash', 'shell', 'zsh'].includes(lang)) return StreamLanguage.define(shell);
   return null;
 }

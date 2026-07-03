@@ -122,7 +122,9 @@ export class AiCardWidget extends WidgetType {
         card._mdView = mountAnswerView(body, answer);
       }
       // Once an answer has landed, offer a one-line follow-up box in the footer.
-      if (status === 'done') body.appendChild(this.followupFoot(view, card));
+      // Disabled for now: the follow-up doesn't retain the conversation, so it's
+      // not much use yet.
+      // if (status === 'done') body.appendChild(this.followupFoot(view, card));
       card.appendChild(body);
     }
     // Snapshot the render shape so updateDOM can tell an in-place token append
