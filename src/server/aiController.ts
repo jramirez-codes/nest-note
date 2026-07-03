@@ -70,12 +70,31 @@ export interface AskHandle {
   cancel(): void;
 }
 
+/** A prior card's question/answer, threaded into a follow-up so it has context. */
+export interface AskContext {
+  q?: string;
+  a?: string;
+}
+
+// Each run is a fresh `claude -p` (no server-side session), so a follow-up must
+// carry its own context: fold the parent Q&A into the prompt Claude receives.
+// The card still shows only the raw follow-up question.
+function buildPrompt(question: string, context?: AskContext): string {
+  if (!context || !context.q) return question;
+  return (
+    `You are continuing a conversation. Earlier you were asked:\n\n${context.q}\n\n` +
+    (context.a ? `You answered:\n\n${context.a}\n\n` : '') +
+    `Now answer this follow-up:\n\n${question}`
+  );
+}
+
 /**
  * Stream an answer for `question`. Returns immediately; callbacks fire as the
  * answer arrives. Cancelling stops the underlying run (which disconnects the
- * socket, killing the server-side Claude process).
+ * socket, killing the server-side Claude process). `context`, when present,
+ * threads a prior card's Q&A into the prompt so follow-ups stay in-conversation.
  */
-export function runAsk(question: string, cb: AskCallbacks): AskHandle {
+export function runAsk(question: string, cb: AskCallbacks, context?: AskContext): AskHandle {
   let cancelled = false;
   let handle: RunHandle | null = null;
   let answer = '';
@@ -93,7 +112,7 @@ export function runAsk(question: string, cb: AskCallbacks): AskHandle {
     }
     if (cancelled) return;
 
-    handle = run(t, server, server.token, question, ev => {
+    handle = run(t, server, server.token, buildPrompt(question, context), ev => {
       if (ev.kind === 'assistant-text') {
         answer += ev.text;
         cb.onDelta(answer);

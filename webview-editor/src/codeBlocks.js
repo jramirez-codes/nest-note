@@ -3,7 +3,7 @@ import { syntaxTree } from '@codemirror/language';
 import { javascript } from '@codemirror/lang-javascript';
 import { css } from '@codemirror/lang-css';
 import { html } from '@codemirror/lang-html';
-import { decoPlugin } from './viewPlugin.js';
+import { decoPlugin, decoRanges } from './viewPlugin.js';
 import { CopyButtonWidget } from './widgets.js';
 
 /**
@@ -13,7 +13,7 @@ import { CopyButtonWidget } from './widgets.js';
 function buildCodeBlocks(view) {
   const { state } = view;
   const marks = [];
-  for (const { from, to } of view.visibleRanges) {
+  for (const { from, to } of decoRanges(view)) {
     syntaxTree(state).iterate({
       from,
       to,

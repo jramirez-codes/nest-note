@@ -1,3 +1,5 @@
+import { post } from './bridge.js';
+
 // --- /ask + /pair markers ---------------------------------------------------
 // An ask/pair block is persisted as a single-line HTML comment carrying a
 // base64-encoded JSON payload: `<!--ai <b64>-->`. base64's alphabet can't
@@ -85,4 +87,26 @@ export function deleteCardLine(view, el) {
   const line = aiLineOf(view, el);
   const to = Math.min(line.to + 1, view.state.doc.length);
   view.dispatch({ changes: { from: line.from, to } });
+}
+
+// Spawn a new streaming /ask card on a fresh line right after the card `el` sits
+// on, then kick off the run. `context` (the parent's { q, a }) rides along so the
+// server can answer the follow-up in the same conversation. Returns the new id.
+export function insertFollowupCard(view, el, question, context) {
+  const line = aiLineOf(view, el);
+  const id = genId();
+  const marker = encodeAiMarker({
+    v: 1,
+    kind: 'ask',
+    id,
+    q: question,
+    a: '',
+    open: true,
+    status: 'streaming',
+  });
+  // Insert at end-of-line so the new marker lands on its own line below, whether
+  // or not this card is the document's last line.
+  view.dispatch({ changes: { from: line.to, to: line.to, insert: '\n' + marker } });
+  post({ type: 'ask', id, question, context });
+  return id;
 }

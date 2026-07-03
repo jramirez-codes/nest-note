@@ -80,6 +80,19 @@ const answerChrome = {
   '.cm-code-last.cm-code-last': {
     paddingBottom: '0.7em !important',
   },
+  // Same story as the code card above: `.cm-line{padding:0 !important}` also
+  // flattens blockquote lines (`.cm-blockquote` is a line decoration on the same
+  // element), collapsing the text against the accent bar. Restore the quote's
+  // own inset + rounded-end padding with doubled-class `!important`.
+  '.cm-blockquote.cm-blockquote': {
+    paddingLeft: '16px !important',
+  },
+  '.cm-blockquote-first.cm-blockquote-first': {
+    paddingTop: '3px !important',
+  },
+  '.cm-blockquote-last.cm-blockquote-last': {
+    paddingBottom: '3px !important',
+  },
 };
 
 // Component styles (class-based, view-agnostic) — shared by both chromes so the
@@ -195,6 +208,27 @@ const components = {
       color: c.blue,
       textDecoration: 'underline',
       cursor: 'pointer',
+    },
+    // Link text inside a blockquote or list item is ALSO wrapped by the syntax
+    // highlighter (t.quote → grey, t.list → plain), and that inner span's colour
+    // would otherwise win over the outer .cm-link. This descendant selector has
+    // higher specificity than the highlighter's single-class rules, so the link
+    // stays blue wherever it appears.
+    '.cm-link span': {
+      color: c.blue,
+    },
+
+    // --- Inline code (`code`) -----------------------------------------------
+    // Green + monospace, robust to the block-level highlight colour of a
+    // surrounding list/quote (the descendant rule out-specifies the single-class
+    // highlighter selectors, same trick as .cm-link span).
+    '.cm-inline-code': {
+      color: c.green,
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+      fontSize: '0.9em',
+    },
+    '.cm-inline-code span': {
+      color: c.green,
     },
 
     // --- Unfurled link card -------------------------------------------------
@@ -399,16 +433,46 @@ const components = {
       '0%, 80%, 100%': { opacity: '0.25' },
       '40%': { opacity: '1' },
     },
-    // Blinking caret appended to the answer while tokens are still streaming.
-    '.cm-ask-cursor': {
-      display: 'inline-block',
-      width: '2px',
-      height: '1em',
-      marginLeft: '1px',
-      verticalAlign: '-0.15em',
-      backgroundColor: c.mauve,
-      animation: 'cm-ask-blink 1s steps(1) infinite',
+
+    // Follow-up composer pinned under a finished answer: a one-line input plus a
+    // send button, separated from the answer by a hairline rule.
+    '.cm-ask-foot': {
+      display: 'flex',
+      alignItems: 'center',
+      gap: '8px',
+      marginTop: '12px',
+      paddingTop: '12px',
+      borderTop: `1px solid ${c.surface0}`,
     },
+    '.cm-ask-followup': {
+      flex: '1',
+      minWidth: '0',
+      backgroundColor: c.base,
+      border: `1px solid ${c.surface1}`,
+      borderRadius: '9px',
+      color: c.text,
+      fontFamily: '-apple-system, Roboto, sans-serif',
+      fontSize: '14px',
+      lineHeight: '1.4',
+      padding: '8px 12px',
+      outline: 'none',
+    },
+    '.cm-ask-followup::placeholder': { color: c.overlay1 },
+    '.cm-ask-followup:focus': { borderColor: c.mauve },
+    '.cm-ask-send': {
+      flexShrink: '0',
+      display: 'inline-flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: '34px',
+      height: '34px',
+      color: c.base,
+      backgroundColor: c.mauve,
+      borderRadius: '9px',
+      cursor: 'pointer',
+      userSelect: 'none',
+    },
+    '.cm-ask-send svg': { display: 'block', width: '17px', height: '17px' },
 
     // --- Pair chip (/pair …) ------------------------------------------------
     '.cm-ask-pair': {

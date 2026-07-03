@@ -1,6 +1,6 @@
 import { Decoration } from '@codemirror/view';
 import { syntaxTree } from '@codemirror/language';
-import { decoPlugin } from './viewPlugin.js';
+import { decoPlugin, decoRanges } from './viewPlugin.js';
 
 /**
  * Obsidian-style blockquotes: a continuous accent bar down the left edge of
@@ -10,7 +10,7 @@ import { decoPlugin } from './viewPlugin.js';
 function buildBlockquotes(view) {
   const { state } = view;
   const lines = new Set();
-  for (const { from, to } of view.visibleRanges) {
+  for (const { from, to } of decoRanges(view)) {
     syntaxTree(state).iterate({
       from,
       to,

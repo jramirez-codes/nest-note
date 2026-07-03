@@ -54,6 +54,7 @@ export default function NoteEditorWebView({
         url?: string;
         id?: string;
         question?: string;
+        context?: { q?: string; a?: string };
         payload?: string;
       };
       try {
@@ -119,7 +120,7 @@ export default function NoteEditorWebView({
               })});`,
             );
           },
-        });
+        }, msg.context);
       } else if (
         msg.type === 'pair' &&
         typeof msg.id === 'string' &&

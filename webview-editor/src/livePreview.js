@@ -1,6 +1,6 @@
 import { Decoration } from '@codemirror/view';
 import { syntaxTree } from '@codemirror/language';
-import { decoPlugin } from './viewPlugin.js';
+import { decoPlugin, decoRanges } from './viewPlugin.js';
 import { ImageWidget, CheckboxWidget, BulletWidget } from './widgets.js';
 import { imageAlt } from './urls.js';
 
@@ -42,7 +42,7 @@ function buildLivePreview(view) {
   }
 
   const marks = [];
-  for (const { from, to } of view.visibleRanges) {
+  for (const { from, to } of decoRanges(view)) {
     syntaxTree(state).iterate({
       from,
       to,
@@ -71,32 +71,40 @@ function buildLivePreview(view) {
         // Links: render clean + tappable. `[text](url)` → "text", `<url>` → url,
         // and bare GFM URLs stay as-is; all carry the URL for the tap handler.
         if (node.name === 'Link' || node.name === 'Autolink') {
-          // On the active line show raw markdown; skip children either way so the
-          // inner URL node isn't re-processed as a bare URL below.
+          // On the active line show raw markdown; skip children so the inner URL
+          // node isn't re-processed as a bare URL below.
           if (active) return false;
           const urlNode = node.node.getChild('URL');
           const url = urlNode ? state.doc.sliceString(urlNode.from, urlNode.to) : null;
-          if (!url) return false;
+          if (!url) return false; // e.g. a reference-style [text][ref] link
           if (node.name === 'Autolink') {
             marks.push(HIDE.range(node.from, node.from + 1)); // "<"
             marks.push(HIDE.range(node.to - 1, node.to)); // ">"
             marks.push(linkDeco(url).range(urlNode.from, urlNode.to));
-          } else {
-            const textFrom = node.from + 1; // just past "["
-            const textTo = urlNode.from - 2; // the "]" before "](url)"
-            if (textTo > textFrom) {
-              marks.push(HIDE.range(node.from, textFrom)); // "["
-              marks.push(linkDeco(url).range(textFrom, textTo));
-              marks.push(HIDE.range(textTo, node.to)); // "](url)"
-            } else {
-              marks.push(HIDE.range(node.from, node.to)); // empty-text link
-            }
+            return false;
           }
-          return false;
+          const textFrom = node.from + 1; // just past "["
+          const textTo = urlNode.from - 2; // the "]" before "](url)"
+          if (textTo <= textFrom) {
+            marks.push(HIDE.range(node.from, node.to)); // empty-text link
+            return false;
+          }
+          marks.push(HIDE.range(node.from, textFrom)); // "["
+          marks.push(linkDeco(url).range(textFrom, textTo));
+          marks.push(HIDE.range(textTo, node.to)); // "](url)"
+          // Do NOT return false: keep descending so inline markup INSIDE the link
+          // text — [**bold**](url), [`code`](url) — still gets its `**`/`` ` ``
+          // markers hidden and its styling. The URL child is skipped in the URL
+          // handler (its parent is this Link), and the `](url)` tail is already
+          // hidden above, so descending is safe.
+          return;
         }
         if (node.name === 'URL') {
-          // A bare URL — its parent Link/Autolink was handled and skipped above.
+          // A bare URL. If it's the destination inside a Link/Image, that parent
+          // already hid + linked it, so skip (we now descend into links).
           if (active) return;
+          const parent = node.node.parent;
+          if (parent && (parent.name === 'Link' || parent.name === 'Image')) return;
           const url = state.doc.sliceString(node.from, node.to);
           // A solo URL is replaced wholesale by its card (see cardField), so
           // don't render the (often very long) raw URL here. Bare URLs inside
@@ -137,6 +145,39 @@ function buildLivePreview(view) {
               node.to,
             ),
           );
+          return;
+        }
+
+        if (node.name === 'InlineCode') {
+          // Tag inline `code` so it keeps its green/mono styling even inside a
+          // list or blockquote, where the block's own highlight colour (t.list /
+          // t.quote) would otherwise win on the shared span. The backtick
+          // CodeMarks inside are still hidden by the SYNTAX_MARKS pass below.
+          marks.push(
+            Decoration.mark({ class: 'cm-inline-code' }).range(node.from, node.to),
+          );
+          // A link written INSIDE inline code — `[text](url)` — is literal per
+          // CommonMark (no Link node), but in an LLM answer it's meant to be a real
+          // link. If the whole code span is exactly one link, render it tappable
+          // too: it keeps the green code colour (.cm-inline-code) plus the link
+          // underline (.cm-link). Show raw on the active line so it stays editable.
+          if (!active) {
+            const cm = node.node.getChildren('CodeMark');
+            if (cm.length >= 2) {
+              const cFrom = cm[0].to;
+              const cTo = cm[cm.length - 1].from;
+              const m = /^\[([^\]]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)$/.exec(
+                state.doc.sliceString(cFrom, cTo),
+              );
+              if (m) {
+                const textFrom = cFrom + 1; // past "["
+                const textTo = textFrom + m[1].length; // before "]"
+                marks.push(HIDE.range(cFrom, textFrom)); // "["
+                marks.push(linkDeco(m[2]).range(textFrom, textTo));
+                marks.push(HIDE.range(textTo, cTo)); // "](url)"
+              }
+            }
+          }
           return;
         }
 
