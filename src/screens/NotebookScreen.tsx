@@ -55,11 +55,17 @@ export default function NotebookScreen() {
     pagerRef.current?.flipTo(notes.length);
   }, [notes.length]);
 
-  // After a create commits, flip to the freshly added note (last note page).
+  // Jump straight to a note page as the user scrubs the progress bubble.
+  const handleScrub = useCallback((index: number) => {
+    pagerRef.current?.flipTo(index);
+  }, []);
+
+  // After a create commits, flip to the freshly added note. Notes are sorted
+  // newest-first, so the new note is page 0.
   useEffect(() => {
     if (pendingFlipToNewNote.current && notes.length > 0) {
       pendingFlipToNewNote.current = false;
-      pagerRef.current?.flipTo(notes.length - 1);
+      pagerRef.current?.flipTo(0);
     }
   }, [notes.length]);
 
@@ -161,6 +167,8 @@ export default function NotebookScreen() {
             currentIndex={currentIndex}
             noteCount={notes.length}
             onPressNew={goToNewPage}
+            scrubWidth={width}
+            onScrub={handleScrub}
           />
         </View>
       </View>

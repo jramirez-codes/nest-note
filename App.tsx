@@ -6,10 +6,12 @@
 
 import './global.css';
 
-import { StatusBar } from 'react-native';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, StatusBar, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import NotebookScreen from './src/screens/NotebookScreen';
 import WebViewSpike from './src/spikes/WebViewSpike';
+import { initStorage } from './src/storage';
 import { theme } from './src/theme/colors';
 
 // Dev-only: flip to true to preview the CodeMirror-in-WebView editor spike in
@@ -19,10 +21,41 @@ const SHOW_WEBVIEW_SPIKE = false;
 // The app ships a single dark theme (Catppuccin Mocha), so the status bar is
 // always light content over the dark base.
 function App() {
+  // Open + migrate the database (and run the one-time MMKV import) before any
+  // screen reads notes, so the first render already sees SQLite as the source
+  // of truth. Rendering is gated on this so the UI never queries an unready DB.
+  const [storageReady, setStorageReady] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    initStorage()
+      .then(() => {
+        if (active) {
+          setStorageReady(true);
+        }
+      })
+      .catch(error => {
+        // A failed migration leaves the DB untouched and retries next launch;
+        // surface it rather than rendering against half-ready storage.
+        console.error('[storage] initialization failed', error);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   return (
     <SafeAreaProvider>
       <StatusBar barStyle="light-content" backgroundColor={theme.background} />
-      {SHOW_WEBVIEW_SPIKE ? <WebViewSpike /> : <NotebookScreen />}
+      {!storageReady ? (
+        <View className="flex-1 items-center justify-center bg-background">
+          <ActivityIndicator />
+        </View>
+      ) : SHOW_WEBVIEW_SPIKE ? (
+        <WebViewSpike />
+      ) : (
+        <NotebookScreen />
+      )}
     </SafeAreaProvider>
   );
 }

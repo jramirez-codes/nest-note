@@ -1377,6 +1377,11 @@
     "@nodelib/fs.scandir" "2.1.5"
     fastq "^1.6.0"
 
+"@op-engineering/op-sqlite@^17.1.1":
+  version "17.1.1"
+  resolved "https://registry.npmjs.org/@op-engineering/op-sqlite/-/op-sqlite-17.1.1.tgz"
+  integrity sha512-SRptONQMkcNGPcDwaV9mDhHXpX+XVjPD7scftrH7CbgZp/NB1DJiAMBUDpF4zptDaVskpWPVNGt+qBGfeFdDpQ==
+
 "@react-native-community/cli-clean@20.1.0":
   version "20.1.0"
   resolved "https://registry.npmjs.org/@react-native-community/cli-clean/-/cli-clean-20.1.0.tgz"

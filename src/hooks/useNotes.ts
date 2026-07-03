@@ -1,9 +1,19 @@
 import { useCallback, useEffect, useState } from 'react';
-import { notesRepository } from '../data';
-import type { NotesRepository } from '../data';
+import {
+  DEFAULT_NOTEBOOK_ID,
+  createPage,
+  deletePage,
+  listPages,
+  updatePage,
+} from '../storage';
 import type { Note } from '../types/note';
 import { fireAndForget } from '../utils/async';
 import { createId } from '../utils/id';
+
+/** Newest-created note first, so the freshest page is page 0. */
+function byNewestFirst(a: Note, b: Note): number {
+  return b.createdAt - a.createdAt;
+}
 
 export interface UseNotesResult {
   notes: Note[];
@@ -16,25 +26,26 @@ export interface UseNotesResult {
 }
 
 /**
- * Owns note state and mediates every change through the {@link NotesRepository}.
+ * Owns note state and mediates every change through the storage layer
+ * (`storage/pages`). Notes belong to the default notebook for now; when
+ * multiple notebooks land, the notebook id flows in here and nothing else
+ * changes.
  *
  * State updates are applied optimistically (local state first, then persisted)
- * so the editor stays responsive; the repository is the source of truth on the
- * next load. The repository is injectable to keep the hook testable.
+ * so the editor stays responsive; storage is the source of truth on next load.
  */
 export function useNotes(
-  repository: NotesRepository = notesRepository,
+  notebookId: string = DEFAULT_NOTEBOOK_ID,
 ): UseNotesResult {
   const [notes, setNotes] = useState<Note[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     let active = true;
-    repository
-      .list()
+    listPages(notebookId)
       .then(loaded => {
         if (active) {
-          setNotes(loaded);
+          setNotes([...loaded].sort(byNewestFirst));
         }
       })
       .finally(() => {
@@ -45,7 +56,7 @@ export function useNotes(
     return () => {
       active = false;
     };
-  }, [repository]);
+  }, [notebookId]);
 
   const createNote = useCallback(async (): Promise<Note> => {
     const timestamp = Date.now();
@@ -55,41 +66,36 @@ export function useNotes(
       createdAt: timestamp,
       updatedAt: timestamp,
     };
-    setNotes(prev => [...prev, note]);
-    await repository.save(note);
+    // Newest first: the fresh note becomes page 0.
+    setNotes(prev => [note, ...prev]);
+    await createPage(note, notebookId);
     return note;
-  }, [repository]);
+  }, [notebookId]);
 
-  const updateNoteContent = useCallback(
-    (id: string, content: string) => {
-      setNotes(prev => {
-        const index = prev.findIndex(note => note.id === id);
-        if (index === -1) {
-          return prev;
-        }
-        const updated: Note = {
-          ...prev[index],
-          content,
-          updatedAt: Date.now(),
-        };
-        // Persist without reordering the list — pages should not jump around
-        // while the user is typing on them.
-        fireAndForget(repository.save(updated), 'save note');
-        const next = [...prev];
-        next[index] = updated;
-        return next;
-      });
-    },
-    [repository],
-  );
+  const updateNoteContent = useCallback((id: string, content: string) => {
+    setNotes(prev => {
+      const index = prev.findIndex(note => note.id === id);
+      if (index === -1) {
+        return prev;
+      }
+      const updated: Note = {
+        ...prev[index],
+        content,
+        updatedAt: Date.now(),
+      };
+      // Persist without reordering the list — pages should not jump around
+      // while the user is typing on them.
+      fireAndForget(updatePage(updated), 'save note');
+      const next = [...prev];
+      next[index] = updated;
+      return next;
+    });
+  }, []);
 
-  const deleteNote = useCallback(
-    (id: string) => {
-      setNotes(prev => prev.filter(note => note.id !== id));
-      fireAndForget(repository.delete(id), 'delete note');
-    },
-    [repository],
-  );
+  const deleteNote = useCallback((id: string) => {
+    setNotes(prev => prev.filter(note => note.id !== id));
+    fireAndForget(deletePage(id), 'delete note');
+  }, []);
 
   return { notes, isLoading, createNote, updateNoteContent, deleteNote };
 }

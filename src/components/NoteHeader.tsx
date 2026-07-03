@@ -31,7 +31,7 @@ function NoteHeader({ note, pageNumber, totalPages, onDelete }: NoteHeaderProps)
             Page {pageNumber} / {totalPages}
           </Text>
           <Text className="text-center text-xs text-muted">
-            {formatNoteDate(note.updatedAt)}
+            {formatNoteDate(note.createdAt)}
           </Text>
           <Pressable
             onPress={handleDelete}

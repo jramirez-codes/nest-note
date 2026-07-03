@@ -2,6 +2,9 @@
   "name": "ainotepad",
   "version": "0.0.1",
   "private": true,
+  "op-sqlite": {
+    "fts5": true
+  },
   "scripts": {
     "android": "react-native run-android",
     "ios": "react-native run-ios",
@@ -11,6 +14,7 @@
     "test": "jest"
   },
   "dependencies": {
+    "@op-engineering/op-sqlite": "^17.1.1",
     "@react-native/new-app-screen": "0.86.0",
     "nativewind": "^4.2.6",
     "react": "19.2.3",
