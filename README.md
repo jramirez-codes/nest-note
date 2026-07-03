@@ -2,8 +2,8 @@
 
 A markdown notepad you flip through **page by page**, like a physical pad. Each
 note is a full-screen page; swipe left/right to move between them, and tap the
-blank sheet at the end to start a new note. Text is edited as live markdown via
-[`@expensify/react-native-live-markdown`](https://github.com/Expensify/react-native-live-markdown).
+blank sheet at the end to start a new note. Text is edited as live-preview
+markdown via **CodeMirror 6** running in a WebView (see the editor section below).
 
 ## Architecture
 
@@ -15,8 +15,8 @@ src/
   types/       Domain models (Note) and pure helpers (deriveTitle)
   data/        NotesRepository interface + swappable implementations
   hooks/       useNotes — state + actions, mediated through the repository
-  theme/       Semantic color tokens and the markdown editor style
-  components/  Presentational pieces (NoteEditor, NotePage, NewNotePage, PageIndicator)
+  theme/       Semantic color tokens
+  components/  Presentational pieces (NoteEditorWebView, NotePage, NewNotePage, PageIndicator)
   screens/     NotebookScreen — composes the paged pad
   utils/       Framework-agnostic helpers (id, date, async)
 ```
@@ -54,52 +54,26 @@ yarn ios
 yarn android
 ```
 
-## react-native-live-markdown on RN 0.86
+## Editor: CodeMirror 6 in a WebView
 
-Heads up: `@expensify/react-native-live-markdown@0.1.330` (its latest release)
-was built against **React Native 0.85.3 / react-native-worklets 0.9.1**, but we
-run **RN 0.86 / Reanimated 4.5 / worklets 0.10**. That gap requires three
-`patch-package` patches. Expect to revisit them — and watch for new ones — until
-Expensify ships an RN 0.86-compatible release.
+Notes are edited with **CodeMirror 6** running inside a `react-native-webview`,
+giving Obsidian-style live preview — markdown syntax marks hide to render clean
+text and reveal again on the line you're editing — while keeping **markdown as
+the stored format**. Because the editor reads and writes plain markdown, existing
+notes just work and there is no data migration.
 
-### Patched dependencies
+The editor is a small isolated web app under `webview-editor/` that bundles CM6
+into a single self-contained HTML string via esbuild. Rebuild it with:
 
-We use [`patch-package`](https://github.com/ds300/patch-package) to carry fixes
-that have no upstream release yet. Patches live in `patches/` and are re-applied
-automatically on every install via the `postinstall` script — no manual steps.
+    cd webview-editor && npm run build
 
-- **`@expensify/react-native-live-markdown@0.1.330`** — its Android
-  `CustomFabricUIManager.java` passes a `ReactContext` to
-  `TextLayoutManager.measureText`, which as of **React Native 0.86** requires an
-  `AssetManager`. The patch changes that argument to `context.getAssets()`.
-  `0.1.330` is the latest published version, so there is nothing to upgrade to.
+That writes `src/webview/editorHtml.ts`, which `NoteEditorWebView` loads into the
+WebView. The RN↔web bridge is JSON messages: markdown is injected in once the
+editor is ready, and edits post markdown back out. Metro is configured to ignore
+`webview-editor/` (it carries its own `node_modules`).
 
-- **`html-entities@2.5.3`** — `parseExpensiMark` runs on the Reanimated/worklets
-  runtime and calls into `html-entities`, so that module must be workletizable.
-  The patch prepends a `"worklet";` directive to `html-entities/lib/index.js`.
-  This is required by react-native-live-markdown itself (its error message asks
-  for exactly this), and it's why `html-entities` is pinned to an exact `2.5.3`
-  — the patch targets that specific built file.
-
-- **`expensify-common@2.0.189`** — react-native-live-markdown workletizes the
-  `ExpensiMark` class (its parser runs on the worklet runtime), and worklets 0.10
-  refuses to serialize class instances (`[Worklets] Cannot copy value of type
-  Logger`). `ExpensiMark` reaches a `Logger` *instance* via **two** paths, both
-  patched in this one patch:
-    1. its own static `ExpensiMark.Log` (`dist/ExpensiMark.js`), and
-    2. the shared `Log` singleton it pulls in through `str.js` (`dist/Log.js`).
-  Each is replaced with a plain-object logger (same call surface; only `.alert`
-  is used). After the patch there are **zero** `new Logger(...)` calls in the
-  bundle, so nothing of type `Logger` can ever be serialized. Because the class
-  is workletized at Metro-transform time, a runtime `setLogger()` is too late —
-  it must be a source patch. Pinned to exact `2.0.189` since the patch targets
-  that build.
-
-When Expensify ships an RN 0.86-compatible release, bump the dependency and
-remove these patches. patch-package fails loudly if a patch goes stale, so
-you'll know when each one is safe to drop.
-
-Tracking issue: <!-- TODO: link the Expensify/react-native-live-markdown issue -->
+Live-preview decorations, custom widgets, and section-highlight toggles all live
+as CM6 extensions in `webview-editor/src/editor.js`.
 
 # Getting Started
 

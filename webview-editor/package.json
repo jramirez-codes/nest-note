@@ -1,0 +1,21 @@
+{
+  "name": "ainotepad-webview-editor",
+  "private": true,
+  "version": "0.0.0",
+  "description": "CodeMirror 6 markdown editor bundled into a single HTML string for the RN WebView. Isolated from the app's Metro/Babel build.",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "@codemirror/commands": "^6.6.0",
+    "@codemirror/lang-markdown": "^6.3.0",
+    "@codemirror/language": "^6.10.0",
+    "@codemirror/state": "^6.4.0",
+    "@codemirror/view": "^6.34.0",
+    "@lezer/highlight": "^1.2.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0"
+  }
+}

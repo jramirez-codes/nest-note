@@ -20,6 +20,10 @@ export interface ThemeColors {
   /** Color used for markdown syntax characters (the `#`, `*`, backticks). */
   syntax: string;
   codeBackground: string;
+  /** Recessed background behind a fenced code block (styled like GitHub). */
+  codeBlockBackground: string;
+  /** Hairline border around a fenced code block. */
+  codeBlockBorder: string;
 }
 
 export const theme: ThemeColors = {
@@ -33,6 +37,8 @@ export const theme: ThemeColors = {
   danger: semantic.danger,
   syntax: semantic.syntax,
   codeBackground: semantic.surface,
+  codeBlockBackground: semantic.codeBlockBackground,
+  codeBlockBorder: semantic.codeBlockBorder,
 };
 
 /** The active theme. A hook so call sites stay stable if flavors are added. */
