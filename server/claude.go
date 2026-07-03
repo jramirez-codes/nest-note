@@ -16,6 +16,7 @@ import (
 // an endpoint that is, by design, remote code execution.
 func runClaude(ctx context.Context, workdir, prompt string, onLine func([]byte)) error {
 	cmd := exec.CommandContext(ctx, "claude", "-p", prompt,
+		"--model", "sonnet",
 		"--output-format", "stream-json", "--verbose")
 	cmd.Dir = workdir
 

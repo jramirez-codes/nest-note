@@ -27,7 +27,10 @@ const html =
   '<!doctype html><html><head>' +
   '<meta charset="utf-8">' +
   '<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">' +
-  '<style>html,body{height:100%;margin:0;background:#1e1e2e}#root{height:100%}.cm-editor{height:100%}</style>' +
+  // Only the top-level editor fills the screen; nested read-only editors (the
+  // /ask answer views) must size to their content, so scope the rule to #root's
+  // direct child rather than every .cm-editor.
+  '<style>html,body{height:100%;margin:0;background:#1e1e2e}#root{height:100%}#root>.cm-editor{height:100%}</style>' +
   '</head><body><div id="root"></div>' +
   '<script>' + js + '</script>' +
   '</body></html>';
