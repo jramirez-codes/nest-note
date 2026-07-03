@@ -9,6 +9,12 @@ export interface Note {
   id: string;
   /** Raw markdown authored by the user. */
   content: string;
+  /**
+   * AI-generated page title, or '' when the page has none yet. Set by `/clean`
+   * and shown as the page's name in the notebook header; deliberately left
+   * untouched by content edits so typing never clobbers it.
+   */
+  title: string;
   createdAt: number;
   updatedAt: number;
 }

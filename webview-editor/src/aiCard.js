@@ -1,6 +1,11 @@
 import { WidgetType } from '@codemirror/view';
 import { makeCardActionButton } from './buttons.js';
-import { updateAiMarker, deleteCardLine, insertFollowupCard } from './aiMarker.js';
+import {
+  updateAiMarker,
+  deleteCardLine,
+  insertFollowupCard,
+  restoreCleanBackup,
+} from './aiMarker.js';
 import { mountAnswerView, unmountAnswerView, streamAppend } from './answerView.js';
 
 // Paper-plane icon for the follow-up "send" button, drawn with currentColor.
@@ -36,7 +41,9 @@ export class AiCardWidget extends WidgetType {
     return other.sig === this.sig;
   }
   toDOM(view) {
-    return this.obj.kind === 'pair' ? this.pairDOM(view) : this.askDOM(view);
+    if (this.obj.kind === 'pair') return this.pairDOM(view);
+    if (this.obj.kind === 'clean') return this.cleanDOM(view);
+    return this.askDOM(view);
   }
   askDOM(view) {
     const open = this.obj.open !== false;
@@ -153,12 +160,26 @@ export class AiCardWidget extends WidgetType {
       const cur = md.state.doc.toString();
       const next = this.answer;
       if (next !== cur) {
+        // Was the reader pinned to the bottom BEFORE this chunk grew the card?
+        // Measure first: once we append, scrollHeight jumps and the check is
+        // meaningless. If they'd scrolled up to re-read, leave them be.
+        const scroller = view.scrollDOM;
+        const stick =
+          scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 60;
         // Streamed answers are cumulative, so this is normally an end-insert;
         // fall back to a full replace if a chunk ever rewrites earlier text.
         const change = next.startsWith(cur)
           ? { from: cur.length, insert: next.slice(cur.length) }
           : { from: 0, to: md.state.doc.length, insert: next };
         md.dispatch({ changes: change, annotations: streamAppend.of(true) });
+        // Re-pin to the bottom after the append reflows, so the newest tokens
+        // stay visible and the answer visibly streams down. rAF waits for the
+        // grown nested view to lay out; otherwise scrollHeight is still stale.
+        if (stick) {
+          requestAnimationFrame(() => {
+            scroller.scrollTop = scroller.scrollHeight;
+          });
+        }
       }
       dom._askSig = { id: this.obj.id, open: true, status: 'streaming' };
       return true;
@@ -248,6 +269,78 @@ export class AiCardWidget extends WidgetType {
     });
     card.appendChild(del);
     return card;
+  }
+  // The /clean bar: a slim status chip while the page is being rewritten, then
+  // an Accept / Reject review bar once the cleaned text has replaced the doc.
+  // Accept drops this marker (keeping the new text); Reject restores the backup.
+  cleanDOM(view) {
+    const status = this.obj.status || 'review';
+    const card = document.createElement('div');
+    card.className =
+      'cm-ask cm-clean' +
+      (status === 'error'
+        ? ' cm-ask-error'
+        : status === 'review'
+        ? ' cm-clean-review'
+        : '');
+
+    const icon = document.createElement('span');
+    icon.className = 'cm-clean-icon';
+    icon.textContent = status === 'error' ? '⚠️' : '✨';
+    card.appendChild(icon);
+
+    const text = document.createElement('span');
+    text.className = 'cm-clean-text';
+    card.appendChild(text);
+
+    if (status === 'streaming') {
+      text.textContent = this.obj.msg || 'Cleaning up your notes…';
+      const think = document.createElement('span');
+      think.className = 'cm-ask-thinking cm-clean-dots';
+      for (let i = 0; i < 3; i++) {
+        const dot = document.createElement('span');
+        dot.className = 'cm-ask-dot';
+        think.appendChild(dot);
+      }
+      card.appendChild(think);
+    } else if (status === 'error') {
+      text.textContent = this.obj.msg || 'Cleanup failed.';
+      card.appendChild(this.cleanButton('Dismiss', 'cm-clean-reject', () =>
+        deleteCardLine(view, card),
+      ));
+    } else {
+      text.textContent = 'Cleaned up — review the changes';
+      const actions = document.createElement('span');
+      actions.className = 'cm-clean-actions';
+      actions.appendChild(
+        this.cleanButton('Reject', 'cm-clean-reject', () =>
+          restoreCleanBackup(view, card),
+        ),
+      );
+      actions.appendChild(
+        this.cleanButton('Accept', 'cm-clean-accept', () => deleteCardLine(view, card)),
+      );
+      card.appendChild(actions);
+    }
+    return card;
+  }
+  // A card button that keeps its taps away from CM (which would move the caret
+  // or toggle a card) and runs `onTap` on click.
+  cleanButton(label, cls, onTap) {
+    const btn = document.createElement('button');
+    btn.className = 'cm-clean-btn ' + cls;
+    btn.textContent = label;
+    btn.addEventListener('mousedown', e => {
+      e.preventDefault();
+      e.stopPropagation();
+    });
+    btn.addEventListener('touchstart', e => e.stopPropagation(), { passive: true });
+    btn.addEventListener('click', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      onTap();
+    });
+    return btn;
   }
   // Tear down the nested answer editor when CM discards this card's DOM (answer
   // changed, card collapsed, or line deleted), so we don't leak EditorViews.

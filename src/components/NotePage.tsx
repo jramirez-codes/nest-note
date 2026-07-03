@@ -11,6 +11,7 @@ interface NotePageProps {
    *  the caret/keyboard doesn't stay on a page you've swiped away from. */
   isActive: boolean;
   onChangeContent: (id: string, content: string) => void;
+  onSetTitle: (id: string, title: string) => void;
 }
 
 /**
@@ -20,10 +21,14 @@ interface NotePageProps {
  * Memoized so that editing one page (which updates the parent's notes array)
  * does not re-render its sibling pages.
  */
-function NotePage({ note, width, isActive, onChangeContent }: NotePageProps) {
+function NotePage({ note, width, isActive, onChangeContent, onSetTitle }: NotePageProps) {
   const handleChangeContent = useCallback(
     (content: string) => onChangeContent(note.id, content),
     [note.id, onChangeContent],
+  );
+  const handleSetTitle = useCallback(
+    (title: string) => onSetTitle(note.id, title),
+    [note.id, onSetTitle],
   );
 
   return (
@@ -34,7 +39,9 @@ function NotePage({ note, width, isActive, onChangeContent }: NotePageProps) {
         <NoteEditorWebView
           initialContent={note.content}
           isActive={isActive}
+          hasTitle={note.title.trim().length > 0}
           onChangeContent={handleChangeContent}
+          onSetTitle={handleSetTitle}
         />
       </KeyboardAvoidingView>
     </View>

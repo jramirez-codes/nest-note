@@ -28,7 +28,7 @@ export default function NotebookScreen() {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const colors = useTheme();
-  const { notes, isLoading, createNote, updateNoteContent, deleteNote } =
+  const { notes, isLoading, createNote, updateNoteContent, updateNoteTitle, deleteNote } =
     useNotes();
 
   const pagerRef = useRef<PaperPagerHandle>(null);
@@ -89,22 +89,33 @@ export default function NotebookScreen() {
           width={width}
           isActive={isActive}
           onChangeContent={updateNoteContent}
+          onSetTitle={updateNoteTitle}
         />
       );
     },
-    [pages, width, handleCreate, updateNoteContent],
+    [pages, width, handleCreate, updateNoteContent, updateNoteTitle],
   );
 
   const currentPage = pages[currentIndex];
   const currentNote =
     currentPage && currentPage.kind === 'note' ? currentPage.note : null;
 
+  // The pad header shows the current page's title. Untitled pages (no `/clean`
+  // yet) fall back to their positional name, "Smart Note #<page number>".
+  const headerTitle = currentNote
+    ? currentNote.title.trim() || `Smart Note #${currentIndex + 1}`
+    : 'New note';
+
   return (
     <View
       className="flex-1 bg-background"
       style={{ paddingTop: insets.top, paddingBottom: insets.bottom }}>
       <View className="flex-row items-center justify-between px-6 pb-2 pt-1">
-        <Text className="text-xl font-bold text-text">Pad</Text>
+        <Text
+          numberOfLines={1}
+          className="flex-1 pr-3 text-xl font-bold text-text">
+          {headerTitle}
+        </Text>
         <Text className="text-xs text-faint">
           {notes.length} {notes.length === 1 ? 'note' : 'notes'}
         </Text>

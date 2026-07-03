@@ -5,6 +5,7 @@ import {
   deletePage,
   listPages,
   updatePage,
+  updatePageTitle,
 } from '../storage';
 import type { Note } from '../types/note';
 import { fireAndForget } from '../utils/async';
@@ -22,6 +23,8 @@ export interface UseNotesResult {
   createNote: () => Promise<Note>;
   /** Replace a note's content and bump its `updatedAt`. */
   updateNoteContent: (id: string, content: string) => void;
+  /** Set a note's AI-generated title (from `/clean`). */
+  updateNoteTitle: (id: string, title: string) => void;
   deleteNote: (id: string) => void;
 }
 
@@ -63,6 +66,7 @@ export function useNotes(
     const note: Note = {
       id: createId(),
       content: '',
+      title: '',
       createdAt: timestamp,
       updatedAt: timestamp,
     };
@@ -92,10 +96,33 @@ export function useNotes(
     });
   }, []);
 
+  const updateNoteTitle = useCallback((id: string, title: string) => {
+    setNotes(prev => {
+      const index = prev.findIndex(note => note.id === id);
+      if (index === -1) {
+        return prev;
+      }
+      // Title is metadata: update it without bumping updatedAt (so the page
+      // keeps its position) and without touching content.
+      const updated: Note = { ...prev[index], title };
+      fireAndForget(updatePageTitle(id, title), 'save title');
+      const next = [...prev];
+      next[index] = updated;
+      return next;
+    });
+  }, []);
+
   const deleteNote = useCallback((id: string) => {
     setNotes(prev => prev.filter(note => note.id !== id));
     fireAndForget(deletePage(id), 'delete note');
   }, []);
 
-  return { notes, isLoading, createNote, updateNoteContent, deleteNote };
+  return {
+    notes,
+    isLoading,
+    createNote,
+    updateNoteContent,
+    updateNoteTitle,
+    deleteNote,
+  };
 }

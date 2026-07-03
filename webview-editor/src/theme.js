@@ -487,6 +487,39 @@ const components = {
     '.cm-ask-pair.cm-ask-error': { color: c.red },
     '.cm-ask-pair-ok': { color: c.green, borderColor: c.green },
 
+    // --- Clean bar (/clean …) -----------------------------------------------
+    // A slim status chip while cleaning, then an Accept / Reject review bar.
+    '.cm-clean': {
+      display: 'flex',
+      alignItems: 'center',
+      gap: '8px',
+      padding: '9px 12px',
+      fontSize: '13px',
+      color: c.subtext0,
+      maxWidth: '640px',
+    },
+    '.cm-clean-review': {
+      borderColor: c.mauve,
+      backgroundColor: c.surface0,
+      color: c.text,
+    },
+    '.cm-clean-icon': { flexShrink: '0', fontSize: '14px' },
+    '.cm-clean-text': { flex: '1', minWidth: '0' },
+    '.cm-clean-dots': { flexShrink: '0', paddingTop: '0' },
+    '.cm-clean-actions': { flexShrink: '0', display: 'flex', gap: '8px' },
+    '.cm-clean-btn': {
+      fontFamily: '-apple-system, Roboto, sans-serif',
+      fontSize: '13px',
+      fontWeight: '600',
+      padding: '6px 14px',
+      borderRadius: '8px',
+      border: 'none',
+      cursor: 'pointer',
+      userSelect: 'none',
+    },
+    '.cm-clean-accept': { color: c.base, backgroundColor: c.green },
+    '.cm-clean-reject': { color: c.subtext0, backgroundColor: c.surface1 },
+
     // --- Slash-command autocomplete menu ------------------------------------
     // Each row stacks the command name over a wrapping description, so the
     // menu sizes to its content instead of cropping the detail text.

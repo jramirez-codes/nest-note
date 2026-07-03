@@ -1,22 +1,58 @@
 import { post } from './bridge.js';
 
 // --- /ask + /pair markers ---------------------------------------------------
-// An ask/pair block is persisted as a single-line HTML comment carrying a
-// base64-encoded JSON payload: `<!--ai <b64>-->`. base64's alphabet can't
-// contain `-->`, so the marker is robust no matter what the answer text holds
-// (code, arrows, quotes), and it stays on one line so line-based detection is
-// trivial. The card widget renders it; the raw marker is only ever seen if the
-// widget can't mount.
-const AI_MARK_RE = /^<!--ai ([A-Za-z0-9+/=]+)-->$/;
+// An ask/pair block is persisted as a multi-line HTML comment so the raw text
+// stays human- and AI-reviewer-readable (a reviewer reads the note's markdown
+// source and needs to see the user↔agent exchange in the clear):
+//
+//   <!--ai
+//   kind: ask
+//   id: a1b2c3d4
+//   open: true
+//   status: done
+//   [user]
+//   How do I center a div?
+//   [agent]
+//   Use flexbox: display:flex; justify-content:center; align-items:center;
+//   -->
+//
+// Metadata rides in `key: value` header lines; the question and answer live in
+// labeled `[user]` / `[agent]` sections. The answer is the only genuinely
+// multi-line field and it comes last, bounded only by the closing `-->`, so the
+// single sequence that would break the HTML comment — a literal `-->` in the
+// content — is escaped to `--&gt;` on write and restored on read. `[user]` /
+// `[agent]` occurring inside the answer are harmless: the parser splits on the
+// first of each. The card widget renders the block; the raw form is only ever
+// seen in the stored markdown (and by the reviewing AI).
+//
+// Legacy notes stored the payload as a single-line base64 comment
+// (`<!--ai <b64>-->`); that form is still decoded for back-compat, and any edit
+// rewrites the block into the readable multi-line form above.
 
-// UTF-8-safe base64 (btoa is Latin1-only; answers contain emoji/Unicode). Built
-// with a loop rather than spread so large answers don't blow the call stack.
-function b64encode(str) {
-  const bytes = new TextEncoder().encode(str);
-  let bin = '';
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-  return btoa(bin);
-}
+const OPEN_LINE = '<!--ai';
+const CLOSE_LINE = '-->';
+const SEC_USER = '[user]';
+const SEC_AGENT = '[agent]';
+// A /clean review marker stashes the pre-clean document here, so Reject can
+// restore it — multi-line, like the answer, so it's the block's last section.
+const SEC_BACKUP = '[backup]';
+const HEADER_RE = /^(\w+):\s?(.*)$/;
+// Legacy: whole line is `<!--ai <base64>-->`. base64's alphabet has no `{`,
+// so this can never match a value written by the new encoder.
+const LEGACY_RE = /^<!--ai ([A-Za-z0-9+/=]+)-->$/;
+
+// Keys whose stored string value should be coerced back to a non-string type.
+const BOOL_KEYS = new Set(['open']);
+const NUM_KEYS = new Set(['v']);
+
+// Statuses where the card is still in-flight and the async server callbacks
+// (__aiStream / __aiDone) need to find it by id. Once a card reaches a terminal
+// status nothing looks it up again, so the id is dropped to keep finished notes
+// free of machine gibberish.
+const INFLIGHT = new Set(['streaming', 'pending']);
+
+// UTF-8-safe base64 decode, kept only to read legacy markers (btoa/atob are
+// Latin1-only; answers contain emoji/Unicode).
 function b64decode(b64) {
   const bin = atob(b64);
   const bytes = new Uint8Array(bin.length);
@@ -24,16 +60,83 @@ function b64decode(b64) {
   return new TextDecoder().decode(bytes);
 }
 
-// Encode a payload object into a marker line; decode a line back to the object
-// (null if the line isn't an ai marker or is malformed).
-export function encodeAiMarker(obj) {
-  return '<!--ai ' + b64encode(JSON.stringify(obj)) + '-->';
+// Single-line fields (headers + the question): keep them on one line and safe
+// from the comment terminator. `-->` can't survive in a comment, so escape it;
+// newlines are collapsed so a stray one can't masquerade as a header/section.
+function escLine(val) {
+  return String(val).replace(/-->/g, '--&gt;').replace(/\r?\n/g, '\\n');
 }
-export function parseAiMarker(lineText) {
-  const m = AI_MARK_RE.exec(lineText.trim());
-  if (!m) return null;
+function unescLine(val) {
+  return val.replace(/\\n/g, '\n').replace(/--&gt;/g, '-->');
+}
+// The answer keeps its real newlines; only the comment terminator is escaped.
+function escBody(val) {
+  return String(val).replace(/-->/g, '--&gt;');
+}
+function unescBody(val) {
+  return val.replace(/--&gt;/g, '-->');
+}
+
+function coerce(key, val) {
+  if (BOOL_KEYS.has(key)) return val === 'true';
+  if (NUM_KEYS.has(key)) return Number(val);
+  return val;
+}
+
+// Encode a payload object into a multi-line marker block. Everything except the
+// question/answer becomes a header line, in object-key order (so the readable
+// order is v, kind, id, open, status, …).
+export function encodeAiMarker(obj) {
+  const { q, a, backup, ...meta } = obj;
+  const keepId = INFLIGHT.has(obj.status);
+  const lines = [OPEN_LINE];
+  for (const [k, val] of Object.entries(meta)) {
+    if (val == null) continue;
+    if (k === 'id' && !keepId) continue; // finished cards don't need the handle
+    lines.push(k + ': ' + escLine(val));
+  }
+  if (obj.kind === 'ask') {
+    lines.push(SEC_USER);
+    lines.push(escLine(q || ''));
+    lines.push(SEC_AGENT);
+    if (a) lines.push(escBody(a));
+  } else if (obj.kind === 'clean' && backup != null) {
+    lines.push(SEC_BACKUP);
+    lines.push(escBody(backup));
+  }
+  lines.push(CLOSE_LINE);
+  return lines.join('\n');
+}
+
+// Parse the inner lines of a multi-line block (everything between `<!--ai` and
+// `-->`) back into a payload object, or null if it isn't a valid marker.
+function parseBlockBody(bodyLines) {
+  const obj = {};
+  let i = 0;
+  for (; i < bodyLines.length; i++) {
+    const t = bodyLines[i];
+    if (t === SEC_USER || t === SEC_AGENT || t === SEC_BACKUP) break;
+    const m = HEADER_RE.exec(t);
+    if (m) obj[m[1]] = coerce(m[1], unescLine(m[2]));
+  }
+  if (bodyLines[i] === SEC_USER) {
+    i++;
+    const qLines = [];
+    for (; i < bodyLines.length && bodyLines[i] !== SEC_AGENT; i++) qLines.push(bodyLines[i]);
+    obj.q = unescLine(qLines.join('\n')).trim();
+  }
+  if (bodyLines[i] === SEC_AGENT) {
+    obj.a = unescBody(bodyLines.slice(i + 1).join('\n'));
+  } else if (bodyLines[i] === SEC_BACKUP) {
+    obj.backup = unescBody(bodyLines.slice(i + 1).join('\n'));
+  }
+  return obj.kind ? obj : null;
+}
+
+// Decode a legacy single-line base64 marker payload.
+function parseLegacy(b64) {
   try {
-    const obj = JSON.parse(b64decode(m[1]));
+    const obj = JSON.parse(b64decode(b64));
     return obj && obj.kind ? obj : null;
   } catch (e) {
     return null;
@@ -44,56 +147,105 @@ export function genId() {
   return Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6);
 }
 
-// Locate the marker line for a given id (used by the RN → web update bridge).
-export function findAiLine(state, id) {
-  const doc = state.doc;
-  for (let i = 1; i <= doc.lines; i++) {
-    const line = doc.line(i);
-    const obj = parseAiMarker(line.text);
-    if (obj && obj.id === id) return { from: line.from, to: line.to, obj };
-  }
-  return null;
-}
-
-// Every line that is an /ask or /pair marker (yields the parsed payload + line).
+// Walk every ai marker block in the document, calling fn(obj, range) with the
+// parsed payload and its `{ from, to }` document span. Handles both the
+// multi-line form and legacy single-line base64 markers. This is the one place
+// that knows the block layout; the helpers below build on it.
 export function eachAiLine(state, fn) {
   const doc = state.doc;
-  for (let i = 1; i <= doc.lines; i++) {
+  let i = 1;
+  while (i <= doc.lines) {
     const line = doc.line(i);
-    const obj = parseAiMarker(line.text);
-    if (obj) fn(obj, line);
+    const t = line.text.trim();
+
+    const legacy = LEGACY_RE.exec(t);
+    if (legacy) {
+      const obj = parseLegacy(legacy[1]);
+      if (obj) fn(obj, { from: line.from, to: line.to });
+      i++;
+      continue;
+    }
+
+    if (t === OPEN_LINE) {
+      // Scan forward to the closing `-->`. Content never contains a bare `-->`
+      // (it's escaped), so the first match is always our terminator.
+      let j = i + 1;
+      while (j <= doc.lines && doc.line(j).text.trim() !== CLOSE_LINE) j++;
+      if (j <= doc.lines) {
+        const bodyLines = [];
+        for (let k = i + 1; k < j; k++) bodyLines.push(doc.line(k).text);
+        const obj = parseBlockBody(bodyLines);
+        if (obj) {
+          fn(obj, { from: line.from, to: doc.line(j).to });
+          i = j + 1;
+          continue;
+        }
+      }
+      // Unterminated or unparsable — don't swallow the rest of the doc.
+      i++;
+      continue;
+    }
+    i++;
   }
 }
 
-// Resolve the marker line a card widget sits on, at interaction time, so edits
+// Locate the marker block for a given id (used by the RN → web update bridge).
+// Named findAiLine for historical reasons; it returns the whole block span.
+export function findAiLine(state, id) {
+  let found = null;
+  eachAiLine(state, (obj, range) => {
+    if (!found && obj.id === id) found = { from: range.from, to: range.to, obj };
+  });
+  return found;
+}
+
+// Resolve the marker block a card widget sits on, at interaction time, so edits
 // above it don't invalidate a captured position (mirrors CheckboxWidget).
-export function aiLineOf(view, el) {
+export function aiBlockOf(view, el) {
   const pos = view.posAtDOM(el);
-  return view.state.doc.lineAt(pos);
+  let found = null;
+  eachAiLine(view.state, (obj, range) => {
+    if (!found && pos >= range.from && pos <= range.to) found = { ...range, obj };
+  });
+  return found;
 }
 
 // Rewrite a card's persisted payload in place (toggle collapse, commit answer).
 export function updateAiMarker(view, el, patch) {
-  const line = aiLineOf(view, el);
-  const obj = parseAiMarker(line.text);
-  if (!obj) return;
+  const block = aiBlockOf(view, el);
+  if (!block) return;
   view.dispatch({
-    changes: { from: line.from, to: line.to, insert: encodeAiMarker({ ...obj, ...patch }) },
+    changes: {
+      from: block.from,
+      to: block.to,
+      insert: encodeAiMarker({ ...block.obj, ...patch }),
+    },
   });
 }
 
-// Remove the whole line a block-card widget sits on (mirrors the /ask delete).
+// Remove the whole block a card widget sits on (plus its trailing newline).
 export function deleteCardLine(view, el) {
-  const line = aiLineOf(view, el);
-  const to = Math.min(line.to + 1, view.state.doc.length);
-  view.dispatch({ changes: { from: line.from, to } });
+  const block = aiBlockOf(view, el);
+  if (!block) return;
+  const to = Math.min(block.to + 1, view.state.doc.length);
+  view.dispatch({ changes: { from: block.from, to } });
+}
+
+// Reject a /clean review: swap the whole document back to the stored backup
+// (the pre-clean page text), which also drops the review marker with it.
+export function restoreCleanBackup(view, el) {
+  const block = aiBlockOf(view, el);
+  if (!block) return;
+  const backup = block.obj.backup || '';
+  view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: backup } });
 }
 
 // Spawn a new streaming /ask card on a fresh line right after the card `el` sits
 // on, then kick off the run. `context` (the parent's { q, a }) rides along so the
 // server can answer the follow-up in the same conversation. Returns the new id.
 export function insertFollowupCard(view, el, question, context) {
-  const line = aiLineOf(view, el);
+  const block = aiBlockOf(view, el);
+  if (!block) return null;
   const id = genId();
   const marker = encodeAiMarker({
     v: 1,
@@ -104,9 +256,8 @@ export function insertFollowupCard(view, el, question, context) {
     open: true,
     status: 'streaming',
   });
-  // Insert at end-of-line so the new marker lands on its own line below, whether
-  // or not this card is the document's last line.
-  view.dispatch({ changes: { from: line.to, to: line.to, insert: '\n' + marker } });
+  // Insert just below the block so the new marker lands on its own lines.
+  view.dispatch({ changes: { from: block.to, to: block.to, insert: '\n' + marker } });
   post({ type: 'ask', id, question, context });
   return id;
 }

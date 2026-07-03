@@ -36,7 +36,9 @@ export default function WebViewSpike() {
         <NoteEditorWebView
           initialContent={SAMPLE}
           isActive
+          hasTitle={false}
           onChangeContent={setOut}
+          onSetTitle={() => {}}
         />
       </View>
       <View style={[styles.footer, { borderTopColor: colors.border }]}>

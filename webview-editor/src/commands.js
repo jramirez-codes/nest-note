@@ -17,6 +17,11 @@ const SLASH_COMMANDS = [
     detail: 'Pair a device by QR code or payload',
     apply: '/pair ',
   },
+  {
+    label: '/clean',
+    detail: 'Clean up & reorganize the whole page — add guidance after, e.g. /clean project ideas',
+    apply: '/clean ',
+  },
 ];
 
 // Only fires when the caret is on a line that is a lone `/word` (the slash at
@@ -107,6 +112,35 @@ export function aiCommandOnEnter(view) {
       selection: { anchor: line.from + insert.length },
     });
     post({ type: 'pairScan', id });
+    return true;
+  }
+
+  // `/clean [guidance]`: hand the WHOLE page (minus this command line) to Claude
+  // to rewrite. The result replaces the doc behind an Accept/Reject review bar
+  // (see __cleanApply); the run itself is owned by the RN side.
+  const clean = /^\/clean\b\s*(.*)$/.exec(text);
+  if (clean) {
+    const guidance = clean[1].trim();
+    // The page text to clean is the document with this command line removed.
+    const before = state.doc.sliceString(0, line.from);
+    const after = state.doc.sliceString(line.to);
+    const pageText = (before + after).replace(/^\n+|\n+$/g, '');
+    if (!pageText.trim()) return false; // nothing to clean — let Enter be normal
+
+    const id = genId();
+    const marker = encodeAiMarker({
+      v: 1,
+      kind: 'clean',
+      id,
+      status: 'streaming',
+      msg: guidance ? `Cleaning up as “${guidance}”…` : 'Cleaning up your notes…',
+    });
+    const insert = marker + '\n';
+    view.dispatch({
+      changes: { from: line.from, to: line.to, insert },
+      selection: { anchor: line.from + insert.length },
+    });
+    post({ type: 'clean', id, pageText, guidance });
     return true;
   }
 

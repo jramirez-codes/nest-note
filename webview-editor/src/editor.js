@@ -171,4 +171,22 @@ window.__aiDone = function (id, patch) {
   });
 };
 
+// RN calls this when a /clean run finishes: swap the whole document for the
+// cleaned text, stashing the original as a backup inside a `review` marker that
+// renders the Accept / Reject bar. It's a single dispatch, so a plain undo also
+// restores the original in one step.
+window.__cleanApply = function (id, cleaned) {
+  const found = findAiLine(view.state, id);
+  if (!found) return;
+  // Backup = the current document minus the clean marker block (i.e. the page
+  // text as it stands now), so edits made while cleaning are preserved on reject.
+  const before = view.state.doc.sliceString(0, found.from);
+  const after = view.state.doc.sliceString(found.to);
+  const backup = (before + after).replace(/^\n+|\n+$/g, '');
+  const marker = encodeAiMarker({ v: 1, kind: 'clean', id, status: 'review', backup });
+  view.dispatch({
+    changes: { from: 0, to: view.state.doc.length, insert: marker + '\n' + cleaned },
+  });
+};
+
 post({ type: 'ready' });

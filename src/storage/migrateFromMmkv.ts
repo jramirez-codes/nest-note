@@ -130,6 +130,7 @@ function parseNote(raw: string | undefined): Note | null {
     return {
       id: value.id,
       content: value.content,
+      title: typeof value.title === 'string' ? value.title : '',
       createdAt: created,
       updatedAt: updated,
     };

@@ -7,7 +7,7 @@ import {
   type WebViewProps,
 } from 'react-native-webview';
 import { EDITOR_HTML } from '../webview/editorHtml';
-import { pairFromPayload, runAsk, type AskHandle } from '../server/aiController';
+import { pairFromPayload, runAsk, runClean, type AskHandle } from '../server/aiController';
 import QrPairModal from './QrPairModal';
 
 // react-native-webview@14's class-component typings resolve to `never` under
@@ -23,7 +23,11 @@ interface NoteEditorWebViewProps {
   initialContent: string;
   /** False once the page is swiped away from, so we drop keyboard focus. */
   isActive: boolean;
+  /** Whether the page already has a title; when false, `/clean` generates one. */
+  hasTitle: boolean;
   onChangeContent: (content: string) => void;
+  /** Store an AI-generated title produced by `/clean` (called at most once). */
+  onSetTitle: (title: string) => void;
 }
 
 /**
@@ -37,7 +41,9 @@ interface NoteEditorWebViewProps {
 export default function NoteEditorWebView({
   initialContent,
   isActive,
+  hasTitle,
   onChangeContent,
+  onSetTitle,
 }: NoteEditorWebViewProps) {
   const ref = useRef<WebViewInstance>(null);
   // Live /ask runs keyed by the editor-side card id, so we can cancel them if
@@ -56,6 +62,8 @@ export default function NoteEditorWebView({
         question?: string;
         context?: { q?: string; a?: string };
         payload?: string;
+        pageText?: string;
+        guidance?: string;
       };
       try {
         msg = JSON.parse(e.nativeEvent.data);
@@ -135,12 +143,38 @@ export default function NoteEditorWebView({
             })});`,
           );
         });
+      } else if (
+        msg.type === 'clean' &&
+        typeof msg.id === 'string' &&
+        typeof msg.pageText === 'string'
+      ) {
+        // Rewrite the whole page. On success the editor swaps in the cleaned
+        // text behind an Accept/Reject bar; on error the notes are left as-is.
+        const id = msg.id;
+        askHandles.current[id] = runClean(msg.pageText, msg.guidance ?? '', !hasTitle, {
+          onDone: (cleaned, title) => {
+            delete askHandles.current[id];
+            inject(`window.__cleanApply(${JSON.stringify(id)}, ${JSON.stringify(cleaned)});`);
+            // Give the page a name if it had none (independent of Accept/Reject —
+            // the title describes the note's topic, which the rewrite preserves).
+            if (title) onSetTitle(title);
+          },
+          onError: errMsg => {
+            delete askHandles.current[id];
+            inject(
+              `window.__aiDone(${JSON.stringify(id)}, ${JSON.stringify({
+                status: 'error',
+                msg: errMsg,
+              })});`,
+            );
+          },
+        });
       } else if (msg.type === 'pairScan' && typeof msg.id === 'string') {
         // Bare `/pair`: open the QR scanner; the scan result feeds pairing.
         setPairScan({ id: msg.id });
       }
     },
-    [initialContent, onChangeContent],
+    [initialContent, hasTitle, onChangeContent, onSetTitle],
   );
 
   // Feed a resolved pairing outcome back into the /pair card, then close scanner.

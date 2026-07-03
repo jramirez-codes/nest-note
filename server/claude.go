@@ -17,6 +17,9 @@ import (
 func runClaude(ctx context.Context, workdir, prompt string, onLine func([]byte)) error {
 	cmd := exec.CommandContext(ctx, "claude", "-p", prompt,
 		"--model", "sonnet",
+		// Emit per-token content_block_delta lines (not just one whole-turn
+		// assistant message), so the app can type the answer out as it arrives.
+		"--include-partial-messages",
 		"--output-format", "stream-json", "--verbose")
 	cmd.Dir = workdir
 

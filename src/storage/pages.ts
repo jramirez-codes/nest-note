@@ -21,6 +21,7 @@ function mapRow(row: Record<string, unknown>): Note {
   return {
     id: String(row.id),
     content: String(row.content),
+    title: String(row.title ?? ''),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
   };
@@ -29,7 +30,7 @@ function mapRow(row: Record<string, unknown>): Note {
 /** Fetch a single page by id, or `null` if it does not exist. */
 export async function getPage(id: string): Promise<Note | null> {
   const result = await getDb().execute(
-    'SELECT id, content, created_at, updated_at FROM pages WHERE id = ?',
+    'SELECT id, content, title, created_at, updated_at FROM pages WHERE id = ?',
     [id],
   );
   const row = result.rows?.[0];
@@ -39,7 +40,7 @@ export async function getPage(id: string): Promise<Note | null> {
 /** All pages in a notebook, most recently updated first. */
 export async function listPages(notebookId: string): Promise<Note[]> {
   const result = await getDb().execute(
-    `SELECT id, content, created_at, updated_at
+    `SELECT id, content, title, created_at, updated_at
      FROM pages WHERE notebook_id = ?
      ORDER BY updated_at DESC`,
     [notebookId],
@@ -73,6 +74,15 @@ export async function updatePage(note: Note): Promise<void> {
     'UPDATE pages SET content = ?, updated_at = ? WHERE id = ?',
     [note.content, note.updatedAt, note.id],
   );
+}
+
+/**
+ * Set a page's AI-generated `title` (from `/clean`). Kept separate from
+ * {@link updatePage} so it doesn't touch `content`; `updated_at` is left alone
+ * so re-titling a page never reorders it out from under the user.
+ */
+export async function updatePageTitle(id: string, title: string): Promise<void> {
+  await getDb().execute('UPDATE pages SET title = ? WHERE id = ?', [title, id]);
 }
 
 /** Delete a page by id. No-op if it does not exist. */

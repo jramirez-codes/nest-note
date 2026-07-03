@@ -15,6 +15,7 @@ export {
   listPages,
   createPage,
   updatePage,
+  updatePageTitle,
   deletePage,
   searchPages,
 } from './pages';
@@ -39,6 +40,7 @@ function seedNotes(now: number): Note[] {
         '- `inline code`\n' +
         '- > blockquotes\n\n' +
         'Tap the last page to start a fresh note.',
+      title: '',
       createdAt: now,
       updatedAt: now,
     },
