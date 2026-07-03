@@ -121,9 +121,17 @@ function buildLivePreview(view) {
           const mk = state.doc.sliceString(node.from, node.to);
           // Only unordered bullets become dots — leave ordered "1." numbers.
           if (mk !== '-' && mk !== '*' && mk !== '+') return;
-          // Task items keep their bullet hidden; the checkbox handler owns them.
           const line = state.doc.lineAt(node.from);
-          if (/^\s*\[[ xX]\]/.test(line.text.slice(node.to - line.from))) return;
+          const rest = line.text.slice(node.to - line.from);
+          // Skip empty items (just the marker, no text yet). A bare `*` on a
+          // fresh line under a list is transiently parsed as a new bullet, so
+          // typing `*italic*`/`**bold**` there would flash a floating "•" until
+          // the first non-space char lands — the "asterisk turns into a bullet"
+          // glitch. Leaving the raw marker until the item has content avoids it
+          // (the marker is shown raw on the active line regardless).
+          if (rest.trim() === '') return;
+          // Task items keep their bullet hidden; the checkbox handler owns them.
+          if (/^\s*\[[ xX]\]/.test(rest)) return;
           marks.push(
             Decoration.replace({ widget: new BulletWidget() }).range(node.from, node.to),
           );

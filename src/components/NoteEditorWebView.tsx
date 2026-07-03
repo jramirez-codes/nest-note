@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Linking, StyleSheet, View } from 'react-native';
+import { Keyboard, Linking, StyleSheet, View } from 'react-native';
 import { fetchLinkPreview } from '../utils/linkPreview';
 import {
   WebView as RNWebView,
@@ -170,6 +170,21 @@ export default function NoteEditorWebView({
     if (!isActive) {
       ref.current?.injectJavaScript('document.activeElement?.blur(); true;');
     }
+  }, [isActive]);
+
+  // Keep the editor's DOM focus in sync with the keyboard. When the user hides
+  // the keyboard (system Back button, swipe-down) without leaving the note, the
+  // WebView's contenteditable keeps focus — so on Android a later tap won't
+  // re-raise the keyboard (no focus change fires) and typing feels dead. Blur
+  // the editor whenever the keyboard hides so the next tap reliably re-focuses
+  // the note and brings the keyboard back. CM6 keeps the caret in editor state
+  // across blur, so the cursor position is preserved on re-focus.
+  useEffect(() => {
+    if (!isActive) return;
+    const sub = Keyboard.addListener('keyboardDidHide', () => {
+      ref.current?.injectJavaScript('document.activeElement?.blur(); true;');
+    });
+    return () => sub.remove();
   }, [isActive]);
 
   return (

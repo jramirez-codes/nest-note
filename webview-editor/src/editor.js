@@ -1,7 +1,11 @@
 import { EditorView, keymap } from '@codemirror/view';
-import { EditorState } from '@codemirror/state';
+import { EditorState, Prec } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
-import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
+import {
+  markdown,
+  markdownLanguage,
+  insertNewlineContinueMarkupCommand,
+} from '@codemirror/lang-markdown';
 import { syntaxHighlighting } from '@codemirror/language';
 import { autocompletion } from '@codemirror/autocomplete';
 
@@ -22,6 +26,7 @@ import { codeBlocks, codeLanguages } from './codeBlocks.js';
 import { blockquotes } from './blockquotes.js';
 import { openLinks } from './links.js';
 import { slashCommandSource, aiCommandOnEnter } from './commands.js';
+import { lineStartReplace } from './lineStartReplace.js';
 import { encodeAiMarker, findAiLine } from './aiMarker.js';
 
 /**
@@ -39,11 +44,59 @@ import { encodeAiMarker, findAiLine } from './aiMarker.js';
  *   web → RN:  { type: 'ready' } once mounted, { type: 'change', text } on edits.
  */
 
+// Enter that continues list / blockquote markup onto the new line. `markdown()`
+// binds this by default, but its default config, on an EMPTY list item, loosens
+// a tight list by inserting a blank line (`- item`⏎`- `⏎ → `- item`, blank, `- `)
+// — the stray "extra line" a note-taker never wants. `nonTightLists: false`
+// forces the other branch: an empty item + Enter deletes the marker and exits
+// the list, matching Obsidian/Notion. Bound above `markdown()`'s own high-prec
+// binding (below) so ours wins for lists.
+const continueMarkup = insertNewlineContinueMarkupCommand({ nonTightLists: false });
+
+// Normalize freshly-typed `*` / `+` bullet markers to `-` so asterisk/plus lists
+// behave EXACTLY like dash lists (which already work perfectly). `*` doubles as
+// the emphasis marker, so the incremental parser treats `* `-lists more
+// ambiguously than `- `-lists — the source of the stray-bullet flicker and the
+// list-continuation edge cases. Rewriting the marker to `-` at input time
+// sidesteps all of it; CommonMark treats -, *, + as identical bullets, so it's
+// lossless. Only a marker followed by whitespace is touched (`* x`, `* `), which
+// CommonMark guarantees is a bullet — never emphasis (`*x*`, `**x**`, a lone
+// `*`). Runs as a transaction filter so the `*` is swapped before it paints (no
+// flash), and only over changed lines (no full-doc scan).
+const THEMATIC_BREAK = /^\s*(?:[-*+]\s*){3,}$/;
+const normalizeBulletMarkers = EditorState.transactionFilter.of(tr => {
+  if (!tr.docChanged) return tr;
+  const extra = [];
+  const doc = tr.newDoc;
+  tr.changes.iterChangedRanges((_fromA, _toA, fromB, toB) => {
+    const first = doc.lineAt(fromB).number;
+    const last = doc.lineAt(toB).number;
+    for (let n = first; n <= last; n++) {
+      const line = doc.line(n);
+      const m = /^(\s*)([*+])\s/.exec(line.text);
+      if (!m) continue;
+      if (THEMATIC_BREAK.test(line.text)) continue; // "* * *" / "***" divider
+      if (/^\s*[*+]\s+[-*+]/.test(line.text)) continue; // divider in progress
+      const at = line.from + m[1].length;
+      extra.push({ from: at, to: at + 1, insert: '-' });
+    }
+  });
+  return extra.length ? [tr, { changes: extra, sequential: true }] : tr;
+});
+
 const extensions = [
+  normalizeBulletMarkers,
   history(),
-  // Highest precedence Enter: intercept slash commands before the newline.
-  keymap.of([{ key: 'Enter', run: aiCommandOnEnter }]),
+  // Highest-precedence Enter: intercept slash commands first (they turn into
+  // cards), then continue/exit list & quote markup, before the plain newline.
+  Prec.highest(
+    keymap.of([
+      { key: 'Enter', run: aiCommandOnEnter },
+      { key: 'Enter', run: continueMarkup },
+    ]),
+  ),
   keymap.of([...defaultKeymap, ...historyKeymap]),
+  lineStartReplace,
   autocompletion({
     override: [slashCommandSource],
     icons: false,
