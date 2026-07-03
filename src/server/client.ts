@@ -41,6 +41,22 @@ export async function pair(t: Transport, a: ServerAddress, code: string): Promis
   return token;
 }
 
+/**
+ * Probe the server's `/health` endpoint over the pinned tunnel. Resolves true
+ * only when the server answers 200 through a valid pin — i.e. the paired laptop
+ * is reachable right now and still the one we trust. Never throws: a refused
+ * connection, a timeout, or a pin mismatch all resolve false, so callers can
+ * treat it as a plain reachable/not-reachable signal.
+ */
+export async function checkHealth(t: Transport, a: ServerAddress): Promise<boolean> {
+  try {
+    const res = await t.postPinned(`${origin(a, 'https')}/health`, a.pin);
+    return res.status === 200;
+  } catch {
+    return false;
+  }
+}
+
 /** Outcome of a completed run — the final `result` line's summary. */
 export interface RunResult {
   result: string;

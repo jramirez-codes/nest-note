@@ -8,6 +8,7 @@ import NotePage from '../components/NotePage';
 import PageIndicator from '../components/PageIndicator';
 import PaperPager from '../components/PaperPager';
 import type { PaperPagerHandle } from '../components/PaperPager';
+import ServerStatusDot from '../components/ServerStatusDot';
 import { useNotes } from '../hooks/useNotes';
 import type { Note } from '../types/note';
 import { fireAndForget } from '../utils/async';
@@ -111,11 +112,21 @@ export default function NotebookScreen() {
       className="flex-1 bg-background"
       style={{ paddingTop: insets.top, paddingBottom: insets.bottom }}>
       <View className="flex-row items-center justify-between px-6 pb-2 pt-1">
-        <Text
-          numberOfLines={1}
-          className="flex-1 pr-3 text-xl font-bold text-text">
-          {headerTitle}
-        </Text>
+        <View className="flex-1 flex-row items-center pr-3">
+          {/* Connection bubble: green when the companion server is reachable,
+              red when not. items-center on the row keeps it centered on the
+              title's cap height; it holds its width on the left while the title
+              (shrink) ellipsizes to fit. */}
+          <View className="mr-2">
+            <ServerStatusDot />
+          </View>
+          <Text
+            numberOfLines={1}
+            ellipsizeMode="tail"
+            className="shrink text-xl font-bold text-text">
+            {headerTitle}
+          </Text>
+        </View>
         <Text className="text-xs text-faint">
           {notes.length} {notes.length === 1 ? 'note' : 'notes'}
         </Text>

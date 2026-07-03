@@ -52,6 +52,65 @@ key type ever changes, update the header (or the pins won't match).
 `NSAllowsLocalNetworking` is already `true` (so the self-signed LAN connection is
 allowed; the pin check in `AiNotepadSecure` is what actually secures it).
 
+### ⚠️ Off-LAN caveat for the iOS module (verify when implementing)
+
+`NSAllowsLocalNetworking` only covers *local* addresses. When the phone connects
+to a non-local host — a Tailscale `100.x.y.z` or a DDNS name via
+`-advertise-host` (see [Remote access](#remote-access--using-it-off-your-home-wi-fi))
+— App Transport Security applies normally and would reject the self-signed cert.
+The Android module already sidesteps this: its custom trust manager + OkHttp
+factory handle server trust themselves, bypassing system validation. The iOS
+`AiNotepadSecure` must do the equivalent — implement pinning in a
+`URLSession`/`URLSessionDelegate` (or `NWConnection`) `didReceiveChallenge`
+handler that validates the SPKI and returns `.useCredential`, which overrides
+ATS for that connection. If that path proves fiddly, an
+`NSExceptionDomains` entry (or, last resort, `NSAllowsArbitraryLoads`) is the
+fallback — but the pin check, not ATS, is what secures it either way. Confirm a
+real off-LAN `/ask` works on a physical device before relying on it.
+
+## Remote access — using it off your home Wi-Fi
+
+Nothing about **trust** changes when you leave the LAN. The client pins the
+server's SPKI and authenticates with a bearer token, and the pinning trust
+manager sets `hostnameVerifier { _, _ -> true }` (see
+`AiNotepadSecureModule.kt`) — so a connection over cellular is cryptographically
+identical to one on the LAN. The only gaps are **reachability** (home NAT hides
+the laptop) and **addressing** (the pairing QR bakes in a fixed host). Both are
+solved by pairing against a stable, remotely-reachable host instead of the LAN
+IP, via the server's `-advertise-host` flag.
+
+### Recommended: Tailscale (overlay VPN)
+
+Nothing is exposed to the public internet — only your own devices can reach the
+server, so there's no open port to brute-force and no CGNAT/port-forward hassle.
+
+1. Install Tailscale on both the laptop and the phone, signed into the same
+   tailnet.
+2. Find the laptop's tailnet IP: `tailscale ip -4` → a stable `100.x.y.z`.
+3. Start the server with that as the advertise host:
+   ```
+   go run . -advertise-host 100.x.y.z
+   ```
+   (With `-advertise-host` set and no `-addr`, the server binds `0.0.0.0` so it
+   listens on the tailnet interface as well as the LAN one.)
+4. Pair **once** by scanning the QR. The phone now stores the `100.x.y.z`
+   address, which is reachable from anywhere on the tailnet — home or away — so
+   `/ask` just works on the go. Re-pair only if that IP ever changes.
+
+mDNS discovery (`_ainotepad._tcp`) stays LAN-only and goes quiet off-LAN; that's
+fine — the app falls back to the stored pairing address, which is the tailnet IP.
+
+### Alternative: port-forward + Dynamic DNS
+
+Same flag, public address instead of a tailnet one:
+`-advertise-host home.duckdns.org`, plus a router rule forwarding
+`WAN:8443 → laptop-LAN-IP:8443` and a DDNS updater on the laptop. ⚠️ Two
+caveats the Tailscale path avoids: many ISPs use **CGNAT** (test:
+`curl ifconfig.me` vs. the router's WAN IP — if they differ, port forwarding
+can't work), and this **exposes `/pair` and `/run` to the whole internet**
+(auth is then only the bearer token + 10-min pairing code). Prefer Tailscale
+unless you can't install it on both devices.
+
 ## Using it
 
 In any note, on their own line:

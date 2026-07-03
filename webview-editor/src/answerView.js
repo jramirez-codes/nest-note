@@ -7,6 +7,7 @@ import { previewField, askLiveField, setPreviewEffect } from './state.js';
 import { cardField, previewFetcher } from './cards.js';
 import { codeBlocks, codeLanguages } from './codeBlocks.js';
 import { livePreview } from './livePreview.js';
+import { listIndent } from './listIndent.js';
 import { blockquotes } from './blockquotes.js';
 import { openLinks } from './links.js';
 import { wholeDocDeco } from './viewPlugin.js';
@@ -45,6 +46,7 @@ export function mountAnswerView(parent, text, { trim = true } = {}) {
         cardField,
         previewFetcher,
         livePreview,
+        listIndent,
         codeBlocks,
         blockquotes,
         // Scan the whole answer for decorations — this view is auto-height, so

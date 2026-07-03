@@ -12,6 +12,7 @@
     "postinstall": "patch-package",
     "server:build": "cd server && go build -o ainotepad-server .",
     "server:start": "cd server && go run .",
+    "server:remote": "cd server && go run . -advertise-host \"$(tailscale ip -4 | head -n1)\"",
     "start": "react-native start",
     "test": "jest"
   },

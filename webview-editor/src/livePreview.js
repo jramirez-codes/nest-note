@@ -139,11 +139,19 @@ function buildLivePreview(view) {
         }
 
         if (node.name === 'TaskMarker') {
+          const checked = /[xX]/.test(state.doc.sliceString(node.from, node.to));
+          // A completed item gets struck through — the whole line's text (and any
+          // soft-wrapped rows), even while the line is active/being edited, so the
+          // "done" state stays visible. Line decoration must sit at the line start.
+          const line = state.doc.lineAt(node.from);
+          if (checked) {
+            marks.push(
+              Decoration.line({ class: 'cm-task-done-line' }).range(line.from),
+            );
+          }
           // On the active line show raw `- [ ]` text so it can be edited.
           if (active) return;
-          const checked = /[xX]/.test(state.doc.sliceString(node.from, node.to));
           // Hide the leading list bullet ("- ", "* ", "+ ") for a clean row.
-          const line = state.doc.lineAt(node.from);
           const prefix = line.text.slice(0, node.from - line.from);
           const bullet = /([-*+]\s+)$/.exec(prefix);
           if (bullet) marks.push(HIDE.range(node.from - bullet[1].length, node.from));

@@ -22,6 +22,7 @@ import {
 import { broadcastPreview } from './answerView.js';
 import { cardField, previewFetcher } from './cards.js';
 import { livePreview } from './livePreview.js';
+import { listIndent } from './listIndent.js';
 import { codeBlocks, codeLanguages } from './codeBlocks.js';
 import { blockquotes } from './blockquotes.js';
 import { openLinks } from './links.js';
@@ -113,6 +114,7 @@ const extensions = [
   codeBlocks,
   blockquotes,
   livePreview,
+  listIndent,
   theme,
   EditorView.lineWrapping,
   EditorView.updateListener.of(u => {

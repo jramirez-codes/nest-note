@@ -19,6 +19,7 @@ func main() {
 	var (
 		port    = flag.Int("port", 8443, "TLS port to listen on")
 		addr    = flag.String("addr", "", "bind address (default: auto-detected LAN IP)")
+		advHost = flag.String("advertise-host", "", "host to put in the pairing QR (e.g. a Tailscale IP or DDNS name for off-LAN access); default: bind address")
 		dir     = flag.String("dir", defaultStateDir(), "directory for cert/key/token")
 		workdir = flag.String("workdir", mustCwd(), "directory Claude runs in")
 		pairTTL = flag.Duration("pair-ttl", 10*time.Minute, "how long the pairing code stays valid")
@@ -31,10 +32,28 @@ func main() {
 
 	bindIP := *addr
 	if bindIP == "" {
-		bindIP = lanIP()
+		// Reaching us off-LAN (e.g. over Tailscale) means listening on that
+		// interface, not only the LAN one — so when an advertise host is given,
+		// default to all interfaces rather than the single LAN IP.
+		if *advHost != "" {
+			bindIP = "0.0.0.0"
+		} else {
+			bindIP = lanIP()
+		}
 	}
 
-	cert, err := loadOrCreateCert(*dir, []string{bindIP, "127.0.0.1", "localhost"})
+	// Addresses the cert is valid for. The client pins the SPKI and skips
+	// hostname checks, so which one the phone uses doesn't affect trust — but
+	// listing the real ones keeps any stricter client working, including over a
+	// Tailscale IP or DDNS name passed via -advertise-host.
+	sans := []string{"127.0.0.1", "localhost"}
+	for _, h := range []string{bindIP, lanIP(), *advHost} {
+		if h != "" && h != "0.0.0.0" {
+			sans = append(sans, h)
+		}
+	}
+
+	cert, err := loadOrCreateCert(*dir, sans)
 	if err != nil {
 		log.Fatalf("cert: %v", err)
 	}
@@ -81,10 +100,16 @@ func main() {
 
 	// The QR carries everything the phone needs to pair: address, the pin to
 	// trust, and the one-time code. Scanning it is the out-of-band trust
-	// transfer that makes the self-signed cert safe.
+	// transfer that makes the self-signed cert safe. The host the phone stores
+	// is the advertise host when set (a Tailscale IP or DDNS name it can reach
+	// off-LAN), else the bind IP for plain same-LAN use.
+	qrHost := *advHost
+	if qrHost == "" {
+		qrHost = bindIP
+	}
 	payload, _ := json.Marshal(pairPayload{
 		V:    1,
-		Host: bindIP,
+		Host: qrHost,
 		Port: *port,
 		Pin:  pin,
 		Code: pr.code,
@@ -92,6 +117,9 @@ func main() {
 
 	fmt.Println("ainotepad server")
 	fmt.Printf("  listening  wss://%s/run\n", listenAddr)
+	if *advHost != "" {
+		fmt.Printf("  pair host  wss://%s/run  (encoded in the QR)\n", net.JoinHostPort(qrHost, fmt.Sprintf("%d", *port)))
+	}
 	fmt.Printf("  discovery  _ainotepad._tcp on the LAN\n")
 	fmt.Printf("  workdir    %s\n", *workdir)
 	fmt.Printf("  spki pin   %s\n", pin)

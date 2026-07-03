@@ -1,7 +1,8 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import type { Note } from '../types/note';
 import { formatNoteDate } from '../utils/date';
+import ConfirmDialog from './ConfirmDialog';
 
 interface NoteHeaderProps {
   /** The note on the current page, or null on the trailing "new note" sheet. */
@@ -18,10 +19,14 @@ interface NoteHeaderProps {
  * the swipe gesture.
  */
 function NoteHeader({ note, pageNumber, totalPages, onDelete }: NoteHeaderProps) {
-  const handleDelete = useCallback(
-    () => note && onDelete(note.id),
-    [note, onDelete],
-  );
+  const [confirmVisible, setConfirmVisible] = useState(false);
+
+  const requestDelete = useCallback(() => setConfirmVisible(true), []);
+  const cancelDelete = useCallback(() => setConfirmVisible(false), []);
+  const confirmDelete = useCallback(() => {
+    setConfirmVisible(false);
+    if (note) onDelete(note.id);
+  }, [note, onDelete]);
 
   return (
     <View className="flex-row items-center justify-between border-b border-border px-6 py-3">
@@ -34,7 +39,7 @@ function NoteHeader({ note, pageNumber, totalPages, onDelete }: NoteHeaderProps)
             {formatNoteDate(note.createdAt)}
           </Text>
           <Pressable
-            onPress={handleDelete}
+            onPress={requestDelete}
             hitSlop={12}
             accessibilityRole="button"
             accessibilityLabel="Delete note">
@@ -46,6 +51,17 @@ function NoteHeader({ note, pageNumber, totalPages, onDelete }: NoteHeaderProps)
           New page
         </Text>
       )}
+
+      <ConfirmDialog
+        visible={confirmVisible}
+        title="Delete page"
+        message="Are you sure you want to delete this page? This cannot be undone."
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        destructive
+        onConfirm={confirmDelete}
+        onCancel={cancelDelete}
+      />
     </View>
   );
 }

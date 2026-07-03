@@ -8,9 +8,10 @@
  * the live server; this only wires it to editor ids and persists the pairing.
  */
 
-import { pair as pairServer, run, type RunHandle } from './client';
+import { pair as pairServer, run, checkHealth, type RunHandle } from './client';
 import { createNativeTransport, isNativeTransportAvailable } from './nativeTransport';
 import { loadServer, saveServer, parsePairInput, type PairedServer } from './store';
+import { setServerStatus } from './status';
 import type { Transport } from './transport';
 
 let transport: Transport | null = null;
@@ -32,6 +33,26 @@ async function currentServer(): Promise<PairedServer | null> {
   return cachedServer;
 }
 
+/**
+ * Probe whether the paired server is reachable right now and publish the result
+ * to the shared status store (which the header bubble subscribes to). Returns
+ * false — and marks 'disconnected' — when the secure module is missing or no
+ * server is paired, so "can't reach it" and "nothing to reach" read the same to
+ * the user. Safe to call on a timer.
+ */
+export async function pingServer(): Promise<boolean> {
+  const t = getTransport();
+  const server = t ? await currentServer() : null;
+  if (!t || !server) {
+    setServerStatus('disconnected');
+    return false;
+  }
+  setServerStatus('checking');
+  const ok = await checkHealth(t, server);
+  setServerStatus(ok ? 'connected' : 'disconnected');
+  return ok;
+}
+
 const NO_MODULE =
   'The secure connection module isn’t in this build. Rebuild the app (not just a ' +
   'JS reload) to enable the assistant.';
@@ -51,6 +72,8 @@ export async function pairFromPayload(text: string): Promise<{ ok: boolean; msg:
     cachedServer = { ...address, token };
     loaded = true;
     await saveServer(cachedServer);
+    // A successful pair exchange means we just reached the server over the pin.
+    setServerStatus('connected');
     return { ok: true, msg: `Connected to ${payload.host}:${payload.port}` };
   } catch (e) {
     return { ok: false, msg: e instanceof Error ? e.message : String(e) };
@@ -118,6 +141,8 @@ export function runAsk(question: string, cb: AskCallbacks, context?: AskContext)
     if (cancelled) return;
 
     handle = run(t, server, server.token, buildPrompt(question, context), ev => {
+      // Any event off the socket proves the server is live right now.
+      setServerStatus('connected');
       if (ev.kind === 'assistant-delta') {
         // A freshly generated token: grow the live buffer and show it typing out.
         streaming += ev.text;
@@ -140,6 +165,8 @@ export function runAsk(question: string, cb: AskCallbacks, context?: AskContext)
       else cb.onDone(partial || res.result);
     } catch (e) {
       if (cancelled) return;
+      // The run never reached (or lost) the server — reflect that in the bubble.
+      setServerStatus('disconnected');
       cb.onError(e instanceof Error ? e.message : String(e), answer + streaming);
     }
   })();

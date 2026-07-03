@@ -128,6 +128,14 @@ const components = {
       transform: 'rotate(43deg)',
     },
 
+    // A completed task line: strike through all its text. The checkbox itself is
+    // an inline-block box, so line-through doesn't cross it — only the text.
+    '.cm-task-done-line': {
+      textDecoration: 'line-through',
+      textDecorationColor: c.overlay1,
+      color: c.subtext0,
+    },
+
     // --- Unordered-list bullet ----------------------------------------------
     '.cm-bullet': {
       color: c.text,
