@@ -39,6 +39,8 @@ export interface SemanticColors {
   accent: string;
   danger: string;
   syntax: string;
+  codeBlockBackground: string;
+  codeBlockBorder: string;
 }
 
 export const mocha: MochaPalette;

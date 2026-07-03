@@ -58,6 +58,8 @@ const semantic = {
   accent: mocha.mauve, // primary accent / interactive affordance
   danger: mocha.red, // destructive actions (delete)
   syntax: mocha.overlay1, // markdown syntax characters (#, *, `)
+  codeBlockBackground: mocha.mantle, // recessed fenced-code surface (GitHub-like)
+  codeBlockBorder: mocha.surface1, // subtle hairline around a fenced code block
 };
 
 module.exports = { mocha, semantic };

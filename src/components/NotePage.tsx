@@ -1,7 +1,7 @@
 import React, { useCallback } from 'react';
 import { KeyboardAvoidingView, Platform, View } from 'react-native';
 import type { Note } from '../types/note';
-import NoteEditor from './NoteEditor';
+import NoteEditorWebView from './NoteEditorWebView';
 
 interface NotePageProps {
   note: Note;
@@ -31,7 +31,7 @@ function NotePage({ note, width, isActive, onChangeContent }: NotePageProps) {
       <KeyboardAvoidingView
         className="flex-1"
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <NoteEditor
+        <NoteEditorWebView
           initialContent={note.content}
           isActive={isActive}
           onChangeContent={handleChangeContent}
