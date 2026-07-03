@@ -86,6 +86,14 @@ const theme = EditorView.theme(
       transform: 'rotate(43deg)',
     },
 
+    // --- Unordered-list bullet ----------------------------------------------
+    '.cm-bullet': {
+      color: c.text,
+      // A slightly larger dot than the raw "-", nudged to sit on the baseline.
+      fontSize: '1.1em',
+      lineHeight: '1',
+    },
+
     // --- Fenced code card ---------------------------------------------------
     '.cm-code-line': {
       backgroundColor: c.mantle,
@@ -148,7 +156,7 @@ const highlight = HighlightStyle.define([
   { tag: t.url, color: c.blue },
   { tag: [t.monospace], color: c.green },
   { tag: t.quote, color: c.subtext0 },
-  { tag: t.list, color: c.mauve },
+  { tag: t.list, color: c.text },
   // The literal syntax punctuation (#, *, -, `, >) — dimmed.
   { tag: [t.processingInstruction, t.meta], color: c.overlay1 },
 
@@ -231,6 +239,22 @@ class CheckboxWidget extends WidgetType {
   }
 }
 
+/** Renders an unordered-list marker (`-`/`*`/`+`) as a real "•" bullet. */
+class BulletWidget extends WidgetType {
+  eq() {
+    return true;
+  }
+  toDOM() {
+    const b = document.createElement('span');
+    b.className = 'cm-bullet';
+    b.textContent = '•';
+    return b;
+  }
+  ignoreEvent() {
+    return true;
+  }
+}
+
 /** Claude-style "Copy" button pinned to the top-right of a fenced code card. */
 class CopyButtonWidget extends WidgetType {
   constructor(code) {
@@ -299,6 +323,21 @@ function buildLivePreview(view) {
       to,
       enter: node => {
         const active = activeLines.has(state.doc.lineAt(node.from).number);
+
+        if (node.name === 'ListMark') {
+          // On the active line show the raw marker so it can be edited.
+          if (active) return;
+          const mk = state.doc.sliceString(node.from, node.to);
+          // Only unordered bullets become dots — leave ordered "1." numbers.
+          if (mk !== '-' && mk !== '*' && mk !== '+') return;
+          // Task items keep their bullet hidden; the checkbox handler owns them.
+          const line = state.doc.lineAt(node.from);
+          if (/^\s*\[[ xX]\]/.test(line.text.slice(node.to - line.from))) return;
+          marks.push(
+            Decoration.replace({ widget: new BulletWidget() }).range(node.from, node.to),
+          );
+          return;
+        }
 
         if (node.name === 'TaskMarker') {
           // On the active line show raw `- [ ]` text so it can be edited.
