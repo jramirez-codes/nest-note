@@ -52,6 +52,9 @@ func scaffoldRoot(root string, threshold int) (mcpSetup, error) {
 		filepath.Join(mcpDir, "bin"),
 		filepath.Join(orchDir, "mcpx"),
 		filepath.Join(orchDir, "bin"),
+		// The cards queue Claude fills during /ingest; created up front so the
+		// dashboard can read it even before any card exists.
+		filepath.Join(stateDir, "cards"),
 	} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return mcpSetup{}, fmt.Errorf("mkdir %s: %w", d, err)

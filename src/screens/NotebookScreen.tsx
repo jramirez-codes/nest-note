@@ -82,9 +82,7 @@ export default function NotebookScreen() {
     (index: number, isActive: boolean) => {
       const page = pages[index];
       if (!page || page.kind === 'dashboard') {
-        return (
-          <DashboardPage width={width} isActive={isActive} onCreateNote={handleCreate} />
-        );
+        return <DashboardPage width={width} isActive={isActive} />;
       }
       return (
         <NotePage
@@ -97,7 +95,7 @@ export default function NotebookScreen() {
         />
       );
     },
-    [pages, width, handleCreate, updateNoteContent, updateNoteTitle, deleteNote],
+    [pages, width, updateNoteContent, updateNoteTitle, deleteNote],
   );
 
   const currentPage = pages[currentIndex];
@@ -146,6 +144,7 @@ export default function NotebookScreen() {
             pageNumber={currentIndex + 1}
             totalPages={notes.length}
             onDelete={deleteNote}
+            onCreateNote={handleCreate}
           />
           <PaperPager
             ref={pagerRef}

@@ -266,6 +266,26 @@ type subjectState struct {
 	MergedInto string %BT%json:"merged_into,omitempty"%BT%
 }
 
+// card is one dashboard card (a task, a notification, or any future kind). It is
+// persisted as one JSON file per card under state/cards/<id>.json. The schema is
+// deliberately flat and kind-agnostic: the dashboard renders unknown kinds with a
+// generic fallback, so new kinds need no new code. Payload carries kind-specific
+// extras that stay opaque to the Go side.
+type card struct {
+	ID        string         %BT%json:"id"%BT%
+	Kind      string         %BT%json:"kind"%BT%
+	Priority  string         %BT%json:"priority"%BT%
+	Date      string         %BT%json:"date,omitempty"%BT%
+	Title     string         %BT%json:"title"%BT%
+	Body      string         %BT%json:"body,omitempty"%BT%
+	Payload   map[string]any %BT%json:"payload,omitempty"%BT%
+	Done      bool           %BT%json:"done"%BT%
+	Dismissed bool           %BT%json:"dismissed"%BT%
+	Source    string         %BT%json:"source,omitempty"%BT%
+	CreatedAt string         %BT%json:"created_at"%BT%
+	UpdatedAt string         %BT%json:"updated_at"%BT%
+}
+
 var (
 	mcpDir    string
 	stateDir  string
@@ -332,6 +352,27 @@ func main() {
 		InputSchema: mcpx.ObjectSchema(nil, nil),
 		Handler:     func(args map[string]any) (string, error) { return listCapabilities(), nil },
 	})
+	s.AddTool(mcpx.Tool{
+		Name:        "upsert_card",
+		Description: "Create or update a dashboard card from the notes. Use kind=\"task\" for action items the user must do (with a due date if one is stated), and kind=\"notification\" for dated or important upcoming things to be aware of (events, deadlines, reminders). Set priority as an honest urgency judgment: urgent, high, normal, or low. Idempotent: omit id and the same title+kind always maps to the same card, so re-running /ingest updates rather than duplicates. Call list_cards first to avoid making a near-duplicate of an existing card.",
+		InputSchema: mcpx.ObjectSchema(map[string]any{
+			"kind":     map[string]any{"type": "string", "description": "task, notification, or any future kind"},
+			"title":    map[string]any{"type": "string", "description": "short one-line card title"},
+			"priority": map[string]any{"type": "string", "description": "urgent | high | normal | low"},
+			"date":     map[string]any{"type": "string", "description": "optional ISO date (YYYY-MM-DD): due date for a task, event date for a notification"},
+			"body":     map[string]any{"type": "string", "description": "optional extra detail or context"},
+			"payload":  map[string]any{"type": "object", "description": "optional kind-specific extras, stored opaquely"},
+			"source":   map[string]any{"type": "string", "description": "optional subject slug the card came from"},
+			"id":       map[string]any{"type": "string", "description": "optional stable id; omit to derive one from title+kind"},
+		}, []string{"kind", "title", "priority"}),
+		Handler: upsertCard,
+	})
+	s.AddTool(mcpx.Tool{
+		Name:        "list_cards",
+		Description: "List the dashboard cards that already exist (tasks and notifications), so you can update or avoid duplicating them.",
+		InputSchema: mcpx.ObjectSchema(nil, nil),
+		Handler:     func(args map[string]any) (string, error) { return listCards(), nil },
+	})
 
 	if err := s.Serve(); err != nil {
 		panic(err)
@@ -359,6 +400,7 @@ func subjectsPath() string      { return filepath.Join(stateDir, "subjects.json"
 func requestsDir() string       { return filepath.Join(stateDir, "requests") }
 func consolidationsDir() string { return filepath.Join(stateDir, "consolidations") }
 func suggestionsDir() string    { return filepath.Join(stateDir, "suggestions") }
+func cardsDir() string          { return filepath.Join(stateDir, "cards") }
 
 func loadSubjects() map[string]*subjectState {
 	m := map[string]*subjectState{}
@@ -601,6 +643,131 @@ func suggestMerge(args map[string]any) (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("suggested merging %s into %q; the user can approve it in the dashboard.", strings.Join(from, ", "), into), nil
+}
+
+// validPriority normalizes a priority string, defaulting unknown/blank ones to
+// "normal" so a card always carries a sortable urgency.
+func validPriority(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "urgent":
+		return "urgent"
+	case "high":
+		return "high"
+	case "low":
+		return "low"
+	default:
+		return "normal"
+	}
+}
+
+// upsertCard writes one dashboard card JSON under state/cards/<id>.json. The id is
+// a slug so the file can never escape the cards dir. Omitting id derives a stable
+// one from kind+title, so re-ingesting the same item overwrites rather than dupes.
+// Existing done/dismissed/created_at are preserved so re-running /ingest never
+// undoes a user's completion or dismissal.
+func upsertCard(args map[string]any) (string, error) {
+	kind := slug(fmt.Sprintf("%v", args["kind"]))
+	if kind == "" {
+		return "no card kind given.", nil
+	}
+	title := strings.TrimSpace(fmt.Sprintf("%v", args["title"]))
+	if title == "" {
+		return "no title given.", nil
+	}
+	id := ""
+	if raw, ok := args["id"].(string); ok {
+		id = slug(raw)
+	}
+	if id == "" {
+		id = slug(kind + "-" + title)
+	}
+	if id == "" {
+		return "could not derive a card id from the title.", nil
+	}
+
+	body, _ := args["body"].(string)
+	date, _ := args["date"].(string)
+	source := ""
+	if raw, ok := args["source"].(string); ok {
+		source = slug(raw)
+	}
+	var payload map[string]any
+	if p, ok := args["payload"].(map[string]any); ok {
+		payload = p
+	}
+
+	os.MkdirAll(cardsDir(), 0o755)
+	path := filepath.Join(cardsDir(), id+".json")
+
+	var prev card
+	if data, err := os.ReadFile(path); err == nil {
+		json.Unmarshal(data, &prev)
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	createdAt := prev.CreatedAt
+	if createdAt == "" {
+		createdAt = now
+	}
+	c := card{
+		ID:        id,
+		Kind:      kind,
+		Priority:  validPriority(fmt.Sprintf("%v", args["priority"])),
+		Date:      strings.TrimSpace(date),
+		Title:     title,
+		Body:      strings.TrimSpace(body),
+		Payload:   payload,
+		Done:      prev.Done,
+		Dismissed: prev.Dismissed,
+		Source:    source,
+		CreatedAt: createdAt,
+		UpdatedAt: now,
+	}
+	data, _ := json.MarshalIndent(c, "", "  ")
+	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("filed %s card %q (priority %s, id %s).", kind, title, c.Priority, id), nil
+}
+
+// listCards reports the current cards so Claude can update or avoid duplicating
+// them. Dismissed cards are skipped; done tasks are flagged.
+func listCards() string {
+	entries, err := os.ReadDir(cardsDir())
+	if err != nil {
+		return "No cards yet."
+	}
+	var cards []card
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(cardsDir(), e.Name()))
+		if err != nil {
+			continue
+		}
+		var c card
+		if json.Unmarshal(data, &c) != nil || c.Dismissed {
+			continue
+		}
+		cards = append(cards, c)
+	}
+	if len(cards) == 0 {
+		return "No cards yet."
+	}
+	sort.Slice(cards, func(i, j int) bool { return cards[i].ID < cards[j].ID })
+	var b strings.Builder
+	b.WriteString("Cards:")
+	for _, c := range cards {
+		line := fmt.Sprintf("\n- [%s/%s] %s (id: %s)", c.Kind, c.Priority, c.Title, c.ID)
+		if c.Date != "" {
+			line += " date=" + c.Date
+		}
+		if c.Kind == "task" && c.Done {
+			line += " (done)"
+		}
+		b.WriteString(line)
+	}
+	return b.String()
 }
 
 func listCapabilities() string {

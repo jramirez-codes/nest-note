@@ -1,24 +1,50 @@
 import React, { useCallback, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
+import { Plus } from 'lucide-react-native';
 import type { Note } from '../types/note';
+import { useTheme } from '../theme/colors';
 import { formatNoteDate } from '../utils/date';
 import ConfirmDialog from './ConfirmDialog';
 
+/** Greetings for the dashboard header, rotated one per day. */
+const GREETINGS = [
+  'Shine bright, JR',
+  'Raise the bar, JR',
+  'You’re a star, JR',
+  'Reach out far, JR',
+  'Here you are, JR',
+  'Right on par, JR',
+  'Go far, JR',
+  'You’re the star, JR',
+  'Take it far, JR',
+  'Superstar, JR',
+];
+
+/** Pick today's greeting, stable for the whole day and rotating every 24h. */
+function greetingForToday(): string {
+  const dayIndex = Math.floor(Date.now() / 86_400_000);
+  return GREETINGS[dayIndex % GREETINGS.length];
+}
+
 interface NoteHeaderProps {
-  /** The note on the current page, or null on the trailing "new note" sheet. */
+  /** The note on the current page, or null on the trailing dashboard page. */
   note: Note | null;
   /** 1-based page number for display. */
   pageNumber: number;
   totalPages: number;
   onDelete: (id: string) => void;
+  /** Create a fresh note — surfaced as the dashboard page's header action. */
+  onCreateNote: () => void;
 }
 
 /**
  * Fixed chrome above the pager, showing the current page's number, date and a
  * delete action. It stays put while pages turn beneath it, so it is not part of
- * the swipe gesture.
+ * the swipe gesture. On the trailing dashboard page it swaps the delete action
+ * for a "New note" action that sits in the same slot, at the same size.
  */
-function NoteHeader({ note, pageNumber, totalPages, onDelete }: NoteHeaderProps) {
+function NoteHeader({ note, pageNumber, totalPages, onDelete, onCreateNote }: NoteHeaderProps) {
+  const colors = useTheme();
   const [confirmVisible, setConfirmVisible] = useState(false);
 
   const requestDelete = useCallback(() => setConfirmVisible(true), []);
@@ -47,9 +73,20 @@ function NoteHeader({ note, pageNumber, totalPages, onDelete }: NoteHeaderProps)
           </Pressable>
         </>
       ) : (
-        <Text className="flex-1 text-center text-xs font-semibold uppercase tracking-wider text-faint">
-          New page
-        </Text>
+        <>
+          <Text className="text-xs font-semibold uppercase tracking-wider text-faint">
+            {greetingForToday()}
+          </Text>
+          <Pressable
+            onPress={onCreateNote}
+            hitSlop={12}
+            accessibilityRole="button"
+            accessibilityLabel="Add a new note"
+            className="flex-row items-center gap-1">
+            <Plus size={14} color={colors.accent} strokeWidth={2.5} />
+            <Text className="text-xs font-semibold text-accent">New note</Text>
+          </Pressable>
+        </>
       )}
 
       <ConfirmDialog

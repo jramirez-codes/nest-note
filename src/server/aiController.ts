@@ -309,7 +309,14 @@ function buildIngestPrompt(pageText: string): string {
     "subject's notes (lightly cleaned for grammar). Preserve every fact; invent " +
     'nothing; file every note into exactly one subject.\n' +
     '4. Only if two EXISTING subjects clearly duplicate each other may you call ' +
-    'suggest_merge. Never merge on your own.\n\n' +
+    'suggest_merge. Never merge on your own.\n' +
+    '5. Also surface anything actionable or time-sensitive as a dashboard card ' +
+    '(call list_cards first to avoid duplicates): use upsert_card with kind="task" ' +
+    'for things the user needs to do (attach a date when a due date is stated) and ' +
+    'kind="notification" for dated or important upcoming events/deadlines/reminders. ' +
+    'Set priority (urgent | high | normal | low) as an honest urgency judgment, and ' +
+    'set source to the subject slug the card came from. Only make cards for genuine ' +
+    'tasks/events — not for every note.\n\n' +
     'When finished, reply with a single short line summarizing what you filed and ' +
     'where. Do not ask questions.\n\n<notes>\n' +
     pageText +
@@ -350,9 +357,35 @@ export interface DashboardSuggestion {
   reason: string;
 }
 
+/** Priority ranks, high→low, so the UI can sort without hard-coding the strings. */
+export type CardPriority = 'urgent' | 'high' | 'normal' | 'low';
+
+/**
+ * One dashboard card, straight off the wire. Deliberately flat and kind-agnostic:
+ * `kind` selects a renderer (with a generic fallback for unknown kinds), so Claude
+ * can emit a new kind and it shows up with zero new code. `payload` is opaque
+ * kind-specific extras a bespoke renderer may read later.
+ */
+export interface DashboardCard {
+  id: string;
+  kind: string;
+  priority: CardPriority;
+  /** Optional ISO date: a task's due date or a notification's event date. */
+  date?: string;
+  title: string;
+  body?: string;
+  payload?: Record<string, unknown>;
+  done?: boolean;
+  dismissed?: boolean;
+  source?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface DashboardState {
   servers: DashboardServer[];
   suggestions: DashboardSuggestion[];
+  cards: DashboardCard[];
 }
 
 function serverOrigin(s: PairedServer): string {
@@ -382,15 +415,14 @@ export async function fetchDashboardState(): Promise<DashboardState> {
   return {
     servers: Array.isArray(data.servers) ? data.servers : [],
     suggestions: Array.isArray(data.suggestions) ? data.suggestions : [],
+    cards: Array.isArray(data.cards) ? data.cards : [],
   };
 }
 
-/** Approve ('merge') or 'dismiss' an optional merge suggestion from the dashboard. */
-export async function applyDashboardAction(action: {
-  action: 'merge' | 'dismiss';
-  into: string;
-  from?: string[];
-}): Promise<void> {
+// postAction is the shared POST /action path: same pinned tunnel, bearer token, and
+// 200-or-throw contract every dashboard write uses. Callers pass the verb-specific
+// body (suggestion merges key on `into`, card actions on `id`).
+async function postAction(body: Record<string, unknown>): Promise<void> {
   const t = getTransport();
   if (!t) throw new Error(NO_MODULE);
   const server = await currentServer();
@@ -401,7 +433,26 @@ export async function applyDashboardAction(action: {
       Authorization: `Bearer ${server.token}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(action),
+    body: JSON.stringify(body),
   });
   if (res.status !== 200) throw new Error(`Action failed (HTTP ${res.status}).`);
+}
+
+/** Approve ('merge') or 'dismiss' an optional merge suggestion from the dashboard. */
+export async function applyDashboardAction(action: {
+  action: 'merge' | 'dismiss';
+  into: string;
+  from?: string[];
+}): Promise<void> {
+  return postAction(action);
+}
+
+/** Toggle a task card's done state (`done` chooses complete vs. uncomplete). */
+export async function completeCard(id: string, done: boolean): Promise<void> {
+  return postAction({ action: done ? 'complete' : 'uncomplete', id });
+}
+
+/** Dismiss a card so it stops showing in the dashboard. */
+export async function dismissCard(id: string): Promise<void> {
+  return postAction({ action: 'dismiss', id });
 }

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // The dashboard endpoints let the phone read and lightly steer the MCP world
@@ -33,9 +34,30 @@ type dashSuggestion struct {
 	Reason string   `json:"reason"`
 }
 
+// dashCard mirrors the flat card record the orchestrator writes under
+// state/cards/<id>.json. The backend stays kind-agnostic: it reads, filters out
+// dismissed cards, and hands the rest to the UI, which sorts and renders them
+// (including a generic fallback for kinds it doesn't recognize). Priority and date
+// are surfaced verbatim so the UI can build a stable sort key.
+type dashCard struct {
+	ID        string         `json:"id"`
+	Kind      string         `json:"kind"`
+	Priority  string         `json:"priority"`
+	Date      string         `json:"date,omitempty"`
+	Title     string         `json:"title"`
+	Body      string         `json:"body,omitempty"`
+	Payload   map[string]any `json:"payload,omitempty"`
+	Done      bool           `json:"done"`
+	Dismissed bool           `json:"dismissed"`
+	Source    string         `json:"source,omitempty"`
+	CreatedAt string         `json:"created_at"`
+	UpdatedAt string         `json:"updated_at"`
+}
+
 type dashState struct {
 	Servers     []dashServer     `json:"servers"`
 	Suggestions []dashSuggestion `json:"suggestions"`
+	Cards       []dashCard       `json:"cards"`
 }
 
 // rootDirs derives the mcp and orchestrator-state directories from -root, matching
@@ -57,7 +79,7 @@ func stateHandler(token, root string) http.HandlerFunc {
 			return
 		}
 		mcpDir, stateDir := rootDirs(root)
-		state := dashState{Servers: []dashServer{}, Suggestions: []dashSuggestion{}}
+		state := dashState{Servers: []dashServer{}, Suggestions: []dashSuggestion{}, Cards: []dashCard{}}
 
 		entries, _ := os.ReadDir(mcpDir)
 		for _, e := range entries {
@@ -107,6 +129,26 @@ func stateHandler(token, root string) http.HandlerFunc {
 			sort.Slice(state.Suggestions, func(i, j int) bool { return state.Suggestions[i].Into < state.Suggestions[j].Into })
 		}
 
+		// Cards (tasks + notifications + any future kind). Read every card file,
+		// drop dismissed ones, and hand the rest over unsorted — the UI computes
+		// the priority+date sort key so a new kind needs no backend change.
+		if cardEntries, err := os.ReadDir(filepath.Join(stateDir, "cards")); err == nil {
+			for _, e := range cardEntries {
+				if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+					continue
+				}
+				data, err := os.ReadFile(filepath.Join(stateDir, "cards", e.Name()))
+				if err != nil {
+					continue
+				}
+				var c dashCard
+				if json.Unmarshal(data, &c) == nil && c.ID != "" && !c.Dismissed {
+					state.Cards = append(state.Cards, c)
+				}
+			}
+			sort.Slice(state.Cards, func(i, j int) bool { return state.Cards[i].ID < state.Cards[j].ID })
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(state)
 	}
@@ -130,12 +172,48 @@ func actionHandler(token, root string) http.HandlerFunc {
 			Action string   `json:"action"`
 			Into   string   `json:"into"`
 			From   []string `json:"from"`
+			ID     string   `json:"id"`
 		}
-		if json.NewDecoder(r.Body).Decode(&req) != nil || !validSlug(req.Into) {
+		if json.NewDecoder(r.Body).Decode(&req) != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
 		_, stateDir := rootDirs(root)
+
+		// Card actions carry an id and mutate a single state/cards/<id>.json.
+		// "dismiss" is shared with suggestions, so an id routes it here; without
+		// one it falls through to the suggestion switch below (keyed on 'into').
+		switch req.Action {
+		case "complete", "uncomplete":
+			if !validSlug(req.ID) {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			if !updateCard(stateDir, req.ID, func(c *dashCard) { c.Done = req.Action == "complete" }) {
+				http.Error(w, "card not found", http.StatusNotFound)
+				return
+			}
+			writeOK(w)
+			return
+		case "dismiss":
+			if req.ID != "" {
+				if !validSlug(req.ID) {
+					http.Error(w, "bad request", http.StatusBadRequest)
+					return
+				}
+				if !updateCard(stateDir, req.ID, func(c *dashCard) { c.Dismissed = true }) {
+					http.Error(w, "card not found", http.StatusNotFound)
+					return
+				}
+				writeOK(w)
+				return
+			}
+		}
+
+		if !validSlug(req.Into) {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
 		sugPath := filepath.Join(stateDir, "suggestions", req.Into+".json")
 
 		switch req.Action {
@@ -168,7 +246,33 @@ func actionHandler(token, root string) http.HandlerFunc {
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte("{\"ok\":true}\n"))
+		writeOK(w)
 	}
+}
+
+func writeOK(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte("{\"ok\":true}\n"))
+}
+
+// updateCard reads state/cards/<id>.json, applies mutate, bumps updated_at, and
+// writes it back. It reports false when the card is missing or unreadable so the
+// caller can 404. id must already be validSlug-checked so it can't escape the dir.
+func updateCard(stateDir, id string, mutate func(*dashCard)) bool {
+	path := filepath.Join(stateDir, "cards", id+".json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var c dashCard
+	if json.Unmarshal(data, &c) != nil {
+		return false
+	}
+	mutate(&c)
+	c.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	out, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return false
+	}
+	return os.WriteFile(path, append(out, '\n'), 0o644) == nil
 }
