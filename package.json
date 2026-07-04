@@ -11,8 +11,8 @@
     "lint": "eslint .",
     "postinstall": "patch-package",
     "server:build": "cd server && go build -o ainotepad-server .",
-    "server:start": "cd server && go run .",
-    "server:remote": "cd server && go run . -advertise-host \"$(tailscale ip -4 | head -n1)\"",
+    "server:start": "cd server && go run . -root /home/user/Documents/ai-notes-data/",
+    "server:remote": "cd server && go run . -root /home/user/Documents/ai-notes-data/ -advertise-host \"$(tailscale ip -4 | head -n1)\"",
     "start": "react-native start",
     "test": "jest"
   },
@@ -22,7 +22,6 @@
     "nativewind": "^4.2.6",
     "react": "19.2.3",
     "react-native": "0.86.0",
-    "react-native-mmkv": "^4.3.2",
     "react-native-nitro-modules": "^0.36.1",
     "react-native-reanimated": "^4.5.0",
     "react-native-safe-area-context": "^5.5.2",

@@ -21,13 +21,31 @@ func main() {
 		addr    = flag.String("addr", "", "bind address (default: auto-detected LAN IP)")
 		advHost = flag.String("advertise-host", "", "host to put in the pairing QR (e.g. a Tailscale IP or DDNS name for off-LAN access); default: bind address")
 		dir     = flag.String("dir", defaultStateDir(), "directory for cert/key/token")
-		workdir = flag.String("workdir", mustCwd(), "directory Claude runs in")
-		pairTTL = flag.Duration("pair-ttl", 10*time.Minute, "how long the pairing code stays valid")
+		workdir = flag.String("workdir", mustCwd(), "directory Claude runs in (ignored when -root is set)")
+		root      = flag.String("root", "", "scaffold projects/, mcp/, orchestrator/ under this dir and enable MCP; Claude runs in <root>/projects. Empty = disabled")
+		threshold  = flag.Int("subject-threshold", 4, "mentions before the orchestrator proposes a dedicated server for a subject (with -root)")
+		runTimeout = flag.Duration("run-timeout", 2*time.Minute, "max time for a single Claude run before it is killed and reported as failed")
+		pairTTL    = flag.Duration("pair-ttl", 10*time.Minute, "how long the pairing code stays valid")
 	)
 	flag.Parse()
 
 	if err := os.MkdirAll(*dir, 0o700); err != nil {
 		log.Fatalf("state dir: %v", err)
+	}
+
+	// When -root is set, scaffold the projects/mcp/orchestrator layout, build
+	// the MCP servers, and point Claude at <root>/projects. This boot scaffold
+	// is for the startup banner and as a fallback; each /run re-scaffolds so
+	// servers the orchestrator creates mid-session go live on the next message.
+	runDir := *workdir
+	var boot mcpSetup
+	if *root != "" {
+		setup, err := scaffoldRoot(*root, *threshold)
+		if err != nil {
+			log.Fatalf("root scaffold: %v", err)
+		}
+		boot = setup
+		runDir = setup.projectsDir
 	}
 
 	bindIP := *addr
@@ -78,7 +96,7 @@ func main() {
 		fmt.Fprintln(w, "ok")
 	})
 	mux.HandleFunc("/pair", pairHandler(pr))
-	mux.HandleFunc("/run", runHandler(token, *workdir))
+	mux.HandleFunc("/run", runHandler(token, *workdir, *root, *threshold, *runTimeout, boot))
 
 	listenAddr := net.JoinHostPort(bindIP, fmt.Sprintf("%d", *port))
 	srv := &http.Server{
@@ -121,7 +139,11 @@ func main() {
 		fmt.Printf("  pair host  wss://%s/run  (encoded in the QR)\n", net.JoinHostPort(qrHost, fmt.Sprintf("%d", *port)))
 	}
 	fmt.Printf("  discovery  _ainotepad._tcp on the LAN\n")
-	fmt.Printf("  workdir    %s\n", *workdir)
+	fmt.Printf("  workdir    %s\n", runDir)
+	if *root != "" {
+		fmt.Printf("  mcp servers %v (+ orchestrator, auto-grows at %d mentions)\n", boot.servers, *threshold)
+		fmt.Printf("  mcp config %v\n", boot.mcpConfigs)
+	}
 	fmt.Printf("  spki pin   %s\n", pin)
 	fmt.Printf("  pair code  %s  (valid %s, single use)\n", pr.code, *pairTTL)
 	fmt.Println("\n  Scan to pair:")

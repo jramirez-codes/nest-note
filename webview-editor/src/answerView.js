@@ -3,7 +3,7 @@ import { EditorState, Annotation } from '@codemirror/state';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { syntaxHighlighting } from '@codemirror/language';
 import { highlight, answerTheme } from './theme.js';
-import { previewField, askLiveField, setPreviewEffect } from './state.js';
+import { previewField, askLiveField, recPlayField, setPreviewEffect } from './state.js';
 import { cardField, previewFetcher } from './cards.js';
 import { codeBlocks, codeLanguages } from './codeBlocks.js';
 import { livePreview } from './livePreview.js';
@@ -43,6 +43,11 @@ export function mountAnswerView(parent, text, { trim = true } = {}) {
         openLinks,
         previewField,
         askLiveField,
+        // cardField's buildCards() reads recPlayField unconditionally, so the
+        // nested answer view must register it too — otherwise state.field()
+        // throws "Field is not present in this state" the moment a card renders
+        // here (which aborts the streaming/finalizing dispatch on the main view).
+        recPlayField,
         cardField,
         previewFetcher,
         livePreview,

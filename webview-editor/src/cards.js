@@ -3,9 +3,11 @@ import { StateField } from '@codemirror/state';
 import {
   previewField,
   askLiveField,
+  recPlayField,
   setPreviewEffect,
   setAskLive,
   clearAskLive,
+  setRecPlay,
 } from './state.js';
 import { LinkCardWidget, ImageWidget } from './widgets.js';
 import { AiCardWidget } from './aiCard.js';
@@ -18,6 +20,7 @@ import { post } from './bridge.js';
 function buildCards(state) {
   const previews = state.field(previewField);
   const askLive = state.field(askLiveField);
+  const recPlay = state.field(recPlayField);
   // Lines touched by a selection stay raw so the URL can be edited. Read-only
   // views (the /ask answer preview) never reveal — cards always render.
   const activeLines = new Set();
@@ -54,7 +57,7 @@ function buildCards(state) {
   eachAiLine(state, (obj, line) => {
     marks.push(
       Decoration.replace({
-        widget: new AiCardWidget(obj, askLive[obj.id]),
+        widget: new AiCardWidget(obj, askLive[obj.id], !!recPlay[obj.id]),
         block: true,
       }).range(line.from, line.to),
     );
@@ -71,7 +74,11 @@ export const cardField = StateField.define({
       tr.docChanged ||
       tr.selection ||
       tr.effects.some(
-        e => e.is(setPreviewEffect) || e.is(setAskLive) || e.is(clearAskLive),
+        e =>
+          e.is(setPreviewEffect) ||
+          e.is(setAskLive) ||
+          e.is(clearAskLive) ||
+          e.is(setRecPlay),
       )
     ) {
       return buildCards(tr.state);

@@ -43,7 +43,7 @@ const LEGACY_RE = /^<!--ai ([A-Za-z0-9+/=]+)-->$/;
 
 // Keys whose stored string value should be coerced back to a non-string type.
 const BOOL_KEYS = new Set(['open']);
-const NUM_KEYS = new Set(['v']);
+const NUM_KEYS = new Set(['v', 'ms', 'startedAt']);
 
 // Statuses where the card is still in-flight and the async server callbacks
 // (__aiStream / __aiDone) need to find it by id. Once a card reaches a terminal
@@ -95,8 +95,10 @@ function coerce(key, val) {
 export function encodeAiMarker(obj) {
   const { q, a, backup, turns, ...meta } = obj;
   // Chat cards keep their handle even when done: the id is how a later reply
-  // (fired from the card's follow-up box) threads back into the same run.
-  const keepId = INFLIGHT.has(obj.status) || obj.kind === 'chat';
+  // (fired from the card's follow-up box) threads back into the same run. Record
+  // cards keep it too — Record/Stop/Export all address the card by id.
+  const keepId =
+    INFLIGHT.has(obj.status) || obj.kind === 'chat' || obj.kind === 'record';
   const lines = [OPEN_LINE];
   for (const [k, val] of Object.entries(meta)) {
     if (val == null) continue;

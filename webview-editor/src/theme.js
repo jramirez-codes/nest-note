@@ -542,6 +542,104 @@ const components = {
     '.cm-clean-accept': { color: c.base, backgroundColor: c.green },
     '.cm-clean-reject': { color: c.subtext0, backgroundColor: c.surface1 },
 
+    // --- Record card (/record …) --------------------------------------------
+    // One round Record/Stop button beside a title + status line; a live timer
+    // (with a pulsing dot) replaces the title while capturing.
+    '.cm-rec': {
+      display: 'block',
+      padding: '10px 12px',
+      maxWidth: '640px',
+      // The card's title/sub text lives inside CM's contenteditable content, so
+      // a long-press on the card would otherwise start Android's text selection
+      // (stealing the play button's hold-to-delete gesture). Nothing in the card
+      // is meant to be selected, so turn selection off for the whole card.
+      userSelect: 'none',
+      WebkitUserSelect: 'none',
+      WebkitTouchCallout: 'none',
+    },
+    '.cm-rec-row': { display: 'flex', alignItems: 'center', gap: '12px' },
+    '.cm-rec-btn': {
+      flexShrink: '0',
+      display: 'inline-flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: '44px',
+      height: '44px',
+      padding: '0',
+      border: 'none',
+      borderRadius: '50%',
+      cursor: 'pointer',
+      // No native long-press selection/callout on the button; manipulation drops
+      // the tap delay. (Hold-to-delete lives on the card + Export button now.)
+      userSelect: 'none',
+      WebkitUserSelect: 'none',
+      WebkitTouchCallout: 'none',
+      touchAction: 'manipulation',
+      color: c.base,
+    },
+    '.cm-rec-btn svg': { display: 'block', width: '22px', height: '22px' },
+    // Go = start / play (mauve); Stop = record-stop (red). Same button, swapped
+    // by state. Armed = the play button held into Delete mode (red).
+    '.cm-rec-go': { backgroundColor: c.mauve },
+    '.cm-rec-stop': { backgroundColor: c.red, animation: 'cm-rec-glow 1.6s ease-in-out infinite' },
+    '.cm-rec-armed': { backgroundColor: c.red },
+    '.cm-rec-busy': { opacity: '0.6' },
+    '.cm-rec-disabled': { cursor: 'default', opacity: '0.6', pointerEvents: 'none' },
+    '.cm-rec-meta': { flex: '1', minWidth: '0' },
+    '.cm-rec-title': {
+      color: c.text,
+      fontSize: '15px',
+      fontWeight: '600',
+      lineHeight: '1.3',
+      whiteSpace: 'nowrap',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+    },
+    '.cm-rec-live': { display: 'flex', alignItems: 'center', gap: '8px' },
+    '.cm-rec-time': { fontVariantNumeric: 'tabular-nums', color: c.red, fontWeight: '700' },
+    '.cm-rec-pulse': {
+      width: '9px',
+      height: '9px',
+      borderRadius: '50%',
+      backgroundColor: c.red,
+      animation: 'cm-ask-blink 1.2s ease-in-out infinite',
+    },
+    '.cm-rec-sub': { color: c.subtext0, fontSize: '12px', lineHeight: '1.35', marginTop: '2px' },
+    '.cm-rec.cm-ask-error .cm-rec-sub': { color: c.red },
+    // Top-right corner control: the delete × (non-stopped) or the Export icon
+    // (stopped). Shared placement; each adds its own glyph styling.
+    '.cm-rec-corner': {
+      flexShrink: '0',
+      alignSelf: 'flex-start',
+      color: c.overlay1,
+      cursor: 'pointer',
+      userSelect: 'none',
+    },
+    '.cm-rec-del': { fontSize: '18px', lineHeight: '1', padding: '2px 4px' },
+    '.cm-rec-export': {
+      display: 'inline-flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '2px',
+    },
+    '.cm-rec-export svg': { display: 'block', width: '19px', height: '19px' },
+    '.cm-rec-export:active': { color: c.mauve },
+    // Export corner armed as Delete (after a long-press on the card). Matches
+    // the /ask card's delete button exactly: a red-bordered rounded box on
+    // surface0 with a 16px red trash glyph (see .cm-copy-btn.cm-del-btn above).
+    '.cm-rec-corner-del': {
+      color: c.red,
+      backgroundColor: c.surface0,
+      border: `1px solid ${c.red}`,
+      borderRadius: '7px',
+      padding: '6px',
+    },
+    '.cm-rec-corner-del svg': { width: '16px', height: '16px' },
+    '@keyframes cm-rec-glow': {
+      '0%, 100%': { boxShadow: `0 0 0 0 ${c.red}66` },
+      '50%': { boxShadow: `0 0 0 6px ${c.red}00` },
+    },
+
     // --- Slash-command autocomplete menu ------------------------------------
     // Each row stacks the command name over a wrapping description, so the
     // menu sizes to its content instead of cropping the detail text.

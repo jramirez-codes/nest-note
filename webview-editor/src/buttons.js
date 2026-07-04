@@ -73,7 +73,7 @@ export function makeCopyButton(text) {
 // Works for touch (the mobile WebView) and mouse. The click that a press-release
 // would otherwise emit is swallowed (capture phase) so a long-press to reveal
 // the delete button doesn't also toggle/open the widget underneath.
-function attachLongPress(el, cb) {
+export function attachLongPress(el, cb) {
   let timer = null;
   let fired = false;
   let sx = 0;

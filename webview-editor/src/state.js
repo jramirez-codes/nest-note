@@ -49,3 +49,26 @@ export const askLiveField = StateField.define({
     return next;
   },
 });
+
+// Which /record card (by id) is currently playing back, so its button shows
+// Pause. Ephemeral like askLive — playback state never touches the document.
+// RN drives it via window.__recPlay (set true on play, false on pause/end).
+export const setRecPlay = StateEffect.define();
+export const recPlayField = StateField.define({
+  create: () => Object.create(null),
+  update(value, tr) {
+    let next = value;
+    for (const e of tr.effects) {
+      if (e.is(setRecPlay)) {
+        const { id, playing } = e.value;
+        if (playing) {
+          next = { ...next, [id]: true };
+        } else if (next[id] !== undefined) {
+          next = { ...next };
+          delete next[id];
+        }
+      }
+    }
+    return next;
+  },
+});

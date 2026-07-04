@@ -18,6 +18,11 @@ const SLASH_COMMANDS = [
     apply: '/chat ',
   },
   {
+    label: '/record',
+    detail: 'Record microphone audio — keeps going in the background; tap to stop',
+    apply: '/record',
+  },
+  {
     label: '/pair',
     detail: 'Pair a device by QR code or payload',
     apply: '/pair ',
@@ -103,6 +108,27 @@ export function aiCommandOnEnter(view) {
     });
     // The first turn has no prior context; runs on the same /ask stream path.
     post({ type: 'ask', id, question: chat[1] });
+    return true;
+  }
+
+  // `/record [label]`: drop an audio-recorder card. It starts idle — the actual
+  // capture begins only when the user taps its Record button (see recordDOM),
+  // which asks for mic permission and spins up the foreground service.
+  const record = /^\/record\b\s*(.*)$/.exec(text);
+  if (record) {
+    const id = genId();
+    const marker = encodeAiMarker({
+      v: 1,
+      kind: 'record',
+      id,
+      status: 'idle',
+      label: record[1].trim() || undefined,
+    });
+    const insert = marker + '\n';
+    view.dispatch({
+      changes: { from: line.from, to: line.to, insert },
+      selection: { anchor: line.from + insert.length },
+    });
     return true;
   }
 

@@ -4,6 +4,19 @@
     <!-- Scanning the companion server's pairing QR (react-native-vision-camera). -->
     <uses-permission android:name="android.permission.CAMERA" />
 
+    <!-- Audio recording (/record card). RECORD_AUDIO is the runtime consent gate;
+         the foreground service (microphone type, API 34+) lets capture continue
+         in the background; POST_NOTIFICATIONS (API 33+) surfaces the ongoing
+         recording notice. WRITE_EXTERNAL_STORAGE is only for exporting on legacy
+         (<=API 28) devices — 29+ export goes through MediaStore, no permission. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+
     <application
       android:name=".MainApplication"
       android:label="@string/app_name"
@@ -25,5 +38,11 @@
             <category android:name="android.intent.category.LAUNCHER" />
         </intent-filter>
       </activity>
+
+      <!-- Keeps the mic alive while recording in the background (see RecorderService). -->
+      <service
+        android:name="com.ainotepad.recorder.RecorderService"
+        android:exported="false"
+        android:foregroundServiceType="microphone" />
     </application>
 </manifest>

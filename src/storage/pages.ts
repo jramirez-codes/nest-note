@@ -1,5 +1,6 @@
 import type { Note } from '../types/note';
 import { getDb } from './db';
+import { cleanupRecordings } from './recordings';
 
 /**
  * Page persistence — the notebook's pages, backed by SQLite with FTS5 search.
@@ -87,6 +88,9 @@ export async function updatePageTitle(id: string, title: string): Promise<void> 
 
 /** Delete a page by id. No-op if it does not exist. */
 export async function deletePage(id: string): Promise<void> {
+  // Reclaim any /record clips this page held before the markdown is gone.
+  const page = await getPage(id);
+  if (page) cleanupRecordings(page.content);
   await getDb().execute('DELETE FROM pages WHERE id = ?', [id]);
 }
 

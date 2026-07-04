@@ -1,13 +1,12 @@
 import { createId } from '../utils/id';
 import type { Note } from '../types/note';
 import { DEFAULT_NOTEBOOK_ID, getDb } from './db';
-import { migrateFromMmkv } from './migrateFromMmkv';
 import { ensureDefaultNotebook } from './notebooks';
 import { countPages, createPage } from './pages';
 
 /**
  * Public storage surface. The rest of the app imports from here and never
- * touches op-sqlite, react-native-mmkv, or raw SQL directly.
+ * touches op-sqlite or raw SQL directly.
  */
 export { DEFAULT_NOTEBOOK_ID } from './db';
 export {
@@ -51,12 +50,8 @@ let initPromise: Promise<void> | null = null;
 
 /**
  * Prepare storage for use. Opens/migrates the database, guarantees the default
- * notebook exists, runs the one-time MMKV import, then seeds first-run content
- * if (and only if) there are still no pages. Safe to call repeatedly — the work
- * happens once per process.
- *
- * Order matters: the MMKV import runs before seeding so a returning user's real
- * notes are never shadowed by seed content.
+ * notebook exists, then seeds first-run content if (and only if) there are still
+ * no pages. Safe to call repeatedly — the work happens once per process.
  */
 export function initStorage(): Promise<void> {
   if (!initPromise) {
@@ -64,14 +59,6 @@ export function initStorage(): Promise<void> {
       const now = Date.now();
       getDb(); // open + run schema migrations up front
       await ensureDefaultNotebook(now);
-
-      const result = await migrateFromMmkv();
-      if (result.ran && result.migrated > 0) {
-        console.log(
-          `[storage] migrated ${result.migrated} note(s) from MMKV` +
-            (result.skipped ? `, skipped ${result.skipped} corrupt` : ''),
-        );
-      }
 
       if ((await countPages()) === 0) {
         for (const note of seedNotes(now)) {

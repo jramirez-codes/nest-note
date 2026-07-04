@@ -1,5 +1,6 @@
 import { createId } from '../utils/id';
 import { DEFAULT_NOTEBOOK_ID, getDb } from './db';
+import { cleanupRecordings } from './recordings';
 
 /**
  * A notebook is the top-level container: every page belongs to exactly one.
@@ -79,5 +80,12 @@ export async function renameNotebook(
  * the notebook does not exist.
  */
 export async function deleteNotebook(id: string): Promise<void> {
+  // The pages vanish via ON DELETE CASCADE (never through deletePage), so reclaim
+  // their /record clips here before the rows — and their file paths — are gone.
+  const pages = await getDb().execute(
+    'SELECT content FROM pages WHERE notebook_id = ?',
+    [id],
+  );
+  for (const row of pages.rows ?? []) cleanupRecordings(String(row.content));
   await getDb().execute('DELETE FROM notebooks WHERE id = ?', [id]);
 }

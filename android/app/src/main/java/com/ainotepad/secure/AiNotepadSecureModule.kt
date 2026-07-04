@@ -27,6 +27,7 @@ import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 import android.util.Base64
+import android.util.Log
 
 /**
  * Pinned networking for the companion server. React Native's stock fetch and
@@ -41,6 +42,10 @@ class AiNotepadSecureModule(reactContext: ReactApplicationContext) :
   ReactContextBaseJavaModule(reactContext) {
 
   private val sockets = ConcurrentHashMap<Int, WebSocket>()
+
+  private companion object {
+    const val TAG = "AiNotepadSecure"
+  }
 
   override fun getName() = "AiNotepadSecure"
 
@@ -130,6 +135,9 @@ class AiNotepadSecureModule(reactContext: ReactApplicationContext) :
       // Resolve the open promise (or reject it) exactly once; later failures
       // become error events instead.
       val settled = AtomicBoolean(false)
+      // Guarantees JS gets exactly one terminal event (close or error) per
+      // socket, no matter which listener callbacks fire or in what order.
+      val terminated = AtomicBoolean(false)
       val ws = pinnedClient(pin).newWebSocket(
         builder.build(),
         object : WebSocketListener() {
@@ -142,19 +150,37 @@ class AiNotepadSecureModule(reactContext: ReactApplicationContext) :
           }
 
           override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-            webSocket.close(code, null)
+            // Server initiated the close. Notify JS with the server's real
+            // code/reason NOW — do not wait for onClosed. OkHttp's close()
+            // rejects any code outside {1000, 3000..4999} by throwing (e.g. the
+            // reserved 1011/1003), which would abort the handshake so onClosed
+            // never fires and the JS run would await a close event forever.
+            if (terminated.compareAndSet(false, true)) {
+              sockets.remove(sid)
+              emitClose(sid, code, reason)
+            }
+            // Acknowledge with the always-valid 1000 so the handshake completes
+            // cleanly; JS has already been told the real code above.
+            try {
+              webSocket.close(1000, null)
+            } catch (_: Exception) {
+              // Already closing/closed — JS was notified regardless.
+            }
           }
 
           override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-            sockets.remove(sid)
-            emitClose(sid, code, reason)
+            // Reached without onClosing for client-initiated closes (JS cancel).
+            if (terminated.compareAndSet(false, true)) {
+              sockets.remove(sid)
+              emitClose(sid, code, reason)
+            }
           }
 
           override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
             sockets.remove(sid)
             if (settled.compareAndSet(false, true)) {
               promise.reject("ws_open_failed", t.message, t)
-            } else {
+            } else if (terminated.compareAndSet(false, true)) {
               emitError(sid, t.message ?: "socket error")
             }
           }
@@ -180,9 +206,22 @@ class AiNotepadSecureModule(reactContext: ReactApplicationContext) :
   // --- event bridge ----------------------------------------------------------
 
   private fun emit(map: WritableMap) {
-    reactApplicationContext
-      .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-      .emit("AiNotepadSecure:socket", map)
+    // Emitted from OkHttp's background thread. If the emitter is unavailable (JS
+    // instance not ready / torn down) or emit throws, an uncaught exception here
+    // would be swallowed on that thread — every socket event would vanish with no
+    // trace, leaving the phone spinning forever. Guard and log so a delivery
+    // failure is visible in `adb logcat -s AiNotepadSecure` instead of silent.
+    try {
+      val emitter = reactApplicationContext
+        .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+      if (emitter == null) {
+        Log.e(TAG, "emit: RCTDeviceEventEmitter is null — event dropped")
+        return
+      }
+      emitter.emit("AiNotepadSecure:socket", map)
+    } catch (e: Exception) {
+      Log.e(TAG, "emit failed: ${e.message}", e)
+    }
   }
 
   private fun emitMessage(id: Int, text: String) {

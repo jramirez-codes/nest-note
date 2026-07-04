@@ -8,6 +8,18 @@ import {
 } from 'react-native-webview';
 import { EDITOR_HTML } from '../webview/editorHtml';
 import { pairFromPayload, runAsk, runClean, type AskHandle } from '../server/aiController';
+import {
+  ensureRecordingPermissions,
+  startRecording,
+  stopRecording,
+  cancelRecording,
+  deleteRecordings,
+  exportRecording,
+  playRecording,
+  pausePlayback,
+  stopPlayback,
+  onPlaybackEnded,
+} from '../server/audioController';
 import QrPairModal from './QrPairModal';
 
 // react-native-webview@14's class-component typings resolve to `never` under
@@ -49,6 +61,9 @@ export default function NoteEditorWebView({
   // Live /ask runs keyed by the editor-side card id, so we can cancel them if
   // the note is swiped away / unmounted mid-stream.
   const askHandles = useRef<Record<string, AskHandle>>({});
+  // The /record card id whose clip is currently playing (only one at a time), so
+  // starting another or a natural end can flip the right card's button back.
+  const playingId = useRef<string | null>(null);
   // Set when a bare `/pair` asks to scan a QR; carries the card id to update.
   const [pairScan, setPairScan] = useState<{ id: string } | null>(null);
 
@@ -64,6 +79,8 @@ export default function NoteEditorWebView({
         payload?: string;
         pageText?: string;
         guidance?: string;
+        label?: string;
+        file?: string;
       };
       try {
         msg = JSON.parse(e.nativeEvent.data);
@@ -172,6 +189,70 @@ export default function NoteEditorWebView({
       } else if (msg.type === 'pairScan' && typeof msg.id === 'string') {
         // Bare `/pair`: open the QR scanner; the scan result feeds pairing.
         setPairScan({ id: msg.id });
+      } else if (msg.type === 'recordStart' && typeof msg.id === 'string') {
+        // Tap Record: get consent/permissions, then start the background mic
+        // capture. On success the card flips to its Stop state with a live timer.
+        const id = msg.id;
+        const doneRec = (patch: Record<string, unknown>) =>
+          inject(`window.__aiDone(${JSON.stringify(id)}, ${JSON.stringify(patch)});`);
+        (async () => {
+          const denied = await ensureRecordingPermissions();
+          if (denied) {
+            doneRec({ status: 'error', msg: denied });
+            return;
+          }
+          try {
+            const { file, startedAt } = await startRecording(msg.label ?? '');
+            doneRec({ status: 'recording', file, startedAt });
+          } catch (e) {
+            doneRec({ status: 'error', msg: e instanceof Error ? e.message : String(e) });
+          }
+        })();
+      } else if (msg.type === 'recordStop' && typeof msg.id === 'string') {
+        // Tap Stop: end capture and commit the clip's duration onto the card.
+        const id = msg.id;
+        const doneRec = (patch: Record<string, unknown>) =>
+          inject(`window.__aiDone(${JSON.stringify(id)}, ${JSON.stringify(patch)});`);
+        (async () => {
+          try {
+            const { file, ms } = await stopRecording();
+            doneRec({ status: 'stopped', file, ms });
+          } catch (e) {
+            doneRec({ status: 'error', msg: e instanceof Error ? e.message : String(e) });
+          }
+        })();
+      } else if (msg.type === 'recordExport' && typeof msg.file === 'string') {
+        // Copy the finished clip into the shared Recordings library.
+        exportRecording(msg.file).catch(() => {});
+      } else if (
+        msg.type === 'recordPlay' &&
+        typeof msg.id === 'string' &&
+        typeof msg.file === 'string'
+      ) {
+        // Play a finished clip. Only one plays at a time: flip the previously
+        // playing card back to Play, then mark this one playing.
+        const id = msg.id;
+        const setPlay = (cardId: string, playing: boolean) =>
+          inject(`window.__recPlay(${JSON.stringify(cardId)}, ${playing});`);
+        if (playingId.current && playingId.current !== id) setPlay(playingId.current, false);
+        playingId.current = id;
+        setPlay(id, true);
+        playRecording(msg.file).catch(() => {
+          if (playingId.current === id) playingId.current = null;
+          setPlay(id, false);
+        });
+      } else if (msg.type === 'recordPause' && typeof msg.id === 'string') {
+        const id = msg.id;
+        if (playingId.current === id) playingId.current = null;
+        pausePlayback().catch(() => {});
+        inject(`window.__recPlay(${JSON.stringify(id)}, false);`);
+      } else if (msg.type === 'recordCancel') {
+        // × on a card that's actively capturing: stop it and drop its partial file.
+        cancelRecording().catch(() => {});
+      } else if (msg.type === 'recordDiscard' && typeof msg.file === 'string') {
+        // × on a finished card: delete just that clip; never disturbs a recording
+        // that may be running on another card.
+        deleteRecordings([msg.file]).catch(() => {});
       }
     },
     [initialContent, hasTitle, onChangeContent, onSetTitle],
@@ -196,6 +277,22 @@ export default function NoteEditorWebView({
     const handles = askHandles.current;
     return () => {
       Object.values(handles).forEach(h => h.cancel());
+    };
+  }, []);
+
+  // When a clip finishes on its own, flip its card's button back to Play. Also
+  // stop playback when the editor goes away, so audio doesn't outlive the view.
+  useEffect(() => {
+    const sub = onPlaybackEnded(() => {
+      const id = playingId.current;
+      if (!id) return;
+      playingId.current = null;
+      ref.current?.injectJavaScript(`window.__recPlay(${JSON.stringify(id)}, false); true;`);
+    });
+    return () => {
+      sub.remove();
+      if (playingId.current) playingId.current = null;
+      stopPlayback().catch(() => {});
     };
   }, []);
 

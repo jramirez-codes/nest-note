@@ -14,9 +14,11 @@ import { post } from './bridge.js';
 import {
   previewField,
   askLiveField,
+  recPlayField,
   setPreviewEffect,
   setAskLive,
   clearAskLive,
+  setRecPlay,
   cachePreview,
 } from './state.js';
 import { broadcastPreview } from './answerView.js';
@@ -109,6 +111,7 @@ const extensions = [
   syntaxHighlighting(highlight),
   previewField,
   askLiveField,
+  recPlayField,
   cardField,
   previewFetcher,
   codeBlocks,
@@ -150,6 +153,13 @@ window.__setPreview = function (url, data) {
 // disturbing the caret or triggering a save on every token.
 window.__aiStream = function (id, answer) {
   view.dispatch({ effects: setAskLive.of({ id, a: answer, status: 'streaming' }) });
+};
+
+// RN toggles a /record card's playback state here (no document change): true when
+// its clip starts playing, false on pause or when the clip ends. The card's
+// play/pause button reflects it.
+window.__recPlay = function (id, playing) {
+  view.dispatch({ effects: setRecPlay.of({ id, playing: !!playing }) });
 };
 
 // RN calls this once a run finishes (or a pairing resolves): the outcome is

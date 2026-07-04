@@ -2,9 +2,25 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"fmt"
+	"os"
 	"os/exec"
+	"strings"
+	"syscall"
 )
+
+// orchestrationPrompt is appended to Claude's system prompt when MCP is enabled.
+// It's the glue that makes the toolset grow itself: the orchestrator holds the
+// cross-turn memory (a mention tally), Claude supplies the per-turn subject and
+// does the proposing, and creation only happens with the user's agreement.
+const orchestrationPrompt = `This session has an "orchestrator" MCP server that lets your toolset grow over time. Follow this routine, and keep it invisible to the user except when proposing a server:
+
+1. Near the start of each turn, call orchestrator record_subject with a short lowercase slug for the MAIN subject or project the user is discussing (e.g. "greenhouse", "taxes-2026", "buddy-the-dog"). Use one slug and reuse the same one for the same subject across turns. Don't mention that you're doing this.
+2. record_subject tells you when a subject has come up often enough to deserve its own notes server and doesn't have one yet. When it says so, briefly tell the user you can spin up a dedicated "<subject>" server to remember notes and facts about it, and ask if they want it. Do NOT create it unless they agree.
+3. If the user agrees, call request_new_server with the subject name and a one-line summary. It becomes available on the NEXT message, with tools to add and list notes about that subject — tell the user that.
+4. Call list_capabilities whenever you need to see existing servers, trending subjects, or queued creations. Use the subject's own <name>_add_note / <name>_notes tools to store and recall facts once its server exists.`
 
 // runClaude spawns the Claude Code CLI in print mode with streaming JSON output
 // and invokes onLine for each newline-delimited JSON object it emits. The output
@@ -14,34 +30,125 @@ import (
 // workdir confines where Claude runs — it is the server's single configured
 // directory, never a client-supplied path, which is the main lever we have on
 // an endpoint that is, by design, remote code execution.
-func runClaude(ctx context.Context, workdir, prompt string, onLine func([]byte)) error {
-	cmd := exec.CommandContext(ctx, "claude", "-p", prompt,
+//
+// mcpConfigs are absolute paths to .mcp.json files (empty when -root is unset).
+// When present they are loaded with --strict-mcp-config so only these servers
+// are available — the MCP surface is exactly what the server scaffolded, never
+// the host's ambient/global MCP settings. allowedTools pre-authorizes exactly
+// those servers so their tools run in headless -p mode without a permission
+// prompt; every other tool stays gated.
+func runClaude(ctx context.Context, workdir string, mcpConfigs, allowedTools []string, prompt string, onLine func([]byte)) error {
+	args := []string{"-p", prompt,
 		"--model", "sonnet",
 		// Emit per-token content_block_delta lines (not just one whole-turn
 		// assistant message), so the app can type the answer out as it arrives.
 		"--include-partial-messages",
-		"--output-format", "stream-json", "--verbose")
+		"--output-format", "stream-json", "--verbose"}
+	if len(allowedTools) > 0 {
+		args = append(args, "--allowedTools")
+		args = append(args, allowedTools...)
+	}
+	if len(mcpConfigs) > 0 {
+		// Teach Claude the orchestrator routine: report each turn's subject, and
+		// propose (then, on the user's yes, create) a dedicated notes server when
+		// a subject keeps coming up.
+		args = append(args, "--append-system-prompt", orchestrationPrompt)
+		// --strict-mcp-config is a bool that precedes the variadic --mcp-config
+		// so the config list runs cleanly to the end of the argv.
+		args = append(args, "--strict-mcp-config", "--mcp-config")
+		args = append(args, mcpConfigs...)
+	}
+	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = workdir
 
-	stdout, err := cmd.StdoutPipe()
+	// Capture stderr so a non-zero exit surfaces *why* Claude failed. Without
+	// this the caller only sees "exit status 1" with no cause — the CLI writes
+	// its real diagnostics (auth errors, bad flags, model/quota problems) here.
+	// Bounded so a chatty run can't grow this without limit.
+	var stderr boundedBuffer
+	stderr.limit = 64 * 1024
+	cmd.Stderr = &stderr
+
+	// Run Claude in its own process group. Claude spawns the MCP servers as
+	// child processes that inherit the stdout pipe, so a lingering MCP child can
+	// hold the pipe's write end open after Claude itself exits — which would
+	// leave the reader below blocked on EOF forever (an eternal spinner on the
+	// phone). The process group lets us signal the whole tree, not just Claude.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// On ctx timeout/cancel, kill the entire group (Claude + every MCP server),
+	// not just Claude — otherwise the surviving children keep the pipe open.
+	cmd.Cancel = func() error {
+		if cmd.Process != nil {
+			return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+		return nil
+	}
+
+	// Own the pipe (rather than StdoutPipe) so its lifetime isn't coupled to
+	// Wait: we close the parent's write end after Start, leaving only the child
+	// tree holding it, and read until every writer is gone.
+	pr, pw, err := os.Pipe()
 	if err != nil {
 		return err
 	}
+	cmd.Stdout = pw
 	if err := cmd.Start(); err != nil {
+		pw.Close()
+		pr.Close()
 		return err
 	}
+	pw.Close() // the child tree keeps its own copies of the write end
 
-	scan := bufio.NewScanner(stdout)
-	// Stream-json lines carry whole assistant turns and can be large.
-	scan.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
-	for scan.Scan() {
-		// Copy: the scanner reuses its buffer on the next Scan.
-		line := append([]byte(nil), scan.Bytes()...)
-		onLine(line)
+	scanDone := make(chan error, 1)
+	go func() {
+		scan := bufio.NewScanner(pr)
+		// Stream-json lines carry whole assistant turns and can be large.
+		scan.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+		for scan.Scan() {
+			// Copy: the scanner reuses its buffer on the next Scan.
+			onLine(append([]byte(nil), scan.Bytes()...))
+		}
+		scanDone <- scan.Err()
+	}()
+
+	waitErr := cmd.Wait()
+	// Claude has exited. Reap any MCP servers it left in the group so they
+	// release the pipe's write end and the reader can reach EOF instead of
+	// blocking indefinitely. ESRCH (group already gone) is fine to ignore.
+	if cmd.Process != nil {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}
-	if err := scan.Err(); err != nil {
-		_ = cmd.Wait()
-		return err
+	scanErr := <-scanDone
+	pr.Close()
+
+	if waitErr != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return fmt.Errorf("%w: %s", waitErr, msg)
+		}
+		return waitErr
 	}
-	return cmd.Wait()
+	return scanErr
 }
+
+// boundedBuffer is an io.Writer that keeps at most limit bytes, discarding the
+// rest. It caps how much of Claude's stderr we retain for error reporting so a
+// runaway process can't balloon memory.
+type boundedBuffer struct {
+	buf   bytes.Buffer
+	limit int
+}
+
+func (b *boundedBuffer) Write(p []byte) (int, error) {
+	if remaining := b.limit - b.buf.Len(); remaining > 0 {
+		if len(p) > remaining {
+			b.buf.Write(p[:remaining])
+		} else {
+			b.buf.Write(p)
+		}
+	}
+	// Report the full length written so the caller (exec) never sees a short
+	// write and errors out; we're intentionally dropping the overflow.
+	return len(p), nil
+}
+
+func (b *boundedBuffer) String() string { return b.buf.String() }
