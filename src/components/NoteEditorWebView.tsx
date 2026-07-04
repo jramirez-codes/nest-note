@@ -7,7 +7,13 @@ import {
   type WebViewProps,
 } from 'react-native-webview';
 import { EDITOR_HTML } from '../webview/editorHtml';
-import { pairFromPayload, runAsk, runClean, type AskHandle } from '../server/aiController';
+import {
+  pairFromPayload,
+  runAsk,
+  runClean,
+  runIngest,
+  type AskHandle,
+} from '../server/aiController';
 import {
   ensureRecordingPermissions,
   startRecording,
@@ -40,6 +46,8 @@ interface NoteEditorWebViewProps {
   onChangeContent: (content: string) => void;
   /** Store an AI-generated title produced by `/clean` (called at most once). */
   onSetTitle: (title: string) => void;
+  /** Called when `/ingest` finishes filing this page — the page is then deleted. */
+  onIngested: () => void;
 }
 
 /**
@@ -56,6 +64,7 @@ export default function NoteEditorWebView({
   hasTitle,
   onChangeContent,
   onSetTitle,
+  onIngested,
 }: NoteEditorWebViewProps) {
   const ref = useRef<WebViewInstance>(null);
   // Live /ask runs keyed by the editor-side card id, so we can cancel them if
@@ -186,6 +195,30 @@ export default function NoteEditorWebView({
             );
           },
         });
+      } else if (
+        msg.type === 'ingest' &&
+        typeof msg.id === 'string' &&
+        typeof msg.pageText === 'string'
+      ) {
+        // Sort the whole page into the dashboard's subject servers. On success the
+        // page is deleted (its notes now live in the dashboard, so the card goes
+        // with it); on failure the card shows the error and the page is untouched.
+        const id = msg.id;
+        askHandles.current[id] = runIngest(msg.pageText, {
+          onDone: () => {
+            delete askHandles.current[id];
+            onIngested();
+          },
+          onError: errMsg => {
+            delete askHandles.current[id];
+            inject(
+              `window.__aiDone(${JSON.stringify(id)}, ${JSON.stringify({
+                status: 'error',
+                msg: errMsg,
+              })});`,
+            );
+          },
+        });
       } else if (msg.type === 'pairScan' && typeof msg.id === 'string') {
         // Bare `/pair`: open the QR scanner; the scan result feeds pairing.
         setPairScan({ id: msg.id });
@@ -255,7 +288,7 @@ export default function NoteEditorWebView({
         deleteRecordings([msg.file]).catch(() => {});
       }
     },
-    [initialContent, hasTitle, onChangeContent, onSetTitle],
+    [initialContent, hasTitle, onChangeContent, onSetTitle, onIngested],
   );
 
   // Feed a resolved pairing outcome back into the /pair card, then close scanner.

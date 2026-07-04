@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ActivityIndicator, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../theme/colors';
-import NewNotePage from '../components/NewNotePage';
+import DashboardPage from '../components/DashboardPage';
 import NoteHeader from '../components/NoteHeader';
 import NotePage from '../components/NotePage';
 import PageIndicator from '../components/PageIndicator';
@@ -14,12 +14,12 @@ import type { Note } from '../types/note';
 import { fireAndForget } from '../utils/async';
 
 /**
- * A page in the pager is either an existing note or the trailing "new note"
- * sheet. Modeling it as a discriminated union keeps `renderItem` exhaustive.
+ * A page in the pager is either an existing note or the trailing dashboard.
+ * Modeling it as a discriminated union keeps `renderItem` exhaustive.
  */
-type Page = { kind: 'note'; note: Note } | { kind: 'new' };
+type Page = { kind: 'note'; note: Note } | { kind: 'dashboard' };
 
-const NEW_PAGE_KEY = '__new_note__';
+const DASHBOARD_PAGE_KEY = '__dashboard__';
 
 /**
  * The notebook: a horizontally paged pad the user flips through, one note per
@@ -41,7 +41,7 @@ export default function NotebookScreen() {
   const pages = useMemo<Page[]>(
     () => [
       ...notes.map(note => ({ kind: 'note' as const, note })),
-      { kind: 'new' as const },
+      { kind: 'dashboard' as const },
     ],
     [notes],
   );
@@ -51,8 +51,8 @@ export default function NotebookScreen() {
     fireAndForget(createNote(), 'create note');
   }, [createNote]);
 
-  // Flip to the trailing "tap to add a note" sheet (the last page).
-  const goToNewPage = useCallback(() => {
+  // Flip to the trailing dashboard page (the last page).
+  const goToDashboard = useCallback(() => {
     pagerRef.current?.flipTo(notes.length);
   }, [notes.length]);
 
@@ -73,7 +73,7 @@ export default function NotebookScreen() {
   const keyForIndex = useCallback(
     (index: number) => {
       const page = pages[index];
-      return !page || page.kind === 'new' ? NEW_PAGE_KEY : page.note.id;
+      return !page || page.kind === 'dashboard' ? DASHBOARD_PAGE_KEY : page.note.id;
     },
     [pages],
   );
@@ -81,8 +81,10 @@ export default function NotebookScreen() {
   const renderPage = useCallback(
     (index: number, isActive: boolean) => {
       const page = pages[index];
-      if (!page || page.kind === 'new') {
-        return <NewNotePage width={width} onCreate={handleCreate} />;
+      if (!page || page.kind === 'dashboard') {
+        return (
+          <DashboardPage width={width} isActive={isActive} onCreateNote={handleCreate} />
+        );
       }
       return (
         <NotePage
@@ -91,10 +93,11 @@ export default function NotebookScreen() {
           isActive={isActive}
           onChangeContent={updateNoteContent}
           onSetTitle={updateNoteTitle}
+          onIngested={deleteNote}
         />
       );
     },
-    [pages, width, handleCreate, updateNoteContent, updateNoteTitle],
+    [pages, width, handleCreate, updateNoteContent, updateNoteTitle, deleteNote],
   );
 
   const currentPage = pages[currentIndex];
@@ -105,7 +108,7 @@ export default function NotebookScreen() {
   // yet) fall back to their positional name, "Smart Note #<page number>".
   const headerTitle = currentNote
     ? currentNote.title.trim() || `Smart Note #${currentIndex + 1}`
-    : 'New note';
+    : 'Dashboard';
 
   return (
     <View
@@ -188,7 +191,7 @@ export default function NotebookScreen() {
           <PageIndicator
             currentIndex={currentIndex}
             noteCount={notes.length}
-            onPressNew={goToNewPage}
+            onPressDashboard={goToDashboard}
             scrubWidth={width}
             onScrub={handleScrub}
           />

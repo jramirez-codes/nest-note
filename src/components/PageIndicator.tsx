@@ -12,10 +12,10 @@ import {
 interface PageIndicatorProps {
   /** Zero-based index of the active page, spanning notes then the new-note sheet. */
   currentIndex: number;
-  /** How many real notes exist; the new-note sheet sits at index `noteCount`. */
+  /** How many real notes exist; the dashboard sits at index `noteCount`. */
   noteCount: number;
-  /** Jump to the trailing "tap to add a note" page. */
-  onPressNew: () => void;
+  /** Jump to the trailing dashboard page. */
+  onPressDashboard: () => void;
   /** Screen width, used to scale how far a scrub drag travels per page. */
   scrubWidth: number;
   /** Jump to a note page while the user scrubs the progress bubble. */
@@ -70,11 +70,11 @@ function pagesPerSecond(dx: number, scrubWidth: number) {
 function PageIndicator({
   currentIndex,
   noteCount,
-  onPressNew,
+  onPressDashboard,
   scrubWidth,
   onScrub,
 }: PageIndicatorProps) {
-  const onNewPage = currentIndex >= noteCount;
+  const onDashboard = currentIndex >= noteCount;
   // Which note we're on (1-based), clamped so the trailing sheet reads as the
   // last note rather than overrunning the count.
   const notePosition = Math.min(currentIndex + 1, noteCount);
@@ -218,7 +218,7 @@ function PageIndicator({
         ]}>
         <View
           className={
-            onNewPage && !scrubbing
+            onDashboard && !scrubbing
               ? 'h-9 flex-row items-center rounded-full bg-surface px-4 opacity-40'
               : 'h-9 flex-row items-center rounded-full bg-surface px-4'
           }>
@@ -234,32 +234,34 @@ function PageIndicator({
         </View>
       </Animated.View>
 
-      {/* New-note bubble — jumps to the trailing create page; active there. */}
+      {/* Dashboard bubble — jumps to the trailing dashboard page; active there.
+          The 2×2 grid glyph is drawn from four small squares (no icon dep). */}
       <Pressable
-        onPress={onPressNew}
+        onPress={onPressDashboard}
         accessibilityRole="button"
-        accessibilityLabel="Go to add a new note"
+        accessibilityLabel="Open dashboard"
         hitSlop={8}
         className={
-          onNewPage
+          onDashboard
             ? 'h-9 flex-row items-center rounded-full bg-accent px-4 active:opacity-70'
             : 'h-9 flex-row items-center rounded-full bg-surface px-4 active:opacity-70'
         }>
+        <View className="h-4 w-4 flex-row flex-wrap" style={{ gap: 2 }}>
+          {[0, 1, 2, 3].map(i => (
+            <View
+              key={i}
+              className={onDashboard ? 'bg-background' : 'bg-faint'}
+              style={{ width: 6, height: 6, borderRadius: 1.5 }}
+            />
+          ))}
+        </View>
         <Text
           className={
-            onNewPage
-              ? 'text-base font-bold leading-none text-background'
-              : 'text-base font-bold leading-none text-faint'
+            onDashboard
+              ? 'ml-2 text-xs font-semibold text-background'
+              : 'ml-2 text-xs font-semibold text-faint'
           }>
-          +
-        </Text>
-        <Text
-          className={
-            onNewPage
-              ? 'ml-1.5 text-xs font-semibold text-background'
-              : 'ml-1.5 text-xs font-semibold text-faint'
-          }>
-          New
+          Dashboard
         </Text>
       </Pressable>
     </View>

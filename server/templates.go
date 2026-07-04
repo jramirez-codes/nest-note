@@ -247,6 +247,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"ainotepad-orchestrator/mcpx"
 )
@@ -257,10 +258,12 @@ type capability struct {
 	Tools   []string %BT%json:"tools"%BT%
 }
 
-// subjectState is the running tally for one subject slug.
+// subjectState is the running tally for one subject slug. MergedInto is set once
+// the subject has been consolidated into another, so it stops trending/proposing.
 type subjectState struct {
-	Count     int  %BT%json:"count"%BT%
-	Requested bool %BT%json:"requested"%BT%
+	Count      int    %BT%json:"count"%BT%
+	Requested  bool   %BT%json:"requested"%BT%
+	MergedInto string %BT%json:"merged_into,omitempty"%BT%
 }
 
 var (
@@ -295,8 +298,37 @@ func main() {
 		Handler: requestNewServer,
 	})
 	s.AddTool(mcpx.Tool{
+		Name:        "consolidate_subjects",
+		Description: "Queue merging one or more subjects' notes into a target subject, retiring the merged ones. Only call after the user agrees. Takes effect on the next message.",
+		InputSchema: mcpx.ObjectSchema(map[string]any{
+			"into": map[string]any{"type": "string", "description": "target subject slug to keep"},
+			"from": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "subject slugs to merge in and retire"},
+		}, []string{"into", "from"}),
+		Handler: consolidateSubjects,
+	})
+	s.AddTool(mcpx.Tool{
+		Name:        "ingest_topic",
+		Description: "File one or more notes under a subject, creating its notes store if needed. This is the workhorse for /ingest: call it once per distinct topic found on the page. The notes are saved immediately; if the subject had no server yet, one is queued and goes live on the next message. Reuse an existing subject slug when the topic matches one (call list_capabilities first).",
+		InputSchema: mcpx.ObjectSchema(map[string]any{
+			"subject": map[string]any{"type": "string", "description": "short lowercase slug for the topic, e.g. greenhouse or taxes-2026"},
+			"summary": map[string]any{"type": "string", "description": "one-line description of the subject (used only when creating it)"},
+			"notes":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "the notes/facts from the page to file under this subject"},
+		}, []string{"subject", "notes"}),
+		Handler: ingestTopic,
+	})
+	s.AddTool(mcpx.Tool{
+		Name:        "suggest_merge",
+		Description: "Optionally suggest merging overlapping subjects. Only call when two subjects clearly duplicate each other. This does NOT merge anything — it drops a suggestion the user can approve later in the dashboard. Never blocks; use sparingly.",
+		InputSchema: mcpx.ObjectSchema(map[string]any{
+			"into":   map[string]any{"type": "string", "description": "target subject slug to keep"},
+			"from":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "subject slugs that could be merged into the target"},
+			"reason": map[string]any{"type": "string", "description": "one line on why they overlap"},
+		}, []string{"into", "from"}),
+		Handler: suggestMerge,
+	})
+	s.AddTool(mcpx.Tool{
 		Name:        "list_capabilities",
-		Description: "List existing capability servers, subjects trending toward their own server, and any queued creations.",
+		Description: "List existing capability servers, subjects trending toward their own server, and any queued creations or consolidations.",
 		InputSchema: mcpx.ObjectSchema(nil, nil),
 		Handler:     func(args map[string]any) (string, error) { return listCapabilities(), nil },
 	})
@@ -323,8 +355,10 @@ func hasServer(name string) bool {
 	return err == nil && info.IsDir()
 }
 
-func subjectsPath() string { return filepath.Join(stateDir, "subjects.json") }
-func requestsDir() string  { return filepath.Join(stateDir, "requests") }
+func subjectsPath() string      { return filepath.Join(stateDir, "subjects.json") }
+func requestsDir() string       { return filepath.Join(stateDir, "requests") }
+func consolidationsDir() string { return filepath.Join(stateDir, "consolidations") }
+func suggestionsDir() string    { return filepath.Join(stateDir, "suggestions") }
 
 func loadSubjects() map[string]*subjectState {
 	m := map[string]*subjectState{}
@@ -355,6 +389,8 @@ func recordSubject(args map[string]any) (string, error) {
 	saveSubjects(m)
 
 	switch {
+	case st.MergedInto != "":
+		return fmt.Sprintf("recorded %q (%d); it was consolidated into %q — use that subject's notes.", name, st.Count, st.MergedInto), nil
 	case hasServer(name):
 		return fmt.Sprintf("recorded %q (%d); it already has a server.", name, st.Count), nil
 	case st.Requested:
@@ -392,7 +428,179 @@ func requestNewServer(args map[string]any) (string, error) {
 	}
 	st.Requested = true
 	saveSubjects(m)
-	return fmt.Sprintf("queued the %q notes server (%s). It goes live on the next message, with tools %s_add_note and %s_notes.", name, summary, name, name), nil
+	return fmt.Sprintf("queued the %q notes server (%s). It goes live on the next message, with tools %s_add_note, %s_notes, and %s_rewrite.", name, summary, name, name, name), nil
+}
+
+// consolidateSubjects queues a merge of one or more subjects into a target. It
+// only drops a request file (the trusted Go server does the markdown merge and
+// retires the merged servers on the next run) and marks the merged subjects so
+// they stop trending here.
+func consolidateSubjects(args map[string]any) (string, error) {
+	into := slug(fmt.Sprintf("%v", args["into"]))
+	if into == "" {
+		return "no target subject given.", nil
+	}
+	var from []string
+	if raw, ok := args["from"].([]any); ok {
+		for _, v := range raw {
+			s := slug(fmt.Sprintf("%v", v))
+			if s != "" && s != into {
+				from = append(from, s)
+			}
+		}
+	}
+	if len(from) == 0 {
+		return "no subjects to merge (need at least one 'from' distinct from 'into').", nil
+	}
+	os.MkdirAll(consolidationsDir(), 0o755)
+	req := map[string]any{"into": into, "from": from}
+	data, _ := json.MarshalIndent(req, "", "  ")
+	if err := os.WriteFile(filepath.Join(consolidationsDir(), into+".json"), append(data, '\n'), 0o644); err != nil {
+		return "", err
+	}
+	m := loadSubjects()
+	for _, f := range from {
+		st := m[f]
+		if st == nil {
+			st = &subjectState{}
+			m[f] = st
+		}
+		st.MergedInto = into
+	}
+	saveSubjects(m)
+	return fmt.Sprintf("queued consolidation of %s into %q. Live on the next message; the merged subjects are retired.", strings.Join(from, ", "), into), nil
+}
+
+// ingestTopic files notes under a subject during /ingest. Unlike request_new_server
+// (which only queues a build), it writes the note markdown immediately so the
+// dashboard shows it this instant — and, when the subject has no server code yet,
+// also queues one so the queryable MCP binary comes online next message. Notes and
+// the generated fact-store server share the same file (<mcp>/<name>/<name>.md), and
+// materialization uses writeIfMissing for the .md, so the queued build never
+// clobbers what we write here.
+func ingestTopic(args map[string]any) (string, error) {
+	name := slug(fmt.Sprintf("%v", args["subject"]))
+	if name == "" {
+		return "no subject given.", nil
+	}
+	if mcpDir == "" {
+		return "no mcp dir configured.", nil
+	}
+
+	var notes []string
+	if raw, ok := args["notes"].([]any); ok {
+		for _, v := range raw {
+			if s := strings.TrimSpace(fmt.Sprintf("%v", v)); s != "" {
+				notes = append(notes, s)
+			}
+		}
+	}
+	if one, ok := args["note"].(string); ok {
+		if s := strings.TrimSpace(one); s != "" {
+			notes = append(notes, s)
+		}
+	}
+	if len(notes) == 0 {
+		return "no notes to file for " + name + ".", nil
+	}
+	summary, _ := args["summary"].(string)
+	summary = strings.TrimSpace(summary)
+
+	m := loadSubjects()
+	// Follow a prior consolidation so notes land in the surviving subject.
+	if st := m[name]; st != nil && st.MergedInto != "" {
+		name = st.MergedInto
+	}
+
+	dir := filepath.Join(mcpDir, name)
+	mdPath := filepath.Join(dir, name+".md")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+
+	body, err := os.ReadFile(mdPath)
+	isNew := err != nil // no notes file yet -> this subject is brand new
+	if isNew {
+		head := "# " + name + "\n\n"
+		if summary != "" {
+			head += summary + "\n"
+		}
+		body = []byte(head)
+	}
+	text := string(body)
+	if !strings.HasSuffix(text, "\n") {
+		text += "\n"
+	}
+	stamp := time.Now().Format("2006-01-02 15:04")
+	for _, n := range notes {
+		text += "- " + n + " <!-- " + stamp + " -->\n"
+	}
+	if err := os.WriteFile(mdPath, []byte(text), 0o644); err != nil {
+		return "", err
+	}
+
+	// Queue the queryable MCP binary if this subject has no server code yet.
+	created := false
+	if _, err := os.Stat(filepath.Join(dir, "main.go")); err != nil {
+		s := summary
+		if s == "" {
+			s = "Notes and facts about " + name + "."
+		}
+		os.MkdirAll(requestsDir(), 0o755)
+		req := map[string]string{"name": name, "summary": s}
+		data, _ := json.MarshalIndent(req, "", "  ")
+		os.WriteFile(filepath.Join(requestsDir(), name+".json"), append(data, '\n'), 0o644)
+		created = true
+	}
+
+	st := m[name]
+	if st == nil {
+		st = &subjectState{}
+		m[name] = st
+	}
+	st.Count++
+	if created {
+		st.Requested = true
+	}
+	saveSubjects(m)
+
+	if isNew {
+		return fmt.Sprintf("filed %d note(s) under new subject %q; its notes server goes live on the next message.", len(notes), name), nil
+	}
+	if created {
+		return fmt.Sprintf("filed %d note(s) under %q (its notes server is queued, live next message).", len(notes), name), nil
+	}
+	return fmt.Sprintf("filed %d note(s) under %q.", len(notes), name), nil
+}
+
+// suggestMerge drops an optional merge suggestion for the user to approve in the
+// dashboard. It never merges anything itself — approval writes a consolidation
+// request through the /action endpoint, which the Go server drains next run.
+func suggestMerge(args map[string]any) (string, error) {
+	into := slug(fmt.Sprintf("%v", args["into"]))
+	if into == "" {
+		return "no target subject given.", nil
+	}
+	var from []string
+	if raw, ok := args["from"].([]any); ok {
+		for _, v := range raw {
+			s := slug(fmt.Sprintf("%v", v))
+			if s != "" && s != into {
+				from = append(from, s)
+			}
+		}
+	}
+	if len(from) == 0 {
+		return "no subjects to merge (need at least one 'from' distinct from 'into').", nil
+	}
+	reason, _ := args["reason"].(string)
+	os.MkdirAll(suggestionsDir(), 0o755)
+	req := map[string]any{"into": into, "from": from, "reason": strings.TrimSpace(reason)}
+	data, _ := json.MarshalIndent(req, "", "  ")
+	if err := os.WriteFile(filepath.Join(suggestionsDir(), into+".json"), append(data, '\n'), 0o644); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("suggested merging %s into %q; the user can approve it in the dashboard.", strings.Join(from, ", "), into), nil
 }
 
 func listCapabilities() string {
@@ -435,7 +643,7 @@ func listCapabilities() string {
 	m := loadSubjects()
 	var trending, queued []string
 	for name, st := range m {
-		if hasServer(name) {
+		if hasServer(name) || st.MergedInto != "" {
 			continue
 		}
 		if st.Requested {
@@ -450,58 +658,75 @@ func listCapabilities() string {
 		b.WriteString("\n\nTrending subjects with no server (consider proposing one):\n- " + strings.Join(trending, "\n- "))
 	}
 	if len(queued) > 0 {
-		b.WriteString("\n\nQueued (live next message):\n- " + strings.Join(queued, "\n- "))
+		b.WriteString("\n\nQueued servers (live next message):\n- " + strings.Join(queued, "\n- "))
+	}
+
+	var merges []string
+	if entries, err := os.ReadDir(consolidationsDir()); err == nil {
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+				continue
+			}
+			var req struct {
+				Into string   %BT%json:"into"%BT%
+				From []string %BT%json:"from"%BT%
+			}
+			if data, err := os.ReadFile(filepath.Join(consolidationsDir(), e.Name())); err == nil && json.Unmarshal(data, &req) == nil {
+				merges = append(merges, fmt.Sprintf("%s <- %s", req.Into, strings.Join(req.From, ", ")))
+			}
+		}
+	}
+	sort.Strings(merges)
+	if len(merges) > 0 {
+		b.WriteString("\n\nQueued consolidations (live next message):\n- " + strings.Join(merges, "\n- "))
 	}
 	return b.String()
 }
 `)
 
 // factStoreMainTmpl is the body of a generated per-subject notes server. The Go
-// server substitutes __NAME__ for the subject slug before writing it. Its data
-// path is derived from the running binary's location (<mcp>/bin/__NAME__) so it
-// keeps working if the whole root is moved.
+// server substitutes __NAME__ for the subject slug before writing it. Notes are
+// kept as a plain markdown file at <mcp>/__NAME__/__NAME__.md, resolved from the
+// running binary's location (<mcp>/bin/__NAME__) so it moves with the root.
+// add_note appends a bullet, notes returns the whole file, and rewrite replaces
+// it — the tool Claude uses to consolidate/dedupe/reorganize a subject's notes.
 var factStoreMainTmpl = bt(`package main
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
-	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"ainotepad-mcp/mcpx"
 )
 
-type note struct {
-	Note string %BT%json:"note"%BT%
-	At   string %BT%json:"at"%BT%
-}
-
 var mu sync.Mutex
 
-func dataPath() string {
+// notePath resolves <mcp>/__NAME__/__NAME__.md from the binary at
+// <mcp>/bin/__NAME__, so the markdown moves with the root.
+func notePath() string {
 	exe, err := os.Executable()
 	if err != nil {
-		return "data.json"
+		return "__NAME__.md"
 	}
-	// binary at <mcp>/bin/__NAME__ ; data at <mcp>/__NAME__/data.json
-	return filepath.Join(filepath.Dir(exe), "..", "__NAME__", "data.json")
+	return filepath.Join(filepath.Dir(exe), "..", "__NAME__", "__NAME__.md")
 }
 
-func load() []note {
-	data, err := os.ReadFile(dataPath())
+func readBody() string {
+	data, err := os.ReadFile(notePath())
 	if err != nil {
-		return nil
+		return ""
 	}
-	var ns []note
-	json.Unmarshal(data, &ns)
-	return ns
+	return string(data)
 }
 
-func save(ns []note) error {
-	data, _ := json.MarshalIndent(ns, "", "  ")
-	return os.WriteFile(dataPath(), append(data, '\n'), 0o644)
+func writeBody(s string) error {
+	if !strings.HasSuffix(s, "\n") {
+		s += "\n"
+	}
+	return os.WriteFile(notePath(), []byte(s), 0o644)
 }
 
 func main() {
@@ -509,41 +734,59 @@ func main() {
 
 	s.AddTool(mcpx.Tool{
 		Name:        "__NAME___add_note",
-		Description: "Save a note or fact about __NAME__.",
+		Description: "Append a note or fact about __NAME__ as a markdown bullet.",
 		InputSchema: mcpx.ObjectSchema(map[string]any{
 			"note": map[string]any{"type": "string", "description": "the note or fact to remember"},
 		}, []string{"note"}),
 		Handler: func(args map[string]any) (string, error) {
 			text, _ := args["note"].(string)
+			text = strings.TrimSpace(text)
 			if text == "" {
 				return "nothing to save", nil
 			}
 			mu.Lock()
 			defer mu.Unlock()
-			ns := append(load(), note{Note: text, At: time.Now().Format("2006-01-02 15:04")})
-			if err := save(ns); err != nil {
+			body := readBody()
+			if body != "" && !strings.HasSuffix(body, "\n") {
+				body += "\n"
+			}
+			body += "- " + text + " <!-- " + time.Now().Format("2006-01-02 15:04") + " -->\n"
+			if err := writeBody(body); err != nil {
 				return "", err
 			}
-			return "saved (" + strconv.Itoa(len(ns)) + " notes total)", nil
+			return "saved to __NAME__.md", nil
 		},
 	})
 
 	s.AddTool(mcpx.Tool{
 		Name:        "__NAME___notes",
-		Description: "List everything remembered about __NAME__.",
+		Description: "Return the full __NAME__.md markdown notes.",
 		InputSchema: mcpx.ObjectSchema(nil, nil),
 		Handler: func(args map[string]any) (string, error) {
 			mu.Lock()
 			defer mu.Unlock()
-			ns := load()
-			if len(ns) == 0 {
+			body := strings.TrimSpace(readBody())
+			if body == "" {
 				return "no notes about __NAME__ yet.", nil
 			}
-			out := "Notes about __NAME__:"
-			for _, n := range ns {
-				out += "\n- " + n.Note + "  (" + n.At + ")"
+			return body, nil
+		},
+	})
+
+	s.AddTool(mcpx.Tool{
+		Name:        "__NAME___rewrite",
+		Description: "Replace the entire __NAME__.md with new markdown. Use to consolidate, dedupe, or reorganize the notes. Read __NAME___notes first so nothing is lost.",
+		InputSchema: mcpx.ObjectSchema(map[string]any{
+			"content": map[string]any{"type": "string", "description": "the full new markdown body for __NAME__.md"},
+		}, []string{"content"}),
+		Handler: func(args map[string]any) (string, error) {
+			content, _ := args["content"].(string)
+			mu.Lock()
+			defer mu.Unlock()
+			if err := writeBody(content); err != nil {
+				return "", err
 			}
-			return out, nil
+			return "rewrote __NAME__.md", nil
 		},
 	})
 

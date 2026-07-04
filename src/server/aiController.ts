@@ -282,3 +282,126 @@ export function runClean(
     onError: msg => cb.onError(msg),
   });
 }
+
+export interface IngestCallbacks {
+  /** The run finished cleanly; `summary` is Claude's one-line report of what it filed. */
+  onDone: (summary: string) => void;
+  /** The run failed; the page must be left intact and the error shown. */
+  onError: (msg: string) => void;
+}
+
+// Frame the page as a sorting task for the orchestrator MCP. Claude reads the
+// existing subject servers, groups the page by topic, and files each group with
+// `ingest_topic` (which creates a subject's notes store on first use). The server
+// always appends its own orchestration routine, so this only has to describe the
+// ingest job. We deliberately forbid questions: /ingest is fire-and-forget, and
+// any genuine ambiguity becomes an optional `suggest_merge` the dashboard surfaces.
+function buildIngestPrompt(pageText: string): string {
+  return (
+    'You are sorting a page of notes into a personal knowledge base made of ' +
+    'per-subject "notes servers", managed by the orchestrator MCP.\n\n' +
+    'Do exactly this, without asking the user anything:\n' +
+    '1. Call list_capabilities to see which subject servers already exist.\n' +
+    '2. Group the notes below by subject/topic. Reuse an existing subject slug ' +
+    'whenever a note fits one; otherwise choose a short lowercase slug for a new ' +
+    'subject.\n' +
+    '3. For each subject, call ingest_topic(subject, summary, notes) with that ' +
+    "subject's notes (lightly cleaned for grammar). Preserve every fact; invent " +
+    'nothing; file every note into exactly one subject.\n' +
+    '4. Only if two EXISTING subjects clearly duplicate each other may you call ' +
+    'suggest_merge. Never merge on your own.\n\n' +
+    'When finished, reply with a single short line summarizing what you filed and ' +
+    'where. Do not ask questions.\n\n<notes>\n' +
+    pageText +
+    '\n</notes>'
+  );
+}
+
+/**
+ * Sort `pageText` into the orchestrator's subject servers. Runs on the same proven
+ * stream path as {@link runAsk} but only cares about completion: on success the
+ * caller deletes the page (the notes now live in the dashboard); on failure the
+ * page is left untouched. Cancelling tears down the underlying run.
+ */
+export function runIngest(pageText: string, cb: IngestCallbacks): AskHandle {
+  return runAsk(buildIngestPrompt(pageText), {
+    onDelta: () => {},
+    onDone: answer => cb.onDone(answer.trim()),
+    onError: msg => cb.onError(msg),
+  });
+}
+
+// --- Dashboard state (read) + optional merge actions (write) -----------------
+// Both talk to the Go server's /state and /action endpoints over the same pinned
+// tunnel /ask uses, authenticated with the paired bearer token. They never spin up
+// Claude — the server answers straight from the scaffold's files.
+
+export interface DashboardServer {
+  name: string;
+  summary: string;
+  tools: string[];
+  /** The full markdown of this subject's notes. */
+  notes: string;
+}
+
+export interface DashboardSuggestion {
+  into: string;
+  from: string[];
+  reason: string;
+}
+
+export interface DashboardState {
+  servers: DashboardServer[];
+  suggestions: DashboardSuggestion[];
+}
+
+function serverOrigin(s: PairedServer): string {
+  return `https://${s.host}:${s.port}`;
+}
+
+/** Fetch the dashboard's view of the MCP world (servers, their notes, suggestions). */
+export async function fetchDashboardState(): Promise<DashboardState> {
+  const t = getTransport();
+  if (!t) throw new Error(NO_MODULE);
+  const server = await currentServer();
+  if (!server) throw new Error('Not connected. Pair first with “/pair <payload>”.');
+
+  const res = await t.postPinned(`${serverOrigin(server)}/state`, server.pin, {
+    headers: { Authorization: `Bearer ${server.token}` },
+  });
+  if (res.status === 404) {
+    throw new Error('This companion server has no dashboard (started without -root).');
+  }
+  if (res.status !== 200) {
+    setServerStatus('disconnected');
+    throw new Error(`Dashboard unavailable (HTTP ${res.status}).`);
+  }
+  // Any answer off the socket proves the server is live right now.
+  setServerStatus('connected');
+  const data = JSON.parse(res.text) as Partial<DashboardState>;
+  return {
+    servers: Array.isArray(data.servers) ? data.servers : [],
+    suggestions: Array.isArray(data.suggestions) ? data.suggestions : [],
+  };
+}
+
+/** Approve ('merge') or 'dismiss' an optional merge suggestion from the dashboard. */
+export async function applyDashboardAction(action: {
+  action: 'merge' | 'dismiss';
+  into: string;
+  from?: string[];
+}): Promise<void> {
+  const t = getTransport();
+  if (!t) throw new Error(NO_MODULE);
+  const server = await currentServer();
+  if (!server) throw new Error('Not connected.');
+
+  const res = await t.postPinned(`${serverOrigin(server)}/action`, server.pin, {
+    headers: {
+      Authorization: `Bearer ${server.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(action),
+  });
+  if (res.status !== 200) throw new Error(`Action failed (HTTP ${res.status}).`);
+}

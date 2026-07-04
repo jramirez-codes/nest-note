@@ -39,6 +39,7 @@ export default function WebViewSpike() {
           hasTitle={false}
           onChangeContent={setOut}
           onSetTitle={() => {}}
+          onIngested={() => {}}
         />
       </View>
       <View style={[styles.footer, { borderTopColor: colors.border }]}>

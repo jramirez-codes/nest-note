@@ -12,6 +12,8 @@ interface NotePageProps {
   isActive: boolean;
   onChangeContent: (id: string, content: string) => void;
   onSetTitle: (id: string, title: string) => void;
+  /** Called after `/ingest` files this page into the dashboard — deletes the page. */
+  onIngested: (id: string) => void;
 }
 
 /**
@@ -21,7 +23,14 @@ interface NotePageProps {
  * Memoized so that editing one page (which updates the parent's notes array)
  * does not re-render its sibling pages.
  */
-function NotePage({ note, width, isActive, onChangeContent, onSetTitle }: NotePageProps) {
+function NotePage({
+  note,
+  width,
+  isActive,
+  onChangeContent,
+  onSetTitle,
+  onIngested,
+}: NotePageProps) {
   const handleChangeContent = useCallback(
     (content: string) => onChangeContent(note.id, content),
     [note.id, onChangeContent],
@@ -29,6 +38,10 @@ function NotePage({ note, width, isActive, onChangeContent, onSetTitle }: NotePa
   const handleSetTitle = useCallback(
     (title: string) => onSetTitle(note.id, title),
     [note.id, onSetTitle],
+  );
+  const handleIngested = useCallback(
+    () => onIngested(note.id),
+    [note.id, onIngested],
   );
 
   return (
@@ -42,6 +55,7 @@ function NotePage({ note, width, isActive, onChangeContent, onSetTitle }: NotePa
           hasTitle={note.title.trim().length > 0}
           onChangeContent={handleChangeContent}
           onSetTitle={handleSetTitle}
+          onIngested={handleIngested}
         />
       </KeyboardAvoidingView>
     </View>

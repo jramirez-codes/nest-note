@@ -181,52 +181,106 @@ func writeMcpConfig(path string, servers map[string]string, args map[string][]st
 
 // materializeRequests turns each creation request the orchestrator queued under
 // stateDir/requests into a real fact-store server folder under mcpDir, then
-// deletes the request. The subject name is validated here (defence in depth on
-// top of the orchestrator's own slugging) so a request file can never write
-// outside mcpDir.
+// deletes the request, and finally applies any queued consolidations. Subject
+// names are validated here (defence in depth on top of the orchestrator's own
+// slugging) so a request file can never write outside mcpDir.
 func materializeRequests(mcpDir, stateDir string) error {
 	reqDir := filepath.Join(stateDir, "requests")
-	entries, err := os.ReadDir(reqDir)
+	if entries, err := os.ReadDir(reqDir); err == nil {
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+				continue
+			}
+			reqPath := filepath.Join(reqDir, e.Name())
+			var req struct {
+				Name    string `json:"name"`
+				Summary string `json:"summary"`
+			}
+			if data, err := os.ReadFile(reqPath); err != nil || json.Unmarshal(data, &req) != nil || !validSlug(req.Name) {
+				os.Remove(reqPath) // unreadable or unsafe: drop it
+				continue
+			}
+			if err := seedSubjectServer(mcpDir, req.Name, req.Summary); err != nil {
+				return err
+			}
+			os.Remove(reqPath) // fulfilled
+		}
+	}
+	return materializeConsolidations(mcpDir, stateDir)
+}
+
+// seedSubjectServer creates a per-subject fact-store server folder (main.go,
+// capability.json, and a seeded <name>.md) under mcpDir if it doesn't exist yet.
+// It is a no-op when the folder is already present, so callers can use it to
+// lazily ensure a consolidation target exists. name must already be validated.
+func seedSubjectServer(mcpDir, name, summary string) error {
+	dir := filepath.Join(mcpDir, name)
+	if _, err := os.Stat(dir); err == nil {
+		return nil // already exists, keep it
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("mkdir server %q: %w", name, err)
+	}
+	if strings.TrimSpace(summary) == "" {
+		summary = "Notes and facts about " + name + "."
+	}
+	main := strings.ReplaceAll(factStoreMainTmpl, "__NAME__", name)
+	cap, _ := json.MarshalIndent(map[string]any{
+		"name":    name,
+		"summary": summary,
+		"tools":   []string{name + "_add_note", name + "_notes", name + "_rewrite"},
+	}, "", "  ")
+	if err := writeIfMissing(filepath.Join(dir, "main.go"), main); err != nil {
+		return err
+	}
+	if err := writeIfMissing(filepath.Join(dir, "capability.json"), string(cap)+"\n"); err != nil {
+		return err
+	}
+	return writeIfMissing(filepath.Join(dir, name+".md"), "# "+name+"\n\n"+summary+"\n")
+}
+
+// materializeConsolidations applies each merge the orchestrator queued under
+// stateDir/consolidations: it appends every "from" subject's markdown into the
+// "into" subject's file, then retires the merged servers (folder + binary). Both
+// endpoints are slug-validated so a request can't touch anything outside mcpDir.
+func materializeConsolidations(mcpDir, stateDir string) error {
+	conDir := filepath.Join(stateDir, "consolidations")
+	entries, err := os.ReadDir(conDir)
 	if err != nil {
-		return nil // no requests directory yet
+		return nil // nothing queued
 	}
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue
 		}
-		reqPath := filepath.Join(reqDir, e.Name())
+		reqPath := filepath.Join(conDir, e.Name())
 		var req struct {
-			Name    string `json:"name"`
-			Summary string `json:"summary"`
+			Into string   `json:"into"`
+			From []string `json:"from"`
 		}
-		if data, err := os.ReadFile(reqPath); err != nil || json.Unmarshal(data, &req) != nil || !validSlug(req.Name) {
+		if data, err := os.ReadFile(reqPath); err != nil || json.Unmarshal(data, &req) != nil || !validSlug(req.Into) {
 			os.Remove(reqPath) // unreadable or unsafe: drop it
 			continue
 		}
-		dir := filepath.Join(mcpDir, req.Name)
-		if _, err := os.Stat(dir); err != nil {
-			if err := os.MkdirAll(dir, 0o755); err != nil {
-				return fmt.Errorf("mkdir server %q: %w", req.Name, err)
+		if err := seedSubjectServer(mcpDir, req.Into, ""); err != nil {
+			return err
+		}
+		intoMd := filepath.Join(mcpDir, req.Into, req.Into+".md")
+		for _, from := range req.From {
+			if !validSlug(from) || from == req.Into {
+				continue
 			}
-			main := strings.ReplaceAll(factStoreMainTmpl, "__NAME__", req.Name)
-			summary := req.Summary
-			if strings.TrimSpace(summary) == "" {
-				summary = "Notes and facts about " + req.Name + "."
+			fromDir := filepath.Join(mcpDir, from)
+			body, err := os.ReadFile(filepath.Join(fromDir, from+".md"))
+			if err == nil {
+				section := "\n\n<!-- consolidated from " + from + " -->\n" + strings.TrimSpace(string(body)) + "\n"
+				if f, err := os.OpenFile(intoMd, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o644); err == nil {
+					f.WriteString(section)
+					f.Close()
+				}
 			}
-			cap, _ := json.MarshalIndent(map[string]any{
-				"name":    req.Name,
-				"summary": summary,
-				"tools":   []string{req.Name + "_add_note", req.Name + "_notes"},
-			}, "", "  ")
-			if err := writeIfMissing(filepath.Join(dir, "main.go"), main); err != nil {
-				return err
-			}
-			if err := writeIfMissing(filepath.Join(dir, "capability.json"), string(cap)+"\n"); err != nil {
-				return err
-			}
-			if err := writeIfMissing(filepath.Join(dir, "data.json"), "[]\n"); err != nil {
-				return err
-			}
+			os.RemoveAll(fromDir)                         // retire the merged server's sources
+			os.Remove(filepath.Join(mcpDir, "bin", from)) // and its stale binary
 		}
 		os.Remove(reqPath) // fulfilled
 	}

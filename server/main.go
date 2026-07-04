@@ -97,6 +97,10 @@ func main() {
 	})
 	mux.HandleFunc("/pair", pairHandler(pr))
 	mux.HandleFunc("/run", runHandler(token, *workdir, *root, *threshold, *runTimeout, boot))
+	// Read-only dashboard state + the optional merge-approval action. Both only
+	// touch the scaffold's data files, so they need no Claude run.
+	mux.HandleFunc("/state", stateHandler(token, *root))
+	mux.HandleFunc("/action", actionHandler(token, *root))
 
 	listenAddr := net.JoinHostPort(bindIP, fmt.Sprintf("%d", *port))
 	srv := &http.Server{

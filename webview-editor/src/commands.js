@@ -32,6 +32,11 @@ const SLASH_COMMANDS = [
     detail: 'Clean up & reorganize the whole page — add guidance after, e.g. /clean project ideas',
     apply: '/clean ',
   },
+  {
+    label: '/ingest',
+    detail: 'File this page into your dashboard — sorts notes into subjects, then clears the page',
+    apply: '/ingest',
+  },
 ];
 
 // Only fires when the caret is on a line that is a lone `/word` (the slash at
@@ -196,6 +201,34 @@ export function aiCommandOnEnter(view) {
       selection: { anchor: line.from + insert.length },
     });
     post({ type: 'clean', id, pageText, guidance });
+    return true;
+  }
+
+  // `/ingest`: hand the WHOLE page (minus this command line) to the orchestrator,
+  // which sorts every topic into its subject server (creating one when none fits).
+  // On success the RN side deletes the whole page — the notes now live in the
+  // dashboard — so this card vanishes with it; on failure the page is left intact.
+  const ingest = /^\/ingest\b\s*(.*)$/.exec(text);
+  if (ingest) {
+    const before = state.doc.sliceString(0, line.from);
+    const after = state.doc.sliceString(line.to);
+    const pageText = (before + after).replace(/^\n+|\n+$/g, '');
+    if (!pageText.trim()) return false; // nothing to ingest — let Enter be normal
+
+    const id = genId();
+    const marker = encodeAiMarker({
+      v: 1,
+      kind: 'ingest',
+      id,
+      status: 'streaming',
+      msg: 'Sorting into your dashboard…',
+    });
+    const insert = marker + '\n';
+    view.dispatch({
+      changes: { from: line.from, to: line.to, insert },
+      selection: { anchor: line.from + insert.length },
+    });
+    post({ type: 'ingest', id, pageText });
     return true;
   }
 
