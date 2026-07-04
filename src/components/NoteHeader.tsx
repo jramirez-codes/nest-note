@@ -42,6 +42,9 @@ interface NoteHeaderProps {
  * delete action. It stays put while pages turn beneath it, so it is not part of
  * the swipe gesture. On the trailing dashboard page it swaps the delete action
  * for a "New note" action that sits in the same slot, at the same size.
+ *
+ * While a dashboard card is dragged, the screen fades this whole bar out and
+ * reveals a red delete banner in its place (see NotebookScreen).
  */
 function NoteHeader({ note, pageNumber, totalPages, onDelete, onCreateNote }: NoteHeaderProps) {
   const colors = useTheme();

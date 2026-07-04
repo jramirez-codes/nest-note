@@ -8,6 +8,7 @@ import './global.css';
 
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, StatusBar, View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import NotebookScreen from './src/screens/NotebookScreen';
 import WebViewSpike from './src/spikes/WebViewSpike';
@@ -45,18 +46,22 @@ function App() {
   }, []);
 
   return (
-    <SafeAreaProvider>
-      <StatusBar barStyle="light-content" backgroundColor={theme.background} />
-      {!storageReady ? (
-        <View className="flex-1 items-center justify-center bg-background">
-          <ActivityIndicator />
-        </View>
-      ) : SHOW_WEBVIEW_SPIKE ? (
-        <WebViewSpike />
-      ) : (
-        <NotebookScreen />
-      )}
-    </SafeAreaProvider>
+    // GestureHandlerRootView must wrap the whole app so the dashboard's
+    // long-press-drag gestures are recognized (a no-op cost elsewhere).
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <StatusBar barStyle="light-content" backgroundColor={theme.background} />
+        {!storageReady ? (
+          <View className="flex-1 items-center justify-center bg-background">
+            <ActivityIndicator />
+          </View>
+        ) : SHOW_WEBVIEW_SPIKE ? (
+          <WebViewSpike />
+        ) : (
+          <NotebookScreen />
+        )}
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
 

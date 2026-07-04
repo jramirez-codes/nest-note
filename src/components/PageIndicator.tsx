@@ -12,10 +12,14 @@ import {
 interface PageIndicatorProps {
   /** Zero-based index of the active page, spanning notes then the new-note sheet. */
   currentIndex: number;
+  /** The page we'd return to on a tap — previewed by the bar while on the dashboard. */
+  prevIndex: number;
   /** How many real notes exist; the dashboard sits at index `noteCount`. */
   noteCount: number;
   /** Jump to the trailing dashboard page. */
   onPressDashboard: () => void;
+  /** Tap (not scrub) the progress bubble — jump back to the previous page. */
+  onPressProgress: () => void;
   /** Screen width, used to scale how far a scrub drag travels per page. */
   scrubWidth: number;
   /** Jump to a note page while the user scrubs the progress bubble. */
@@ -31,6 +35,8 @@ const MAX_PAGES_PER_SEC = 14;
 const FOLLOW_LIMIT = 28;
 /** How high the bubble pops up while held. */
 const LIFT_DISTANCE = 46;
+/** A press shorter than this (and that never scrubbed a page) counts as a tap. */
+const TAP_MAX_MS = 300;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -59,9 +65,11 @@ function pagesPerSecond(dx: number, scrubWidth: number) {
 /**
  * Bottom-of-screen navigation for the pad, rendered as two bubbles:
  *   - left  — a progress bubble showing how far through the pad you are
- *             (a fill bar + "n / total"); active while you're on a note. Press
- *             and hold it to lift it up, then slide left/right to scrub through
- *             the pages; releasing drops it back to its origin.
+ *             (a fill bar + "n / total"); active while you're on a note. Tap it
+ *             to jump back to the previous page (e.g. from the dashboard back to
+ *             the note you left). Press and hold it to lift it up, then slide
+ *             left/right to scrub through the pages; releasing drops it back to
+ *             its origin.
  *   - right — the "new note" bubble; active while you're on the trailing sheet.
  *
  * Built for hundreds of pages: the left bubble is a continuous progress bar
@@ -69,15 +77,20 @@ function pagesPerSecond(dx: number, scrubWidth: number) {
  */
 function PageIndicator({
   currentIndex,
+  prevIndex,
   noteCount,
   onPressDashboard,
+  onPressProgress,
   scrubWidth,
   onScrub,
 }: PageIndicatorProps) {
   const onDashboard = currentIndex >= noteCount;
+  // On a note the bar tracks the current page; on the dashboard it previews the
+  // page a tap would return to, so the bubble shows where you're headed.
+  const targetIndex = onDashboard ? prevIndex : currentIndex;
   // Which note we're on (1-based), clamped so the trailing sheet reads as the
   // last note rather than overrunning the count.
-  const notePosition = Math.min(currentIndex + 1, noteCount);
+  const notePosition = Math.min(Math.max(targetIndex, 0) + 1, noteCount);
   // Fraction of the pad covered. Guard the empty pad (only the new-note sheet).
   const progress = noteCount > 0 ? notePosition / noteCount : 0;
 
@@ -96,10 +109,18 @@ function PageIndicator({
   const scrubIndexRef = useRef(0); // integer note index currently shown
   const rafRef = useRef<number | null>(null);
   const lastTsRef = useRef(0);
+  // For tap detection: when the press began, and whether it ever stepped a page.
+  const grantTsRef = useRef(0);
+  const scrubbedRef = useRef(false);
 
   // Latest values for the pan handlers, which close over a stable responder.
   const scrubState = useRef({ currentIndex, noteCount, scrubWidth });
   scrubState.current = { currentIndex, noteCount, scrubWidth };
+
+  // Latest onPress, reached through a ref so the memoised responder can fire it
+  // without being re-created every render.
+  const onPressRef = useRef(onPressProgress);
+  onPressRef.current = onPressProgress;
 
   // The tick body, reassigned each render so it always sees the latest onScrub.
   const tickRef = useRef(() => {});
@@ -117,6 +138,7 @@ function PageIndicator({
         const idx = wrapIndex(scrubIndexRef.current + step, total);
         if (idx !== scrubIndexRef.current) {
           scrubIndexRef.current = idx;
+          scrubbedRef.current = true;
           onScrub(idx);
         }
       }
@@ -146,6 +168,8 @@ function PageIndicator({
           accRef.current = 0;
           rateRef.current = 0;
           lastTsRef.current = Date.now();
+          grantTsRef.current = Date.now();
+          scrubbedRef.current = false;
           // Scrubbing pages under an open keyboard looks jittery; tuck it away.
           Keyboard.dismiss();
           setScrubbing(true);
@@ -166,7 +190,18 @@ function PageIndicator({
           rateRef.current = pagesPerSecond(g.dx, scrubState.current.scrubWidth);
           panX.setValue(clamp(g.dx, -FOLLOW_LIMIT, FOLLOW_LIMIT));
         },
-        onPanResponderRelease: settleBack,
+        onPanResponderRelease: (_, g) => {
+          // A tap means "go back to the previous page". It's a quick press that
+          // never scrubbed a page and didn't travel sideways. Vertical movement
+          // is ignored on purpose: the bubble pops up under the finger, so a tap
+          // often drifts upward as the finger follows it — that must still count.
+          const tapped =
+            !scrubbedRef.current &&
+            Math.abs(g.dx) < SCRUB_DEAD_ZONE &&
+            Date.now() - grantTsRef.current < TAP_MAX_MS;
+          settleBack();
+          if (tapped) onPressRef.current();
+        },
         onPanResponderTerminate: settleBack,
         onPanResponderTerminationRequest: () => false,
       }),
@@ -211,6 +246,8 @@ function PageIndicator({
           View keeps the bubble's visual styling. */}
       <Animated.View
         {...panResponder.panHandlers}
+        accessibilityRole="button"
+        accessibilityLabel="Go to previous page; hold and slide to scrub through pages"
         style={[
           styles.scrubWrapper,
           scrubbing && styles.scrubWrapperActive,

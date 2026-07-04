@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -7,6 +7,8 @@ import {
   Text,
   View,
 } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { runOnJS } from 'react-native-reanimated';
 import {
   Bell,
   BellRing,
@@ -21,11 +23,11 @@ import {
   ListChecks,
   Sparkles,
   TriangleAlert,
-  X,
   type LucideIcon,
 } from 'lucide-react-native';
 import { useTheme, type ThemeColors } from '../theme/colors';
 import { mocha } from '../theme/catppuccin';
+import type { CardDragShared } from './cardDrag';
 import {
   applyDashboardAction,
   completeCard,
@@ -42,6 +44,12 @@ interface DashboardPageProps {
   width: number;
   /** True when this is the page on top — used to refresh state when flipped to. */
   isActive: boolean;
+  /** Shared values the card gesture writes; read by the header + floating clone. */
+  dragShared: CardDragShared;
+  /** Notify the screen a card was lifted (so it can show the floating clone). */
+  onLift: (card: DashboardCard) => void;
+  /** Notify the screen the drag ended. */
+  onRelease: () => void;
 }
 
 // Strip the trailing `<!-- 2026-07-04 12:00 -->` timestamps the notes servers add,
@@ -128,10 +136,12 @@ function humanizeKind(kind: string): string {
 
 /**
  * The dashboard: the trailing page of the pad. It's the home for the MCP world
- * `/ingest` builds up — its action items and reminders, each subject's notes, and
- * any merge suggestions — laid out as a Material-style action center.
+ * `/ingest` builds up — its reminders and action items, each subject's notes, and
+ * any merge suggestions — laid out as a Material-style action center. Cards are
+ * removed by pressing and holding, then dragging them up onto the header, which
+ * turns into a delete target, so a delete is always deliberate.
  */
-function DashboardPage({ width, isActive }: DashboardPageProps) {
+function DashboardPage({ width, isActive, dragShared, onLift, onRelease }: DashboardPageProps) {
   const colors = useTheme();
   const [state, setState] = useState<DashboardState | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -141,6 +151,9 @@ function DashboardPage({ width, isActive }: DashboardPageProps) {
   // Keys (suggestion 'into' or card id) currently being acted on, to disable their
   // controls while the write is in flight.
   const [busy, setBusy] = useState<Record<string, boolean>>({});
+  // The card currently lifted, kept locally so only this page dims its source row
+  // (the screen tracks its own copy for the floating clone).
+  const [liftedId, setLiftedId] = useState<string | null>(null);
 
   // Guard against setState after unmount / after a newer fetch superseded this one.
   const reqSeq = useRef(0);
@@ -239,6 +252,19 @@ function DashboardPage({ width, isActive }: DashboardPageProps) {
     }
   }, []);
 
+  // Wrap the screen's lift/release so this page can also dim the lifted source row.
+  const handleLift = useCallback(
+    (card: DashboardCard) => {
+      setLiftedId(card.id);
+      onLift(card);
+    },
+    [onLift],
+  );
+  const handleRelease = useCallback(() => {
+    setLiftedId(null);
+    onRelease();
+  }, [onRelease]);
+
   const servers = state?.servers ?? [];
   const suggestions = state?.suggestions ?? [];
   const cards = state?.cards ?? [];
@@ -260,11 +286,19 @@ function DashboardPage({ width, isActive }: DashboardPageProps) {
   const nothingAtAll =
     cards.length === 0 && servers.length === 0 && suggestions.length === 0;
 
-  const cardActions: CardActions = { colors, busy, onToggle, onDismiss };
+  // Shared drag props handed to every draggable card.
+  const dragProps = {
+    drag: dragShared,
+    onLift: handleLift,
+    onDrop: onDismiss,
+    onRelease: handleRelease,
+  };
 
   return (
     <View style={{ width }} className="flex-1 bg-background">
       <ScrollView
+        // Freeze the scroll while a card is being dragged so the list stays put.
+        scrollEnabled={!liftedId}
         contentContainerStyle={{ padding: 20, paddingBottom: 120 }}
         refreshControl={
           <RefreshControl
@@ -273,6 +307,16 @@ function DashboardPage({ width, isActive }: DashboardPageProps) {
             tintColor={colors.muted}
           />
         }>
+        {/* Greeting / action-center header. */}
+        <View className="mb-5">
+          <Text className="text-2xl font-bold text-text">Action Center</Text>
+          <Text className="mt-0.5 text-sm text-muted">
+            {pending > 0
+              ? `${pending} item${pending === 1 ? '' : 's'} need${pending === 1 ? 's' : ''} your attention`
+              : 'You’re all caught up ✨'}
+          </Text>
+        </View>
+
         {loading && !state ? (
           <View className="items-center py-10">
             <ActivityIndicator color={colors.muted} />
@@ -306,22 +350,7 @@ function DashboardPage({ width, isActive }: DashboardPageProps) {
               </View>
             )}
 
-            {/* Tasks — one high-density surface with hairline dividers. */}
-            {tasks.length > 0 && (
-              <View className="mb-6">
-                <SectionHeader icon={ListChecks} title="Tasks" count={openTaskCount} colors={colors} />
-                <View className="overflow-hidden rounded-2xl border border-surface1 bg-surface">
-                  {tasks.map((card, i) => (
-                    <View key={card.id}>
-                      {i > 0 && <View className="ml-11 h-px bg-surface1/60" />}
-                      <TaskRow card={card} {...cardActions} />
-                    </View>
-                  ))}
-                </View>
-              </View>
-            )}
-
-            {/* Notifications — insight rows with a tinted icon chip. */}
+            {/* Notifications first — the alerts the user should see on arrival. */}
             {notifications.length > 0 && (
               <View className="mb-6">
                 <SectionHeader
@@ -331,8 +360,33 @@ function DashboardPage({ width, isActive }: DashboardPageProps) {
                   colors={colors}
                 />
                 {notifications.map(card => (
-                  <NotificationCard key={card.id} card={card} {...cardActions} />
+                  <DraggableCard key={card.id} card={card} {...dragProps}>
+                    <NotificationCard card={card} dimmed={liftedId === card.id} />
+                  </DraggableCard>
                 ))}
+              </View>
+            )}
+
+            {/* Tasks — one high-density surface with hairline dividers. */}
+            {tasks.length > 0 && (
+              <View className="mb-6">
+                <SectionHeader icon={ListChecks} title="Tasks" count={openTaskCount} colors={colors} />
+                <View className="overflow-hidden rounded-2xl border border-surface1 bg-surface">
+                  {tasks.map((card, i) => (
+                    <View key={card.id}>
+                      {i > 0 && <View className="ml-11 h-px bg-surface1/60" />}
+                      <DraggableCard card={card} {...dragProps}>
+                        <TaskRow
+                          card={card}
+                          colors={colors}
+                          busy={busy}
+                          onToggle={onToggle}
+                          dimmed={liftedId === card.id}
+                        />
+                      </DraggableCard>
+                    </View>
+                  ))}
+                </View>
               </View>
             )}
 
@@ -349,7 +403,9 @@ function DashboardPage({ width, isActive }: DashboardPageProps) {
                   />
                   <View className="flex-row flex-wrap justify-between">
                     {group.map(card => (
-                      <IdeaCard key={card.id} card={card} {...cardActions} />
+                      <DraggableCard key={card.id} card={card} {...dragProps}>
+                        <IdeaCard card={card} dimmed={liftedId === card.id} />
+                      </DraggableCard>
                     ))}
                   </View>
                 </View>
@@ -411,6 +467,55 @@ function DashboardPage({ width, isActive }: DashboardPageProps) {
   );
 }
 
+// Wraps a card in a long-press pan gesture: hold ~220ms to lift it, drag up onto
+// the header (which turns into the delete target, tracked by comparing the finger's
+// window-Y to the header's bottom edge), and release there to dismiss. A quick tap
+// still reaches the card's own controls.
+function DraggableCard({
+  card,
+  drag,
+  onLift,
+  onDrop,
+  onRelease,
+  children,
+}: {
+  card: DashboardCard;
+  drag: CardDragShared;
+  onLift: (c: DashboardCard) => void;
+  onDrop: (c: DashboardCard) => void;
+  onRelease: () => void;
+  children: React.ReactNode;
+}) {
+  const pan = useMemo(
+    () =>
+      Gesture.Pan()
+        .activateAfterLongPress(220)
+        .maxPointers(1)
+        .onStart(e => {
+          drag.active.value = 1;
+          drag.overDelete.value = 0;
+          drag.dragX.value = e.absoluteX;
+          drag.dragY.value = e.absoluteY;
+          runOnJS(onLift)(card);
+        })
+        .onUpdate(e => {
+          drag.dragX.value = e.absoluteX;
+          drag.dragY.value = e.absoluteY;
+          drag.overDelete.value = e.absoluteY <= drag.headerBottomY.value ? 1 : 0;
+        })
+        .onEnd(() => {
+          if (drag.overDelete.value === 1) runOnJS(onDrop)(card);
+        })
+        .onFinalize(() => {
+          drag.active.value = 0;
+          drag.overDelete.value = 0;
+          runOnJS(onRelease)();
+        }),
+    [card, drag, onLift, onDrop, onRelease],
+  );
+  return <GestureDetector gesture={pan}>{children}</GestureDetector>;
+}
+
 // A section heading: a small Lucide glyph, an uppercase label, and a count chip —
 // the same rhythm across every block of the dashboard.
 function SectionHeader({
@@ -435,47 +540,27 @@ function SectionHeader({
   );
 }
 
-// The shared props every card renderer receives.
-interface CardActions {
+// One task row inside the grouped Tasks surface: a checkbox that toggles done, the
+// title (struck through when done), a priority pip, and a due date (red when overdue).
+function TaskRow({
+  card,
+  colors,
+  busy,
+  onToggle,
+  dimmed,
+}: {
+  card: DashboardCard;
   colors: ThemeColors;
   busy: Record<string, boolean>;
   onToggle: (c: DashboardCard) => void;
-  onDismiss: (c: DashboardCard) => void;
-}
-
-// A small circular dismiss (✕) affordance shared by the card renderers.
-function DismissButton({
-  card,
-  busy,
-  onDismiss,
-  colors,
-}: {
-  card: DashboardCard;
-  busy: boolean;
-  onDismiss: (c: DashboardCard) => void;
-  colors: ThemeColors;
+  dimmed: boolean;
 }) {
-  return (
-    <Pressable
-      onPress={() => onDismiss(card)}
-      disabled={busy}
-      hitSlop={8}
-      accessibilityRole="button"
-      accessibilityLabel={`Dismiss ${card.title}`}
-      className="p-1 active:opacity-60">
-      <X size={16} color={colors.faint} strokeWidth={2} />
-    </Pressable>
-  );
-}
-
-// One task row inside the grouped Tasks surface: a checkbox that toggles done, the
-// title (struck through when done), a priority pip, a due date (red when overdue),
-// and a dismiss ✕.
-function TaskRow({ card, colors, busy, onToggle, onDismiss }: { card: DashboardCard } & CardActions) {
   const due = card.date ? relDate(card.date) : null;
   const overdue = !!due?.overdue && !card.done;
   return (
-    <View className="flex-row items-center px-3 py-3">
+    // collapsable={false} keeps Android from view-flattening this node away, which
+    // the wrapping GestureDetector needs to attach the drag gesture reliably.
+    <View collapsable={false} className={`flex-row items-center px-3 py-3 ${dimmed ? 'opacity-30' : ''}`}>
       <Pressable
         onPress={() => onToggle(card)}
         disabled={busy[card.id]}
@@ -500,12 +585,11 @@ function TaskRow({ card, colors, busy, onToggle, onDismiss }: { card: DashboardC
         </Text>
       </Pressable>
       {due && !card.done && (
-        <View className="mr-1 flex-row items-center gap-1">
+        <View className="flex-row items-center gap-1">
           <Clock size={12} color={overdue ? colors.danger : colors.muted} strokeWidth={2} />
           <Text className={`text-xs ${overdue ? 'text-danger' : 'text-muted'}`}>{due.label}</Text>
         </View>
       )}
-      <DismissButton card={card} busy={busy[card.id]} onDismiss={onDismiss} colors={colors} />
     </View>
   );
 }
@@ -524,19 +608,23 @@ function notifIcon(priority: string): LucideIcon {
   }
 }
 
-// A notification: a tinted icon chip (colored by priority), a title, a subtitle
-// combining its date and body, and a dismiss ✕.
-function NotificationCard({ card, colors, busy, onDismiss }: { card: DashboardCard } & CardActions) {
+// A notification: a tinted icon chip (colored by priority), a title, and a subtitle
+// combining its date and body.
+function NotificationCard({ card, dimmed }: { card: DashboardCard; dimmed: boolean }) {
   const p = prio(card.priority);
   const NotifIcon = notifIcon(card.priority);
   const date = card.date ? relDate(card.date).label : '';
   const subtitle = [date, card.body].filter(Boolean).join(' · ');
   return (
-    <View className="mb-2 flex-row items-center rounded-2xl border border-surface1 bg-surface p-3">
+    <View
+      collapsable={false}
+      className={`mb-2 flex-row items-center rounded-2xl border border-surface1 bg-surface p-3 ${
+        dimmed ? 'opacity-30' : ''
+      }`}>
       <View className={`mr-3 h-10 w-10 items-center justify-center rounded-xl ${p.chip}`}>
         <NotifIcon size={20} color={p.hex} strokeWidth={2} />
       </View>
-      <View className="flex-1 pr-2">
+      <View className="flex-1 pr-1">
         <Text className="text-sm font-semibold text-text" numberOfLines={1}>
           {card.title}
         </Text>
@@ -546,7 +634,6 @@ function NotificationCard({ card, colors, busy, onDismiss }: { card: DashboardCa
           </Text>
         )}
       </View>
-      <DismissButton card={card} busy={busy[card.id]} onDismiss={onDismiss} colors={colors} />
     </View>
   );
 }
@@ -554,15 +641,18 @@ function NotificationCard({ card, colors, busy, onDismiss }: { card: DashboardCa
 // The generic card, used for ideas and — as the graceful fallback — any unknown
 // kind. A compact grid tile with a colored top accent bar, a kind glyph, and the
 // title. This is what makes the engine scalable: emit a novel kind and it renders.
-function IdeaCard({ card, colors, busy, onDismiss }: { card: DashboardCard } & CardActions) {
+function IdeaCard({ card, dimmed }: { card: DashboardCard; dimmed: boolean }) {
   const p = prio(card.priority);
   const KindIcon = card.kind === 'idea' ? Lightbulb : Sparkles;
   return (
-    <View className="mb-3 w-[48%] overflow-hidden rounded-2xl border border-surface1 bg-surface p-3">
+    <View
+      collapsable={false}
+      className={`mb-3 w-[48%] overflow-hidden rounded-2xl border border-surface1 bg-surface p-3 ${
+        dimmed ? 'opacity-30' : ''
+      }`}>
       <View className={`absolute left-0 right-0 top-0 h-1 ${p.pip}`} />
-      <View className="mt-1 flex-row items-center justify-between">
+      <View className="mt-1">
         <KindIcon size={16} color={p.hex} strokeWidth={2} />
-        <DismissButton card={card} busy={busy[card.id]} onDismiss={onDismiss} colors={colors} />
       </View>
       <Text className="mt-1.5 text-sm font-semibold text-text" numberOfLines={3}>
         {card.title}
