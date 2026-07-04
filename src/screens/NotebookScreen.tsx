@@ -124,12 +124,13 @@ export default function NotebookScreen() {
 
   // The normal top chrome (title row + header) fades out while a card is dragged.
   const chromeFadeStyle = useAnimatedStyle(() => ({ opacity: 1 - smoothActive.value }));
-  // The red delete banner overlays the header bar exactly: it takes its top and
-  // height straight from the header wrapper's measured layout, so it always covers
-  // the NoteHeader and matches its size as the top chrome fades out.
+  // The red delete banner reaches the screen's physical top edge (up through the
+  // status-bar / notch area, hence the negative top) and its bottom lands exactly
+  // on the header bar's bottom. The height therefore spans the inset plus the
+  // header's measured top and height, so the bottom stays glued to the header.
   const bannerStyle = useAnimatedStyle(() => ({
-    top: headerTop.value,
-    height: headerHeight.value,
+    top: -insets.top,
+    height: insets.top + headerTop.value + headerHeight.value,
     opacity: smoothActive.value,
   }));
   // The trash + label pop a little as the finger lands on the header.
@@ -323,10 +324,11 @@ export default function NotebookScreen() {
         </View>
       </View>
 
-      {/* The red delete banner. Overlays the header bar exactly (same top and
-          height), fully covering the NoteHeader as the top chrome fades out — so
-          the background→red transition is smooth. Touches fall through; the drop is
-          detected by the card gesture, not this view. */}
+      {/* The red delete banner. Reaches the screen's top edge (through the
+          status-bar / notch area) down to the header bar's bottom, fully covering
+          the NoteHeader as the top chrome fades out — so the background→red
+          transition is smooth. Touches fall through; the drop is detected by the
+          card gesture, not this view. */}
       <Animated.View pointerEvents="none" style={[styles.deleteBanner, bannerStyle]}>
         <Animated.View style={[styles.deleteLabel, bannerLabelStyle]}>
           <Trash2 size={16} color={mocha.crust} strokeWidth={2.5} />
@@ -362,15 +364,17 @@ const styles = StyleSheet.create({
     zIndex: 50,
     elevation: 8,
   },
-  // The red delete banner. `top` and `height` come from the animated style and
-  // exactly overlay the header bar, so the label is simply centered within it.
+  // The red delete banner. `top` and `height` come from the animated style; it
+  // reaches the screen's top edge but is bottom-aligned (with padding matching the
+  // header's) so the label sits in the header band rather than up in the notch.
   deleteBanner: {
     position: 'absolute',
     left: 0,
     right: 0,
     backgroundColor: mocha.red,
     alignItems: 'center',
-    justifyContent: 'center',
+    justifyContent: 'flex-end',
+    paddingBottom: 12,
     zIndex: 45,
     elevation: 7,
   },
