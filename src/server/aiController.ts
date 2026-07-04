@@ -93,16 +93,32 @@ export interface AskHandle {
   cancel(): void;
 }
 
-/** A prior card's question/answer, threaded into a follow-up so it has context. */
+/**
+ * Context threaded into a follow-up so a fresh run answers in-conversation.
+ * `turns` carries a whole /chat transcript (each `{ q, a }` an earlier exchange);
+ * `q`/`a` is the single-turn form still accepted for one-off follow-ups.
+ */
 export interface AskContext {
   q?: string;
   a?: string;
+  turns?: { q?: string; a?: string }[];
 }
 
 // Each run is a fresh `claude -p` (no server-side session), so a follow-up must
-// carry its own context: fold the parent Q&A into the prompt Claude receives.
-// The card still shows only the raw follow-up question.
+// carry its own context: fold the prior exchange(s) into the prompt Claude
+// receives. The card still shows only the raw follow-up question.
 function buildPrompt(question: string, context?: AskContext): string {
+  const turns = context?.turns?.filter(t => t.q);
+  if (turns && turns.length) {
+    const history = turns
+      .map(t => `User: ${t.q}\n\nAssistant: ${t.a || ''}`)
+      .join('\n\n');
+    return (
+      `You are continuing a conversation. Here is the conversation so far:\n\n` +
+      `${history}\n\n` +
+      `Now answer this follow-up:\n\n${question}`
+    );
+  }
   if (!context || !context.q) return question;
   return (
     `You are continuing a conversation. Earlier you were asked:\n\n${context.q}\n\n` +

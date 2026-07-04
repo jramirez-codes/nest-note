@@ -60,7 +60,7 @@ export default function NoteEditorWebView({
         url?: string;
         id?: string;
         question?: string;
-        context?: { q?: string; a?: string };
+        context?: { q?: string; a?: string; turns?: { q?: string; a?: string }[] };
         payload?: string;
         pageText?: string;
         guidance?: string;

@@ -69,12 +69,18 @@ function escLine(val) {
 function unescLine(val) {
   return val.replace(/\\n/g, '\n').replace(/--&gt;/g, '-->');
 }
-// The answer keeps its real newlines; only the comment terminator is escaped.
+// The answer keeps its real newlines; the comment terminator is escaped, and a
+// content line that is exactly a section label (`[user]`/`[agent]`/`[backup]`)
+// has its leading bracket escaped so it can't masquerade as a real section
+// divider — this is what lets a chat transcript stack many `[user]`/`[agent]`
+// turns in one block and still parse back turn-for-turn.
 function escBody(val) {
-  return String(val).replace(/-->/g, '--&gt;');
+  return String(val)
+    .replace(/-->/g, '--&gt;')
+    .replace(/^\[(user|agent|backup)\]$/gm, '&#91;$1]');
 }
 function unescBody(val) {
-  return val.replace(/--&gt;/g, '-->');
+  return val.replace(/&#91;/g, '[').replace(/--&gt;/g, '-->');
 }
 
 function coerce(key, val) {
@@ -87,8 +93,10 @@ function coerce(key, val) {
 // question/answer becomes a header line, in object-key order (so the readable
 // order is v, kind, id, open, status, …).
 export function encodeAiMarker(obj) {
-  const { q, a, backup, ...meta } = obj;
-  const keepId = INFLIGHT.has(obj.status);
+  const { q, a, backup, turns, ...meta } = obj;
+  // Chat cards keep their handle even when done: the id is how a later reply
+  // (fired from the card's follow-up box) threads back into the same run.
+  const keepId = INFLIGHT.has(obj.status) || obj.kind === 'chat';
   const lines = [OPEN_LINE];
   for (const [k, val] of Object.entries(meta)) {
     if (val == null) continue;
@@ -100,6 +108,15 @@ export function encodeAiMarker(obj) {
     lines.push(escLine(q || ''));
     lines.push(SEC_AGENT);
     if (a) lines.push(escBody(a));
+  } else if (obj.kind === 'chat') {
+    // One `[user]`/`[agent]` pair per turn, in order; the last turn's answer may
+    // be empty while it's still streaming.
+    for (const t of turns || []) {
+      lines.push(SEC_USER);
+      lines.push(escLine(t.q || ''));
+      lines.push(SEC_AGENT);
+      if (t.a) lines.push(escBody(t.a));
+    }
   } else if (obj.kind === 'clean' && backup != null) {
     lines.push(SEC_BACKUP);
     lines.push(escBody(backup));
@@ -118,6 +135,31 @@ function parseBlockBody(bodyLines) {
     if (t === SEC_USER || t === SEC_AGENT || t === SEC_BACKUP) break;
     const m = HEADER_RE.exec(t);
     if (m) obj[m[1]] = coerce(m[1], unescLine(m[2]));
+  }
+  // Chat blocks stack many turns; walk each `[user]`/`[agent]` pair in order.
+  if (obj.kind === 'chat') {
+    const turns = [];
+    while (i < bodyLines.length) {
+      if (bodyLines[i] !== SEC_USER) {
+        i++;
+        continue;
+      }
+      i++;
+      const qLines = [];
+      for (; i < bodyLines.length && bodyLines[i] !== SEC_AGENT && bodyLines[i] !== SEC_USER; i++) {
+        qLines.push(bodyLines[i]);
+      }
+      let a = '';
+      if (bodyLines[i] === SEC_AGENT) {
+        i++;
+        const aLines = [];
+        for (; i < bodyLines.length && bodyLines[i] !== SEC_USER; i++) aLines.push(bodyLines[i]);
+        a = unescBody(aLines.join('\n'));
+      }
+      turns.push({ q: unescLine(qLines.join('\n')).trim(), a });
+    }
+    obj.turns = turns;
+    return obj;
   }
   if (bodyLines[i] === SEC_USER) {
     i++;
@@ -240,24 +282,31 @@ export function restoreCleanBackup(view, el) {
   view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: backup } });
 }
 
-// Spawn a new streaming /ask card on a fresh line right after the card `el` sits
-// on, then kick off the run. `context` (the parent's { q, a }) rides along so the
-// server can answer the follow-up in the same conversation. Returns the new id.
-export function insertFollowupCard(view, el, question, context) {
+// Append a new turn to the chat block `el` sits on and kick off its run in
+// place: the transcript grows inside the SAME card (not a new one), and the full
+// prior transcript rides along as context so the server answers in-conversation.
+// Returns the chat id, or null if `el` isn't a chat card.
+export function appendChatTurn(view, el, question) {
   const block = aiBlockOf(view, el);
-  if (!block) return null;
-  const id = genId();
-  const marker = encodeAiMarker({
-    v: 1,
-    kind: 'ask',
-    id,
-    q: question,
-    a: '',
-    open: true,
-    status: 'streaming',
-  });
-  // Insert just below the block so the new marker lands on its own lines.
-  view.dispatch({ changes: { from: block.to, to: block.to, insert: '\n' + marker } });
-  post({ type: 'ask', id, question, context });
-  return id;
+  if (!block || block.obj.kind !== 'chat') return null;
+  const priorTurns = (block.obj.turns || []).map(t => ({ q: t.q, a: t.a }));
+  const turns = priorTurns.concat([{ q: question, a: '' }]);
+  const marker = encodeAiMarker({ ...block.obj, turns, open: true, status: 'streaming' });
+  view.dispatch({ changes: { from: block.from, to: block.to, insert: marker } });
+  // Reuse the /ask stream path (RN correlates by id); context carries history.
+  post({ type: 'ask', id: block.obj.id, question, context: { turns: priorTurns } });
+  return block.obj.id;
+}
+
+// Merge a completed run's patch into a marker payload before re-encoding. For
+// chat, an incoming answer belongs to the LAST (streaming) turn rather than a
+// top-level `a` field, so route it there; everything else merges flat.
+export function mergeAiDone(obj, patch) {
+  if (obj.kind === 'chat' && 'a' in patch) {
+    const { a, ...rest } = patch;
+    const turns = (obj.turns || []).slice();
+    if (turns.length) turns[turns.length - 1] = { ...turns[turns.length - 1], a };
+    return { ...obj, ...rest, turns };
+  }
+  return { ...obj, ...patch };
 }

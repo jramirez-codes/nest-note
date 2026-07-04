@@ -13,6 +13,11 @@ const SLASH_COMMANDS = [
     apply: '/ask ',
   },
   {
+    label: '/chat',
+    detail: 'Start a conversation with Claude — reply in the card to keep the thread',
+    apply: '/chat ',
+  },
+  {
     label: '/pair',
     detail: 'Pair a device by QR code or payload',
     apply: '/pair ',
@@ -74,6 +79,30 @@ export function aiCommandOnEnter(view) {
       selection: { anchor: line.from + insert.length },
     });
     post({ type: 'ask', id, question: ask[1] });
+    return true;
+  }
+
+  // `/chat <question>`: like /ask, but the card keeps a persistent id and a
+  // running transcript, so the follow-up box in the card threads replies back
+  // into the same conversation (see appendChatTurn).
+  const chat = /^\/chat\s+(.+\S)\s*$/.exec(text);
+  if (chat) {
+    const id = genId();
+    const marker = encodeAiMarker({
+      v: 1,
+      kind: 'chat',
+      id,
+      turns: [{ q: chat[1], a: '' }],
+      open: true,
+      status: 'streaming',
+    });
+    const insert = marker + '\n';
+    view.dispatch({
+      changes: { from: line.from, to: line.to, insert },
+      selection: { anchor: line.from + insert.length },
+    });
+    // The first turn has no prior context; runs on the same /ask stream path.
+    post({ type: 'ask', id, question: chat[1] });
     return true;
   }
 

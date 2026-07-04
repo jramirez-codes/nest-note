@@ -28,7 +28,7 @@ import { blockquotes } from './blockquotes.js';
 import { openLinks } from './links.js';
 import { slashCommandSource, aiCommandOnEnter } from './commands.js';
 import { lineStartReplace } from './lineStartReplace.js';
-import { encodeAiMarker, findAiLine } from './aiMarker.js';
+import { encodeAiMarker, findAiLine, mergeAiDone } from './aiMarker.js';
 
 /**
  * The CodeMirror 6 markdown editor that runs inside the React Native WebView.
@@ -167,7 +167,7 @@ window.__aiDone = function (id, patch) {
     changes: {
       from: found.from,
       to: found.to,
-      insert: encodeAiMarker({ ...found.obj, ...patch }),
+      insert: encodeAiMarker(mergeAiDone(found.obj, patch)),
     },
     effects,
   });

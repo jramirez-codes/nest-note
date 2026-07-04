@@ -482,6 +482,20 @@ const components = {
     },
     '.cm-ask-send svg': { display: 'block', width: '17px', height: '17px' },
 
+    // --- Chat transcript (/chat …) ------------------------------------------
+    // Each follow-up turn shows its question as a small prompt bubble above the
+    // answer, so a multi-turn thread reads as a back-and-forth.
+    '.cm-chat-q': {
+      margin: '16px 0 8px',
+      padding: '7px 11px',
+      borderRadius: '9px',
+      backgroundColor: c.surface0,
+      color: c.subtext0,
+      fontSize: '14px',
+      lineHeight: '1.4',
+      whiteSpace: 'pre-wrap',
+    },
+
     // --- Pair chip (/pair …) ------------------------------------------------
     '.cm-ask-pair': {
       display: 'flex',
