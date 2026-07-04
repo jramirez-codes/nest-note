@@ -343,12 +343,115 @@ export function runIngest(pageText: string, cb: IngestCallbacks): AskHandle {
 // tunnel /ask uses, authenticated with the paired bearer token. They never spin up
 // Claude — the server answers straight from the scaffold's files.
 
+/**
+ * One markdown page in a notebook's notes/ folder. `num` is the page number (0 = the
+ * auto-generated Appendix), `title` is the parenthesized name, `file` is the on-disk
+ * "#N (Title).md", and `body` is the raw markdown (which may carry [[wikilinks]]).
+ */
+export interface NotePage {
+  num: number;
+  title: string;
+  file: string;
+  body: string;
+}
+
 export interface DashboardServer {
+  /** Stable subject slug; cards key to a notebook via their `source` == this. */
   name: string;
+  /** Display title from the notebook.json manifest (falls back to the slug). */
+  title?: string;
   summary: string;
+  /** Optional Lucide glyph name + Catppuccin hue from the manifest. */
+  icon?: string;
+  accent?: string;
+  pinned?: boolean;
+  updated_at?: string;
   tools: string[];
-  /** The full markdown of this subject's notes. */
-  notes: string;
+  /** This notebook's ordered notes pages; pages[0] is the Appendix. */
+  pages: NotePage[];
+}
+
+/** One notebook's full detail from `GET /notebook?slug=x` (the lazy swap fetch). */
+export interface NotebookDetail extends DashboardServer {
+  cards: DashboardCard[];
+}
+
+// requestNotebook is the shared GET /notebook path. `metaOnly` asks the server for the
+// cheap index form (?meta=1): the page list keeps its num/title/file but drops every body,
+// which the caller then fetches one page at a time via {@link fetchPage} to virtualize a
+// long notebook. Without it the eager form returns every page body inline.
+async function requestNotebook(slug: string, metaOnly: boolean): Promise<NotebookDetail> {
+  const t = getTransport();
+  if (!t) throw new Error(NO_MODULE);
+  const server = await currentServer();
+  if (!server) throw new Error('Not connected. Pair first with “/pair <payload>”.');
+
+  const url =
+    `${serverOrigin(server)}/notebook?slug=${encodeURIComponent(slug)}` +
+    (metaOnly ? '&meta=1' : '');
+  const res = await t.postPinned(url, server.pin, {
+    headers: { Authorization: `Bearer ${server.token}` },
+  });
+  if (res.status === 404) throw new Error('That notebook no longer exists.');
+  if (res.status !== 200) {
+    setServerStatus('disconnected');
+    throw new Error(`Notebook unavailable (HTTP ${res.status}).`);
+  }
+  setServerStatus('connected');
+  const data = JSON.parse(res.text) as Partial<NotebookDetail>;
+  return {
+    name: String(data.name ?? slug),
+    title: data.title,
+    summary: data.summary ?? '',
+    icon: data.icon,
+    accent: data.accent,
+    pinned: data.pinned,
+    updated_at: data.updated_at,
+    tools: Array.isArray(data.tools) ? data.tools : [],
+    pages: Array.isArray(data.pages) ? data.pages : [],
+    cards: Array.isArray(data.cards) ? data.cards : [],
+  };
+}
+
+/** Fetch a single notebook's full detail (manifest + notes with bodies + its own cards). */
+export async function fetchNotebook(slug: string): Promise<NotebookDetail> {
+  return requestNotebook(slug, false);
+}
+
+/**
+ * Fetch a notebook's cheap page index: the ordered page stubs (num/title/file, Appendix
+ * first) with empty bodies, plus its cards. The phone opens a notebook with this, then
+ * pulls individual page bodies via {@link fetchPage} as the reader moves.
+ */
+export async function fetchNotebookIndex(slug: string): Promise<NotebookDetail> {
+  return requestNotebook(slug, true);
+}
+
+/** Fetch one page's markdown body by page number (0 = the Appendix). */
+export async function fetchPage(slug: string, num: number): Promise<NotePage> {
+  const t = getTransport();
+  if (!t) throw new Error(NO_MODULE);
+  const server = await currentServer();
+  if (!server) throw new Error('Not connected. Pair first with “/pair <payload>”.');
+
+  const res = await t.postPinned(
+    `${serverOrigin(server)}/page?slug=${encodeURIComponent(slug)}&num=${num}`,
+    server.pin,
+    { headers: { Authorization: `Bearer ${server.token}` } },
+  );
+  if (res.status === 404) throw new Error('That page no longer exists.');
+  if (res.status !== 200) {
+    setServerStatus('disconnected');
+    throw new Error(`Page unavailable (HTTP ${res.status}).`);
+  }
+  setServerStatus('connected');
+  const data = JSON.parse(res.text) as Partial<NotePage>;
+  return {
+    num: typeof data.num === 'number' ? data.num : num,
+    title: String(data.title ?? ''),
+    file: String(data.file ?? ''),
+    body: String(data.body ?? ''),
+  };
 }
 
 export interface DashboardSuggestion {
@@ -447,12 +550,16 @@ export async function applyDashboardAction(action: {
   return postAction(action);
 }
 
-/** Toggle a task card's done state (`done` chooses complete vs. uncomplete). */
-export async function completeCard(id: string, done: boolean): Promise<void> {
-  return postAction({ action: done ? 'complete' : 'uncomplete', id });
+/**
+ * Toggle a task card's done state (`done` chooses complete vs. uncomplete).
+ * `source` (the card's notebook slug) lets the server jump straight to the file
+ * instead of scanning every notebook; it's optional and safely omitted when unknown.
+ */
+export async function completeCard(id: string, done: boolean, source?: string): Promise<void> {
+  return postAction({ action: done ? 'complete' : 'uncomplete', id, source });
 }
 
-/** Dismiss a card so it stops showing in the dashboard. */
-export async function dismissCard(id: string): Promise<void> {
-  return postAction({ action: 'dismiss', id });
+/** Dismiss a card so it stops showing in the dashboard. `source` is its notebook slug. */
+export async function dismissCard(id: string, source?: string): Promise<void> {
+  return postAction({ action: 'dismiss', id, source });
 }

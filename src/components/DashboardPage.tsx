@@ -15,7 +15,6 @@ import {
   Bell,
   BellRing,
   ChevronDown,
-  ChevronRight,
   Check,
   Clock,
   Folder,
@@ -39,7 +38,6 @@ import {
   dismissCard,
   fetchDashboardState,
   type DashboardCard,
-  type DashboardServer,
   type DashboardState,
   type DashboardSuggestion,
 } from '../server/aiController';
@@ -55,15 +53,11 @@ interface DashboardPageProps {
   onLift: (card: DashboardCard) => void;
   /** Notify the screen the drag ended. */
   onRelease: () => void;
-}
-
-// Strip the trailing `<!-- 2026-07-04 12:00 -->` timestamps the notes servers add,
-// so a subject's notes read cleanly in the dashboard.
-function cleanNotes(md: string): string {
-  return md
-    .replace(/\s*<!--[^>]*-->/g, '')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
+  /** The notebook currently filling the pad: 'sandbox' (local) or a subject slug. Owned by
+   *  the screen so the switcher can swap the pad's pages, not just the dashboard's view. */
+  selectedNb: string;
+  /** Switch the active notebook (drives both this dashboard and the pad's pages). */
+  onSelectNotebook: (key: string) => void;
 }
 
 // --- Card sorting + presentation -------------------------------------------
@@ -335,16 +329,20 @@ function NotebookSwitcher({
  * removed by pressing and holding, then dragging them up onto the header, which
  * turns into a delete target, so a delete is always deliberate.
  */
-function DashboardPage({ width, isActive, dragShared, onLift, onRelease }: DashboardPageProps) {
+function DashboardPage({
+  width,
+  isActive,
+  dragShared,
+  onLift,
+  onRelease,
+  selectedNb,
+  onSelectNotebook,
+}: DashboardPageProps) {
   const colors = useTheme();
   const [state, setState] = useState<DashboardState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [expanded, setExpanded] = useState<string | null>(null);
-  // The notebook currently in view: 'all' (roll-up), 'sandbox' (local), or a subject
-  // slug. Drives which cards / notes the dashboard shows.
-  const [selectedNb, setSelectedNb] = useState('all');
   // Keys (suggestion 'into' or card id) currently being acted on, to disable their
   // controls while the write is in flight.
   const [busy, setBusy] = useState<Record<string, boolean>>({});
@@ -420,7 +418,7 @@ function DashboardPage({ width, isActive, dragShared, onLift, onRelease }: Dashb
         : prev,
     );
     try {
-      await completeCard(card.id, next);
+      await completeCard(card.id, next, card.source);
     } catch (e) {
       setState(prev =>
         prev
@@ -440,7 +438,7 @@ function DashboardPage({ width, isActive, dragShared, onLift, onRelease }: Dashb
       prev ? { ...prev, cards: prev.cards.filter(c => c.id !== card.id) } : prev,
     );
     try {
-      await dismissCard(card.id);
+      await dismissCard(card.id, card.source);
     } catch (e) {
       setState(prev => (prev ? { ...prev, cards: [...prev.cards, card] } : prev));
       setError(e instanceof Error ? e.message : String(e));
@@ -468,9 +466,9 @@ function DashboardPage({ width, isActive, dragShared, onLift, onRelease }: Dashb
   const allCards = useMemo(() => state?.cards ?? [], [state]);
   const allSuggestions = state?.suggestions ?? [];
 
-  // The notebook picker's entries: an "All" roll-up, the single local Sandbox, and
-  // one per subject server, each tagged with its own open-task / notification counts
-  // (a card belongs to a notebook via its `source` slug).
+  // The notebook picker's entries: the Sandbox (the local pad, which also rolls up every
+  // notebook's cards + alerts), then one per subject server, each tagged with its own
+  // open-task / notification counts (a card belongs to a notebook via its `source` slug).
   const nbOptions = useMemo<NotebookOption[]>(() => {
     const countFor = (name: string) => {
       let tasks = 0;
@@ -485,32 +483,29 @@ function DashboardPage({ width, isActive, dragShared, onLift, onRelease }: Dashb
     };
     const opts: NotebookOption[] = [
       {
-        key: 'all',
-        label: 'All notebooks',
-        kind: 'all',
+        key: 'sandbox',
+        label: 'Sandbox',
+        kind: 'local',
         tasks: allCards.filter(c => c.kind === 'task' && !c.done).length,
         notifs: allCards.filter(c => c.kind === 'notification').length,
       },
-      { key: 'sandbox', label: 'Sandbox', kind: 'local', tasks: 0, notifs: 0 },
     ];
     for (const s of allServers) {
       const { tasks, notifs } = countFor(s.name);
-      opts.push({ key: s.name, label: s.name, summary: s.summary, kind: 'server', tasks, notifs });
+      opts.push({ key: s.name, label: s.title || s.name, summary: s.summary, kind: 'server', tasks, notifs });
     }
     return opts;
   }, [allCards, allServers]);
 
-  // The chosen notebook, falling back to "All" if the selection vanished (e.g. its
+  // The chosen notebook, falling back to the Sandbox if the selection vanished (e.g. its
   // subject was merged away since it was picked).
   const selected = nbOptions.find(o => o.key === selectedNb) ?? nbOptions[0];
-  const isAll = selected.kind === 'all';
-  const isLocal = selected.kind === 'local';
+  // The Sandbox is the aggregate view: every notebook's cards plus all merge suggestions.
+  // A subject shows only its own cards (its notes live in the pad's pages, not here).
+  const isSandbox = selected.key === 'sandbox';
 
-  // Narrow the world to the selected notebook. The local Sandbox has no filed cards
-  // or subject notes of its own yet; suggestions are cross-notebook, so All-only.
-  const cards = isLocal ? [] : isAll ? allCards : allCards.filter(c => c.source === selected.key);
-  const servers = isLocal ? [] : isAll ? allServers : allServers.filter(s => s.name === selected.key);
-  const suggestions = isAll ? allSuggestions : [];
+  const cards = isSandbox ? allCards : allCards.filter(c => c.source === selected.key);
+  const suggestions = isSandbox ? allSuggestions : [];
 
   // Split cards into their sections. Tasks and notifications are first-class; every
   // other kind is grouped by kind and rendered through the generic idea-card grid,
@@ -525,15 +520,7 @@ function DashboardPage({ width, isActive, dragShared, onLift, onRelease }: Dashb
   const otherKindNames = Object.keys(otherKinds).sort();
 
   const openTaskCount = tasks.filter(t => !t.done).length;
-  const nothingAtAll =
-    !isLocal && cards.length === 0 && servers.length === 0 && suggestions.length === 0;
-
-  // Switch notebooks; opening a specific subject also expands its notes so its
-  // filed markdown is visible straight away.
-  const onSelectNotebook = useCallback((key: string) => {
-    setSelectedNb(key);
-    setExpanded(key === 'all' || key === 'sandbox' ? null : key);
-  }, []);
+  const nothingAtAll = cards.length === 0 && suggestions.length === 0;
 
   // Shared drag props handed to every draggable card.
   const dragProps = {
@@ -586,16 +573,6 @@ function DashboardPage({ width, isActive, dragShared, onLift, onRelease }: Dashb
             {error && (
               <View className="mb-4 rounded-2xl border border-surface1 bg-surface p-3">
                 <Text className="text-sm text-danger">{error}</Text>
-              </View>
-            )}
-
-            {isLocal && (
-              <View className="items-center rounded-2xl border border-surface1 bg-surface px-6 py-10">
-                <PenLine size={32} color={colors.faint} strokeWidth={1.75} />
-                <Text className="mt-3 text-center text-sm text-muted">
-                  Your local scratch pad. Write freely on the pages, then run{' '}
-                  <Text className="text-text">/ingest</Text> to file notes into notebooks.
-                </Text>
               </View>
             )}
 
@@ -701,21 +678,6 @@ function DashboardPage({ width, isActive, dragShared, onLift, onRelease }: Dashb
                       </Pressable>
                     </View>
                   </View>
-                ))}
-              </View>
-            )}
-
-            {/* Subjects — the per-topic notes stores /ingest builds up. */}
-            {servers.length > 0 && (
-              <View className="mb-6">
-                {servers.map(srv => (
-                  <ServerCard
-                    key={srv.name}
-                    server={srv}
-                    colors={colors}
-                    expanded={expanded === srv.name}
-                    onToggle={() => setExpanded(cur => (cur === srv.name ? null : srv.name))}
-                  />
                 ))}
               </View>
             )}
@@ -920,52 +882,6 @@ function IdeaCard({ card, dimmed }: { card: DashboardCard; dimmed: boolean }) {
         <Text className="mt-1 text-xs text-muted" numberOfLines={2}>
           {card.body}
         </Text>
-      )}
-    </View>
-  );
-}
-
-// One subject server: a tappable header (folder icon + name + summary) that expands
-// to reveal its notes markdown. Its own component so only the toggled card re-renders.
-function ServerCard({
-  server,
-  colors,
-  expanded,
-  onToggle,
-}: {
-  server: DashboardServer;
-  colors: ThemeColors;
-  expanded: boolean;
-  onToggle: () => void;
-}) {
-  const notes = cleanNotes(server.notes || '');
-  return (
-    <View className="mb-2 overflow-hidden rounded-2xl border border-surface1 bg-surface">
-      <Pressable
-        onPress={onToggle}
-        accessibilityRole="button"
-        className="flex-row items-center p-3 active:opacity-70">
-        <View className="mr-3 h-9 w-9 items-center justify-center rounded-xl bg-accent/20">
-          <Folder size={18} color={colors.accent} strokeWidth={2} />
-        </View>
-        <View className="flex-1 pr-2">
-          <Text className="text-base font-semibold text-text">{server.name}</Text>
-          {!!server.summary && (
-            <Text className="mt-0.5 text-xs text-muted" numberOfLines={expanded ? undefined : 1}>
-              {server.summary}
-            </Text>
-          )}
-        </View>
-        {expanded ? (
-          <ChevronDown size={20} color={colors.faint} strokeWidth={2} />
-        ) : (
-          <ChevronRight size={20} color={colors.faint} strokeWidth={2} />
-        )}
-      </Pressable>
-      {expanded && (
-        <View className="border-t border-surface1 px-3 py-3">
-          <Text className="text-sm leading-5 text-text">{notes || 'No notes yet.'}</Text>
-        </View>
       )}
     </View>
   );

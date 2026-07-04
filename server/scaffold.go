@@ -52,9 +52,6 @@ func scaffoldRoot(root string, threshold int) (mcpSetup, error) {
 		filepath.Join(mcpDir, "bin"),
 		filepath.Join(orchDir, "mcpx"),
 		filepath.Join(orchDir, "bin"),
-		// The cards queue Claude fills during /ingest; created up front so the
-		// dashboard can read it even before any card exists.
-		filepath.Join(stateDir, "cards"),
 	} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return mcpSetup{}, fmt.Errorf("mkdir %s: %w", d, err)
@@ -83,10 +80,36 @@ func scaffoldRoot(root string, threshold int) (mcpSetup, error) {
 		return mcpSetup{}, err
 	}
 
+	// Bring older roots up to the current notebook layout (a notes/ page folder +
+	// notebook.json per folder, cards co-located under each notebook) before anything
+	// reads them.
+	migrateNotebooks(mcpDir, stateDir)
+
+	// Ensure the data-only "orchestrator" notebook exists so its notes are viewable
+	// alongside every subject. It gets no generated query server (see the skip below).
+	if err := seedOrchestratorNotebook(mcpDir); err != nil {
+		return mcpSetup{}, err
+	}
+
 	// Turn any creation requests the orchestrator queued into real server
 	// folders before we scan/build, so an approved subject is live this run.
 	if err := materializeRequests(mcpDir, stateDir); err != nil {
 		return mcpSetup{}, err
+	}
+
+	// Refresh every notebook's generated query-layer files (main.go/capability.json)
+	// from the current template, so a template change — like the notes.md path — is
+	// picked up and rebuilt below. Bare capability servers (no manifest, e.g. dog)
+	// are skipped so their hand-written code is never clobbered.
+	for _, slug := range listNotebookSlugs(mcpDir) {
+		// The orchestrator notebook is data-only — never give it a fact-store query
+		// server, which would collide with the real orchestrator MCP's name.
+		if slug == orchestratorSlug {
+			continue
+		}
+		if err := seedSubjectServer(mcpDir, slug, ""); err != nil {
+			return mcpSetup{}, err
+		}
 	}
 
 	// Build every capability server found under mcp/ (any subdir with a
@@ -212,34 +235,60 @@ func materializeRequests(mcpDir, stateDir string) error {
 	return materializeConsolidations(mcpDir, stateDir)
 }
 
-// seedSubjectServer creates a per-subject fact-store server folder (main.go,
-// capability.json, and a seeded <name>.md) under mcpDir if it doesn't exist yet.
-// It is a no-op when the folder is already present, so callers can use it to
-// lazily ensure a consolidation target exists. name must already be validated.
+// seedSubjectServer lays out (or refreshes) a subject notebook folder under mcpDir:
+// the viewable data layer (notebook.json + notes.md) and the generated query layer
+// (main.go + capability.json). The generated files are rewritten from the template
+// (writeIfChanged) so template changes propagate and rebuild; the notes and manifest
+// are only written when absent so their content is never clobbered. Safe to call on
+// an existing folder to bring it current. name must already be validated.
 func seedSubjectServer(mcpDir, name, summary string) error {
 	dir := filepath.Join(mcpDir, name)
-	if _, err := os.Stat(dir); err == nil {
-		return nil // already exists, keep it
-	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("mkdir server %q: %w", name, err)
 	}
 	if strings.TrimSpace(summary) == "" {
 		summary = "Notes and facts about " + name + "."
 	}
+
+	// Query layer: regenerated from the template so a template change rebuilds.
 	main := strings.ReplaceAll(factStoreMainTmpl, "__NAME__", name)
 	cap, _ := json.MarshalIndent(map[string]any{
 		"name":    name,
 		"summary": summary,
 		"tools":   []string{name + "_add_note", name + "_notes", name + "_rewrite"},
 	}, "", "  ")
-	if err := writeIfMissing(filepath.Join(dir, "main.go"), main); err != nil {
+	if err := writeIfChanged(filepath.Join(dir, "main.go"), main); err != nil {
 		return err
 	}
-	if err := writeIfMissing(filepath.Join(dir, "capability.json"), string(cap)+"\n"); err != nil {
+	if err := writeIfChanged(filepath.Join(dir, "capability.json"), string(cap)+"\n"); err != nil {
 		return err
 	}
-	return writeIfMissing(filepath.Join(dir, name+".md"), "# "+name+"\n\n"+summary+"\n")
+
+	// Data layer: seed an Overview page + manifest only when the notebook has no
+	// content pages yet, so existing notes/manifest content is never clobbered. The
+	// Appendix is (re)generated from whatever pages exist.
+	hasContent := false
+	for _, p := range listPages(mcpDir, name) {
+		if p.Num != appendixNum {
+			hasContent = true
+			break
+		}
+	}
+	if !hasContent {
+		if err := os.MkdirAll(notesDirFor(mcpDir, name), 0o755); err != nil {
+			return err
+		}
+		overview := filepath.Join(notesDirFor(mcpDir, name), pageFileName(1, "Overview"))
+		if err := writeIfMissing(overview, "# Overview\n\n"+summary+"\n"); err != nil {
+			return err
+		}
+	}
+	if !isNotebook(mcpDir, name) {
+		if err := saveNotebook(mcpDir, notebook{Slug: name, Summary: summary}); err != nil {
+			return err
+		}
+	}
+	return rebuildAppendix(mcpDir, name)
 }
 
 // materializeConsolidations applies each merge the orchestrator queued under
@@ -268,33 +317,39 @@ func materializeConsolidations(mcpDir, stateDir string) error {
 		if err := seedSubjectServer(mcpDir, req.Into, ""); err != nil {
 			return err
 		}
-		intoMd := filepath.Join(mcpDir, req.Into, req.Into+".md")
 		for _, from := range req.From {
 			if !validSlug(from) || from == req.Into {
 				continue
 			}
 			fromDir := filepath.Join(mcpDir, from)
-			body, err := os.ReadFile(filepath.Join(fromDir, from+".md"))
-			if err == nil {
-				section := "\n\n<!-- consolidated from " + from + " -->\n" + strings.TrimSpace(string(body)) + "\n"
-				if f, err := os.OpenFile(intoMd, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o644); err == nil {
-					f.WriteString(section)
-					f.Close()
+			// Carry the merged notebook's pages over as one new page in the target,
+			// preserving the markdown, then drop the retired folder.
+			_ = mergeNotebookPages(mcpDir, from, req.Into)
+			// Carry the merged notebook's cards over so they aren't lost with the folder.
+			for _, c := range loadCards(mcpDir, from) {
+				c.Source = req.Into
+				if data, err := json.MarshalIndent(c, "", "  "); err == nil {
+					dest := cardsDirFor(mcpDir, req.Into)
+					if os.MkdirAll(dest, 0o755) == nil {
+						os.WriteFile(filepath.Join(dest, c.ID+".json"), append(data, '\n'), 0o644)
+					}
 				}
 			}
 			os.RemoveAll(fromDir)                         // retire the merged server's sources
 			os.Remove(filepath.Join(mcpDir, "bin", from)) // and its stale binary
 		}
-		os.Remove(reqPath) // fulfilled
+		_ = touchNotebook(mcpDir, req.Into, "") // bump updated_at after the merge
+		os.Remove(reqPath)                      // fulfilled
 	}
 	return nil
 }
 
-// validSlug accepts only lowercase-alnum-and-hyphen names that aren't the two
-// reserved folder names, so a materialized server folder can't escape mcpDir or
-// collide with the library/output dirs.
+// validSlug accepts only lowercase-alnum-and-hyphen names that aren't reserved, so a
+// materialized server folder can't escape mcpDir, collide with the library/output
+// dirs, or shadow the data-only "orchestrator" notebook (whose name belongs to the
+// real orchestrator MCP).
 func validSlug(s string) bool {
-	if s == "" || s == "mcpx" || s == "bin" {
+	if s == "" || s == "mcpx" || s == "bin" || s == orchestratorSlug {
 		return false
 	}
 	for _, r := range s {

@@ -100,6 +100,8 @@ func main() {
 	// Read-only dashboard state + the optional merge-approval action. Both only
 	// touch the scaffold's data files, so they need no Claude run.
 	mux.HandleFunc("/state", stateHandler(token, *root))
+	mux.HandleFunc("/notebook", notebookHandler(token, *root))
+	mux.HandleFunc("/page", pageHandler(token, *root))
 	mux.HandleFunc("/action", actionHandler(token, *root))
 
 	listenAddr := net.JoinHostPort(bindIP, fmt.Sprintf("%d", *port))

@@ -1,5 +1,5 @@
 import { EditorView, keymap } from '@codemirror/view';
-import { EditorState, Prec } from '@codemirror/state';
+import { EditorState, Prec, Compartment } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import {
   markdown,
@@ -22,6 +22,7 @@ import {
   cachePreview,
 } from './state.js';
 import { broadcastPreview } from './answerView.js';
+import { wholeDocDeco } from './viewPlugin.js';
 import { cardField, previewFetcher } from './cards.js';
 import { livePreview } from './livePreview.js';
 import { listIndent } from './listIndent.js';
@@ -87,7 +88,13 @@ const normalizeBulletMarkers = EditorState.transactionFilter.of(tr => {
   return extra.length ? [tr, { changes: extra, sequential: true }] : tr;
 });
 
+// Editability is compartmentalized so RN can flip a page to read-only. Subject-notebook
+// pages pulled from the server are viewable but not editable on the phone — only the local
+// Sandbox is edited — so those pages call window.__setReadOnly(true) after seeding content.
+const editableConf = new Compartment();
+
 const extensions = [
+  editableConf.of([]),
   normalizeBulletMarkers,
   history(),
   // Highest-precedence Enter: intercept slash commands first (they turn into
@@ -135,6 +142,30 @@ const view = new EditorView({
 window.__setDoc = function (text) {
   view.dispatch({
     changes: { from: 0, to: view.state.doc.length, insert: text ?? '' },
+  });
+};
+
+// RN calls this to make the page read-only (subject-notebook pages) or editable again
+// (the Sandbox). Read-only turns off contentEditable so there's no caret or typing, and
+// sets EditorState.readOnly so plugins/commands treat it as immutable; __setDoc still works
+// (programmatic dispatches aren't blocked), so RN can seed the fetched content either way.
+//
+// It also flips on wholeDocDeco: a read-only page never gets the caret/scroll interaction
+// that measures a viewport, so with the default visible-range scan the live-preview
+// decorations wouldn't build until the first tap. Scanning the whole doc (as the /ask
+// answer views already do) renders the parsed markdown immediately on the first paint.
+// RN applies this BEFORE __setDoc so the seeding transaction already scans whole-doc.
+window.__setReadOnly = function (on) {
+  view.dispatch({
+    effects: editableConf.reconfigure(
+      on
+        ? [
+            EditorView.editable.of(false),
+            EditorState.readOnly.of(true),
+            wholeDocDeco.of(true),
+          ]
+        : [],
+    ),
   });
 };
 

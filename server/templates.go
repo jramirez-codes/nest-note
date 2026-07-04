@@ -6,6 +6,224 @@ import "strings"
 // Go struct tags while themselves being raw string literals.
 func bt(s string) string { return strings.ReplaceAll(s, "%BT%", "`") }
 
+// withPageHelpers splices the shared notebook-page helpers into a generated server
+// template at its "//__PAGE_HELPERS__" placeholder, so the fact-store and orchestrator
+// servers share one copy of the notes/ layout logic (kept in step with notebook.go).
+func withPageHelpers(tmpl string) string {
+	return strings.Replace(tmpl, "//__PAGE_HELPERS__", pageHelpersSrc, 1)
+}
+
+// pageHelpersSrc is package-agnostic Go source (no package/import lines — the host
+// template supplies those) implementing a notebook's notes/ page folder: parsing and
+// formatting "#N (Title).md", listing/upserting/rewriting pages, and regenerating the
+// "#0 (Appendix).md" index. It has no backticks so it embeds cleanly in a raw template
+// literal; it needs the host to import encoding/json, fmt, os, path/filepath, regexp,
+// sort, strconv, and strings.
+const pageHelpersSrc = `
+// --- notebook pages (generated; mirrors the server's notebook.go layout) ------------
+// A notebook's notes live in a notes/ folder of "#N (Title).md" pages; page #0 is the
+// auto-generated Appendix indexing the rest with [[#N (Title)]] links. Within-notebook
+// links are [[#N (Title)]]; cross-notebook links are [[slug::#N (Title)]].
+
+var pageFileRe = regexp.MustCompile("^#([0-9]+) \\((.+)\\)\\.md$")
+
+func sanitizePageTitle(title string) string {
+	title = strings.NewReplacer("(", " ", ")", " ", "/", " ", "\n", " ", "\r", " ").Replace(title)
+	title = strings.Join(strings.Fields(title), " ")
+	if title == "" {
+		title = "Untitled"
+	}
+	if len(title) > 60 {
+		title = strings.TrimSpace(title[:60])
+	}
+	return title
+}
+
+func pageFileName(num int, title string) string {
+	return fmt.Sprintf("#%d (%s).md", num, sanitizePageTitle(title))
+}
+
+func parsePageFile(name string) (int, string, bool) {
+	m := pageFileRe.FindStringSubmatch(name)
+	if m == nil {
+		return 0, "", false
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil {
+		return 0, "", false
+	}
+	return n, m[2], true
+}
+
+type page struct {
+	Num   int
+	Title string
+	File  string
+	Body  string
+}
+
+func listPagesIn(notesDir string) []page {
+	entries, err := os.ReadDir(notesDir)
+	if err != nil {
+		return nil
+	}
+	var pages []page
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		num, title, ok := parsePageFile(e.Name())
+		if !ok {
+			continue
+		}
+		body, _ := os.ReadFile(filepath.Join(notesDir, e.Name()))
+		pages = append(pages, page{Num: num, Title: title, File: e.Name(), Body: string(body)})
+	}
+	sort.Slice(pages, func(i, j int) bool { return pages[i].Num < pages[j].Num })
+	return pages
+}
+
+func nextPageNum(pages []page) int {
+	next := 1
+	for _, p := range pages {
+		if p.Num >= next {
+			next = p.Num + 1
+		}
+	}
+	return next
+}
+
+// nbMeta reads a notebook's title + summary from notebook.json, defaulting the title
+// from the folder name so the Appendix always has a heading.
+func nbMeta(nbDir string) (string, string) {
+	var title, summary string
+	if data, err := os.ReadFile(filepath.Join(nbDir, "notebook.json")); err == nil {
+		var m map[string]any
+		if json.Unmarshal(data, &m) == nil {
+			if t, ok := m["title"].(string); ok {
+				title = t
+			}
+			if s, ok := m["summary"].(string); ok {
+				summary = s
+			}
+		}
+	}
+	if strings.TrimSpace(title) == "" {
+		title = filepath.Base(nbDir)
+	}
+	return title, summary
+}
+
+// rebuildAppendixIn regenerates notesDir/"#0 (Appendix).md": the notebook title +
+// summary, then a "## Pages" index of [[#N (Title)]] links to every content page.
+func rebuildAppendixIn(notesDir string) error {
+	if err := os.MkdirAll(notesDir, 0o755); err != nil {
+		return err
+	}
+	title, summary := nbMeta(filepath.Dir(notesDir))
+	var b strings.Builder
+	b.WriteString("# " + title + " — Appendix\n\n")
+	if s := strings.TrimSpace(summary); s != "" {
+		b.WriteString(s + "\n\n")
+	}
+	b.WriteString("## Pages\n")
+	count := 0
+	for _, p := range listPagesIn(notesDir) {
+		if p.Num == 0 {
+			continue
+		}
+		fmt.Fprintf(&b, "- [[#%d (%s)]]\n", p.Num, p.Title)
+		count++
+	}
+	if count == 0 {
+		b.WriteString("_No pages yet._\n")
+	}
+	return os.WriteFile(filepath.Join(notesDir, pageFileName(0, "Appendix")), []byte(b.String()), 0o644)
+}
+
+// upsertPageIn files bullets under a titled content page: an existing content page with
+// the same title (case-insensitive) has the bullets appended; otherwise a new
+// next-numbered page is created. Regenerates the Appendix.
+func upsertPageIn(notesDir, title string, bullets []string) error {
+	title = sanitizePageTitle(title)
+	if err := os.MkdirAll(notesDir, 0o755); err != nil {
+		return err
+	}
+	pages := listPagesIn(notesDir)
+	num := nextPageNum(pages)
+	body := "# " + title + "\n"
+	// Reuse an existing content page with the same title (case-insensitive): keep its
+	// number AND original title so we append in place rather than fork a new file.
+	for _, p := range pages {
+		if p.Num != 0 && strings.EqualFold(p.Title, title) {
+			num, title, body = p.Num, p.Title, p.Body
+			break
+		}
+	}
+	if !strings.HasSuffix(body, "\n") {
+		body += "\n"
+	}
+	for _, bl := range bullets {
+		if bl = strings.TrimSpace(bl); bl != "" {
+			body += "- " + bl + "\n"
+		}
+	}
+	if err := os.WriteFile(filepath.Join(notesDir, pageFileName(num, title)), []byte(body), 0o644); err != nil {
+		return err
+	}
+	return rebuildAppendixIn(notesDir)
+}
+
+// rewritePageIn replaces one page's body, matching target by number ("1"/"#1") or
+// title; an unmatched target creates a new page. Returns the page's filename.
+func rewritePageIn(notesDir, target, content string) (string, error) {
+	pages := listPagesIn(notesDir)
+	key := strings.TrimPrefix(strings.TrimSpace(target), "#")
+	num := 0
+	title := sanitizePageTitle(target)
+	found := false
+	for _, p := range pages {
+		if p.Num == 0 {
+			continue
+		}
+		if strconv.Itoa(p.Num) == key || strings.EqualFold(p.Title, title) {
+			num, title, found = p.Num, p.Title, true
+			break
+		}
+	}
+	if !found {
+		num = nextPageNum(pages)
+	}
+	if err := os.MkdirAll(notesDir, 0o755); err != nil {
+		return "", err
+	}
+	body := content
+	if !strings.HasSuffix(body, "\n") {
+		body += "\n"
+	}
+	if err := os.WriteFile(filepath.Join(notesDir, pageFileName(num, title)), []byte(body), 0o644); err != nil {
+		return "", err
+	}
+	if err := rebuildAppendixIn(notesDir); err != nil {
+		return "", err
+	}
+	return pageFileName(num, title), nil
+}
+
+// readAllPages concatenates every page (Appendix first) into one markdown blob, rule-
+// separated, for the "notes" query tool.
+func readAllPages(notesDir string) string {
+	var b strings.Builder
+	for _, p := range listPagesIn(notesDir) {
+		if b.Len() > 0 {
+			b.WriteString("\n\n---\n\n")
+		}
+		b.WriteString(strings.TrimRight(p.Body, "\n"))
+	}
+	return strings.TrimSpace(b.String())
+}
+`
+
 // mcpxTmpl is a tiny, stdlib-only MCP server over stdio: newline-delimited
 // JSON-RPC 2.0 with just the methods Claude needs (initialize, tools/list,
 // tools/call, ping). It is copied verbatim into each generated module so the
@@ -236,7 +454,7 @@ var dogCapabilityTmpl = `{
 // notes server. It never builds anything itself: request_new_server just drops
 // a request file that the Go server materialises on the next run. That keeps all
 // code generation on the trusted server side.
-var orchestratorMainTmpl = bt(`package main
+var orchestratorMainTmpl = withPageHelpers(bt(`package main
 
 import (
 	"encoding/json"
@@ -246,6 +464,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -328,10 +547,11 @@ func main() {
 	})
 	s.AddTool(mcpx.Tool{
 		Name:        "ingest_topic",
-		Description: "File one or more notes under a subject, creating its notes store if needed. This is the workhorse for /ingest: call it once per distinct topic found on the page. The notes are saved immediately; if the subject had no server yet, one is queued and goes live on the next message. Reuse an existing subject slug when the topic matches one (call list_capabilities first).",
+		Description: "File one or more notes under a subject notebook, creating it if needed. This is the workhorse for /ingest: call it once per distinct topic on the page. Each call writes to one titled PAGE inside the subject's notebook — pass 'page' as a short title for this batch (reuse the same title to append to that page; a new title starts a new page). The notes save immediately; if the subject had no server yet, one is queued and goes live on the next message. Reuse an existing subject slug when the topic matches one (call list_capabilities first). In a note you may link another page as [[#N (Title)]] or another notebook's page as [[slug::#N (Title)]].",
 		InputSchema: mcpx.ObjectSchema(map[string]any{
-			"subject": map[string]any{"type": "string", "description": "short lowercase slug for the topic, e.g. greenhouse or taxes-2026"},
-			"summary": map[string]any{"type": "string", "description": "one-line description of the subject (used only when creating it)"},
+			"subject": map[string]any{"type": "string", "description": "short lowercase slug for the subject notebook, e.g. greenhouse or taxes-2026"},
+			"page":    map[string]any{"type": "string", "description": "short title for the page these notes go on, e.g. \"Watering Schedule\" (defaults to the summary, else \"Notes\")"},
+			"summary": map[string]any{"type": "string", "description": "one-line description of the subject (used only when creating the notebook)"},
 			"notes":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "the notes/facts from the page to file under this subject"},
 		}, []string{"subject", "notes"}),
 		Handler: ingestTopic,
@@ -387,9 +607,10 @@ func slug(raw string) string {
 	return strings.Trim(s, "-")
 }
 
-// hasServer reports whether a capability server folder already exists for name.
+// hasServer reports whether a capability server folder already exists for name. The
+// data-only "orchestrator" notebook never counts — it has no query server.
 func hasServer(name string) bool {
-	if mcpDir == "" || name == "" {
+	if mcpDir == "" || name == "" || name == "orchestrator" {
 		return false
 	}
 	info, err := os.Stat(filepath.Join(mcpDir, name))
@@ -400,7 +621,98 @@ func subjectsPath() string      { return filepath.Join(stateDir, "subjects.json"
 func requestsDir() string       { return filepath.Join(stateDir, "requests") }
 func consolidationsDir() string { return filepath.Join(stateDir, "consolidations") }
 func suggestionsDir() string    { return filepath.Join(stateDir, "suggestions") }
-func cardsDir() string          { return filepath.Join(stateDir, "cards") }
+
+// The notebook layout, mirrored from the Go server's notebook.go: a subject folder
+// under mcp/<slug>/ holds notes/ (a folder of "#N (Title).md" pages), notebook.json
+// (its viewable identity), and cards/ (its tasks/notifications). Cards live with their
+// notebook, not in a global queue, so each notebook owns its own actions.
+const notebookManifest = "notebook.json"
+
+func notebookDir(name string) string { return filepath.Join(mcpDir, name) }
+func notesDirFor(name string) string { return filepath.Join(mcpDir, name, "notes") }
+func cardsDirFor(name string) string { return filepath.Join(mcpDir, name, "cards") }
+
+// logActivity records one line of orchestrator bookkeeping on the data-only
+// "orchestrator" notebook's Activity page, so the user can see what was filed or merged.
+func logActivity(line string) {
+	if mcpDir == "" {
+		return
+	}
+	_ = upsertPageIn(filepath.Join(mcpDir, "orchestrator", "notes"), "Activity", []string{line})
+}
+
+//__PAGE_HELPERS__
+
+// titleFromSlug turns "taxes-2026" into "Taxes 2026" for a default display title.
+func titleFromSlug(name string) string {
+	words := strings.FieldsFunc(name, func(r rune) bool { return r == '-' || r == '_' })
+	for i, w := range words {
+		if w != "" {
+			words[i] = strings.ToUpper(w[:1]) + w[1:]
+		}
+	}
+	if len(words) == 0 {
+		return name
+	}
+	return strings.Join(words, " ")
+}
+
+// touchManifest bumps a notebook's updated_at (creating the manifest if absent),
+// so the dashboard index can order notebooks by recency.
+func touchManifest(name string) {
+	path := filepath.Join(notebookDir(name), notebookManifest)
+	m := map[string]any{}
+	if data, err := os.ReadFile(path); err == nil {
+		json.Unmarshal(data, &m)
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	m["slug"] = name
+	if t, _ := m["title"].(string); t == "" {
+		m["title"] = titleFromSlug(name)
+	}
+	if c, _ := m["created_at"].(string); c == "" {
+		m["created_at"] = now
+	}
+	m["updated_at"] = now
+	data, _ := json.MarshalIndent(m, "", "  ")
+	os.WriteFile(path, append(data, '\n'), 0o644)
+}
+
+// ensureNotebook makes <mcp>/<name> a viewable + queryable notebook: it seeds
+// notebook.json when absent, refreshes the notes/ Appendix, always bumps updated_at,
+// and queues the query binary build when the subject has no server code yet. It does
+// not seed a starter page — the first ingested topic becomes page #1. Returns whether
+// a build was newly queued.
+func ensureNotebook(name, summary string) bool {
+	dir := notebookDir(name)
+	os.MkdirAll(dir, 0o755)
+	summary = strings.TrimSpace(summary)
+	if summary == "" {
+		summary = "Notes and facts about " + name + "."
+	}
+	if _, err := os.Stat(filepath.Join(dir, notebookManifest)); err != nil {
+		now := time.Now().UTC().Format(time.RFC3339)
+		nb := map[string]any{
+			"slug": name, "title": titleFromSlug(name), "summary": summary,
+			"pinned": false, "created_at": now, "updated_at": now,
+		}
+		data, _ := json.MarshalIndent(nb, "", "  ")
+		os.WriteFile(filepath.Join(dir, notebookManifest), append(data, '\n'), 0o644)
+	} else {
+		touchManifest(name)
+	}
+	// Refresh the Appendix (creating the notes/ folder) now that the manifest exists.
+	rebuildAppendixIn(notesDirFor(name))
+	queued := false
+	if _, err := os.Stat(filepath.Join(dir, "main.go")); err != nil {
+		os.MkdirAll(requestsDir(), 0o755)
+		req := map[string]string{"name": name, "summary": summary}
+		data, _ := json.MarshalIndent(req, "", "  ")
+		os.WriteFile(filepath.Join(requestsDir(), name+".json"), append(data, '\n'), 0o644)
+		queued = true
+	}
+	return queued
+}
 
 func loadSubjects() map[string]*subjectState {
 	m := map[string]*subjectState{}
@@ -470,6 +782,7 @@ func requestNewServer(args map[string]any) (string, error) {
 	}
 	st.Requested = true
 	saveSubjects(m)
+	logActivity("Queued a new notebook: " + name)
 	return fmt.Sprintf("queued the %q notes server (%s). It goes live on the next message, with tools %s_add_note, %s_notes, and %s_rewrite.", name, summary, name, name, name), nil
 }
 
@@ -510,16 +823,16 @@ func consolidateSubjects(args map[string]any) (string, error) {
 		st.MergedInto = into
 	}
 	saveSubjects(m)
+	logActivity("Queued merge of " + strings.Join(from, ", ") + " → " + into)
 	return fmt.Sprintf("queued consolidation of %s into %q. Live on the next message; the merged subjects are retired.", strings.Join(from, ", "), into), nil
 }
 
-// ingestTopic files notes under a subject during /ingest. Unlike request_new_server
-// (which only queues a build), it writes the note markdown immediately so the
-// dashboard shows it this instant — and, when the subject has no server code yet,
-// also queues one so the queryable MCP binary comes online next message. Notes and
-// the generated fact-store server share the same file (<mcp>/<name>/<name>.md), and
-// materialization uses writeIfMissing for the .md, so the queued build never
-// clobbers what we write here.
+// ingestTopic files notes under a subject notebook during /ingest. It writes the
+// note markdown immediately (so the dashboard shows it this instant) via
+// ensureNotebook, which also seeds the notebook.json manifest and queues the
+// queryable MCP binary when the subject has no server code yet. Notes live in the
+// notebook's notes.md; the generated fact-store server reads the same file, and
+// seeding uses writeIfMissing for notes.md so a build never clobbers what we write.
 func ingestTopic(args map[string]any) (string, error) {
 	name := slug(fmt.Sprintf("%v", args["subject"]))
 	if name == "" {
@@ -554,46 +867,29 @@ func ingestTopic(args map[string]any) (string, error) {
 		name = st.MergedInto
 	}
 
-	dir := filepath.Join(mcpDir, name)
-	mdPath := filepath.Join(dir, name+".md")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
+	// Brand-new when the notebook has no notes/ folder yet — for the reply wording.
+	_, statErr := os.Stat(notesDirFor(name))
+	isNew := statErr != nil
+
+	// One page per ingested topic: use the explicit 'page' title, else the summary,
+	// else a default.
+	pageTitle, _ := args["page"].(string)
+	pageTitle = strings.TrimSpace(pageTitle)
+	if pageTitle == "" {
+		pageTitle = strings.TrimSpace(summary)
+	}
+	if pageTitle == "" {
+		pageTitle = "Notes"
 	}
 
-	body, err := os.ReadFile(mdPath)
-	isNew := err != nil // no notes file yet -> this subject is brand new
-	if isNew {
-		head := "# " + name + "\n\n"
-		if summary != "" {
-			head += summary + "\n"
-		}
-		body = []byte(head)
-	}
-	text := string(body)
-	if !strings.HasSuffix(text, "\n") {
-		text += "\n"
-	}
-	stamp := time.Now().Format("2006-01-02 15:04")
-	for _, n := range notes {
-		text += "- " + n + " <!-- " + stamp + " -->\n"
-	}
-	if err := os.WriteFile(mdPath, []byte(text), 0o644); err != nil {
+	// Seed the notebook (manifest + appendix) and queue its binary if needed, then
+	// file the notes onto their page (upsertPageIn rebuilds the appendix).
+	created := ensureNotebook(name, summary)
+	if err := upsertPageIn(notesDirFor(name), pageTitle, notes); err != nil {
 		return "", err
 	}
-
-	// Queue the queryable MCP binary if this subject has no server code yet.
-	created := false
-	if _, err := os.Stat(filepath.Join(dir, "main.go")); err != nil {
-		s := summary
-		if s == "" {
-			s = "Notes and facts about " + name + "."
-		}
-		os.MkdirAll(requestsDir(), 0o755)
-		req := map[string]string{"name": name, "summary": s}
-		data, _ := json.MarshalIndent(req, "", "  ")
-		os.WriteFile(filepath.Join(requestsDir(), name+".json"), append(data, '\n'), 0o644)
-		created = true
-	}
+	touchManifest(name)
+	logActivity("Filed " + strconv.Itoa(len(notes)) + " note(s) → " + name + " · " + sanitizePageTitle(pageTitle))
 
 	st := m[name]
 	if st == nil {
@@ -687,17 +983,25 @@ func upsertCard(args map[string]any) (string, error) {
 
 	body, _ := args["body"].(string)
 	date, _ := args["date"].(string)
+	// The card is owned by its source notebook and stored under it. An unspecified
+	// (or invalid) source falls back to the "inbox" notebook so nothing is orphaned.
 	source := ""
 	if raw, ok := args["source"].(string); ok {
 		source = slug(raw)
+	}
+	if source == "" {
+		source = "inbox"
 	}
 	var payload map[string]any
 	if p, ok := args["payload"].(map[string]any); ok {
 		payload = p
 	}
 
-	os.MkdirAll(cardsDir(), 0o755)
-	path := filepath.Join(cardsDir(), id+".json")
+	// Make sure the owning notebook exists (viewable + queued) before filing into it.
+	ensureNotebook(source, "")
+	dir := cardsDirFor(source)
+	os.MkdirAll(dir, 0o755)
+	path := filepath.Join(dir, id+".json")
 
 	var prev card
 	if data, err := os.ReadFile(path); err == nil {
@@ -729,27 +1033,38 @@ func upsertCard(args map[string]any) (string, error) {
 	return fmt.Sprintf("filed %s card %q (priority %s, id %s).", kind, title, c.Priority, id), nil
 }
 
-// listCards reports the current cards so Claude can update or avoid duplicating
-// them. Dismissed cards are skipped; done tasks are flagged.
+// listCards reports the current cards across every notebook so Claude can update or
+// avoid duplicating them. Cards live under each notebook's cards/ dir; dismissed
+// ones are skipped and done tasks are flagged.
 func listCards() string {
-	entries, err := os.ReadDir(cardsDir())
-	if err != nil {
-		return "No cards yet."
-	}
 	var cards []card
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+	subjects, _ := os.ReadDir(mcpDir)
+	for _, sub := range subjects {
+		name := sub.Name()
+		if !sub.IsDir() || name == "mcpx" || name == "bin" {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(cardsDir(), e.Name()))
+		entries, err := os.ReadDir(cardsDirFor(name))
 		if err != nil {
 			continue
 		}
-		var c card
-		if json.Unmarshal(data, &c) != nil || c.Dismissed {
-			continue
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(cardsDirFor(name), e.Name()))
+			if err != nil {
+				continue
+			}
+			var c card
+			if json.Unmarshal(data, &c) != nil || c.Dismissed {
+				continue
+			}
+			if c.Source == "" {
+				c.Source = name
+			}
+			cards = append(cards, c)
 		}
-		cards = append(cards, c)
 	}
 	if len(cards) == 0 {
 		return "No cards yet."
@@ -777,7 +1092,7 @@ func listCapabilities() string {
 	if mcpDir != "" {
 		entries, _ := os.ReadDir(mcpDir)
 		for _, e := range entries {
-			if !e.IsDir() {
+			if !e.IsDir() || e.Name() == "mcpx" || e.Name() == "bin" || e.Name() == "orchestrator" {
 				continue
 			}
 			data, err := os.ReadFile(filepath.Join(mcpDir, e.Name(), "capability.json"))
@@ -849,61 +1164,53 @@ func listCapabilities() string {
 	}
 	return b.String()
 }
-`)
+`))
 
-// factStoreMainTmpl is the body of a generated per-subject notes server. The Go
-// server substitutes __NAME__ for the subject slug before writing it. Notes are
-// kept as a plain markdown file at <mcp>/__NAME__/__NAME__.md, resolved from the
-// running binary's location (<mcp>/bin/__NAME__) so it moves with the root.
-// add_note appends a bullet, notes returns the whole file, and rewrite replaces
-// it — the tool Claude uses to consolidate/dedupe/reorganize a subject's notes.
-var factStoreMainTmpl = bt(`package main
+// factStoreMainTmpl is the body of a generated per-subject notes server. The Go server
+// substitutes __NAME__ for the subject slug before writing it. Notes are a folder of
+// "#N (Title).md" pages at <mcp>/__NAME__/notes/, resolved from the running binary's
+// location (<mcp>/bin/__NAME__) so they move with the root. The shared page helpers
+// (spliced in at //__PAGE_HELPERS__) do the parsing/upserting/appendix work: add_note
+// files a bullet on a page, notes returns every page, and rewrite replaces one page.
+var factStoreMainTmpl = withPageHelpers(bt(`package main
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"ainotepad-mcp/mcpx"
 )
 
 var mu sync.Mutex
 
-// notePath resolves <mcp>/__NAME__/__NAME__.md from the binary at
-// <mcp>/bin/__NAME__, so the markdown moves with the root.
-func notePath() string {
+// notesDir resolves <mcp>/__NAME__/notes from the binary at <mcp>/bin/__NAME__, so the
+// pages move with the root.
+func notesDir() string {
 	exe, err := os.Executable()
 	if err != nil {
-		return "__NAME__.md"
+		return "notes"
 	}
-	return filepath.Join(filepath.Dir(exe), "..", "__NAME__", "__NAME__.md")
+	return filepath.Join(filepath.Dir(exe), "..", "__NAME__", "notes")
 }
 
-func readBody() string {
-	data, err := os.ReadFile(notePath())
-	if err != nil {
-		return ""
-	}
-	return string(data)
-}
-
-func writeBody(s string) error {
-	if !strings.HasSuffix(s, "\n") {
-		s += "\n"
-	}
-	return os.WriteFile(notePath(), []byte(s), 0o644)
-}
+//__PAGE_HELPERS__
 
 func main() {
 	s := mcpx.NewServer("__NAME__", "0.1.0")
 
 	s.AddTool(mcpx.Tool{
 		Name:        "__NAME___add_note",
-		Description: "Append a note or fact about __NAME__ as a markdown bullet.",
+		Description: "Append a note or fact about __NAME__ to a page in its notebook. Pass 'page' to pick the page title — a new title starts a new page, an existing one appends — or omit it to use the default \"Notes\" page.",
 		InputSchema: mcpx.ObjectSchema(map[string]any{
 			"note": map[string]any{"type": "string", "description": "the note or fact to remember"},
+			"page": map[string]any{"type": "string", "description": "optional page title to file the note under (default \"Notes\")"},
 		}, []string{"note"}),
 		Handler: func(args map[string]any) (string, error) {
 			text, _ := args["note"].(string)
@@ -911,28 +1218,27 @@ func main() {
 			if text == "" {
 				return "nothing to save", nil
 			}
+			title, _ := args["page"].(string)
+			if strings.TrimSpace(title) == "" {
+				title = "Notes"
+			}
 			mu.Lock()
 			defer mu.Unlock()
-			body := readBody()
-			if body != "" && !strings.HasSuffix(body, "\n") {
-				body += "\n"
-			}
-			body += "- " + text + " <!-- " + time.Now().Format("2006-01-02 15:04") + " -->\n"
-			if err := writeBody(body); err != nil {
+			if err := upsertPageIn(notesDir(), title, []string{text}); err != nil {
 				return "", err
 			}
-			return "saved to __NAME__.md", nil
+			return "saved to __NAME__ page \"" + sanitizePageTitle(title) + "\"", nil
 		},
 	})
 
 	s.AddTool(mcpx.Tool{
 		Name:        "__NAME___notes",
-		Description: "Return the full __NAME__.md markdown notes.",
+		Description: "Return all of __NAME__'s notes: every page in order (the Appendix index first, then each content page).",
 		InputSchema: mcpx.ObjectSchema(nil, nil),
 		Handler: func(args map[string]any) (string, error) {
 			mu.Lock()
 			defer mu.Unlock()
-			body := strings.TrimSpace(readBody())
+			body := readAllPages(notesDir())
 			if body == "" {
 				return "no notes about __NAME__ yet.", nil
 			}
@@ -942,18 +1248,24 @@ func main() {
 
 	s.AddTool(mcpx.Tool{
 		Name:        "__NAME___rewrite",
-		Description: "Replace the entire __NAME__.md with new markdown. Use to consolidate, dedupe, or reorganize the notes. Read __NAME___notes first so nothing is lost.",
+		Description: "Replace one page's markdown in __NAME__. Pass 'page' as the page number (e.g. 1) or its title; an unknown title creates a new page. Use to consolidate, dedupe, or reorganize a page. Read __NAME___notes first so nothing is lost. You may link other pages with [[#N (Title)]] or other notebooks with [[slug::#N (Title)]].",
 		InputSchema: mcpx.ObjectSchema(map[string]any{
-			"content": map[string]any{"type": "string", "description": "the full new markdown body for __NAME__.md"},
-		}, []string{"content"}),
+			"page":    map[string]any{"type": "string", "description": "page number or title to rewrite"},
+			"content": map[string]any{"type": "string", "description": "the full new markdown body for that page"},
+		}, []string{"page", "content"}),
 		Handler: func(args map[string]any) (string, error) {
+			target, _ := args["page"].(string)
 			content, _ := args["content"].(string)
+			if strings.TrimSpace(target) == "" {
+				return "which page? pass a page number or title.", nil
+			}
 			mu.Lock()
 			defer mu.Unlock()
-			if err := writeBody(content); err != nil {
+			file, err := rewritePageIn(notesDir(), target, content)
+			if err != nil {
 				return "", err
 			}
-			return "rewrote __NAME__.md", nil
+			return "rewrote " + file, nil
 		},
 	})
 
@@ -961,4 +1273,4 @@ func main() {
 		panic(err)
 	}
 }
-`)
+`))

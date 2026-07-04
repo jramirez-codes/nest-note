@@ -24,10 +24,17 @@ import PageIndicator from '../components/PageIndicator';
 import PaperPager from '../components/PaperPager';
 import type { PaperPagerHandle } from '../components/PaperPager';
 import ServerStatusDot from '../components/ServerStatusDot';
+import VirtualNotePage from '../components/VirtualNotePage';
 import { useCardDrag } from '../components/cardDrag';
 import { useNotes } from '../hooks/useNotes';
+import { useNotebookPages } from '../hooks/useNotebookPages';
+import type { NotePage as NotebookPageStub } from '../server/aiController';
 import type { Note } from '../types/note';
 import { fireAndForget } from '../utils/async';
+
+// The Sandbox notebook is the local pad itself (editable notes + the aggregate dashboard);
+// any other value is a subject slug whose pages are pulled from the server and virtualized.
+const SANDBOX_KEY = 'sandbox';
 
 // Priority → pip color for the floating drag clone (kept tiny to avoid importing
 // the dashboard's full palette map).
@@ -39,10 +46,14 @@ const PIP_CLASS: Record<string, string> = {
 };
 
 /**
- * A page in the pager is either an existing note or the trailing dashboard.
- * Modeling it as a discriminated union keeps `renderItem` exhaustive.
+ * A page in the pager is a local editable note (Sandbox), a virtual read-only page pulled
+ * from a swapped-to subject notebook, or the trailing dashboard. Modeling it as a
+ * discriminated union keeps `renderPage` exhaustive.
  */
-type Page = { kind: 'note'; note: Note } | { kind: 'dashboard' };
+type Page =
+  | { kind: 'note'; note: Note }
+  | { kind: 'virtual'; stub: NotebookPageStub }
+  | { kind: 'dashboard' };
 
 const DASHBOARD_PAGE_KEY = '__dashboard__';
 
@@ -56,6 +67,14 @@ export default function NotebookScreen() {
   const colors = useTheme();
   const { notes, isLoading, createNote, updateNoteContent, updateNoteTitle, deleteNote } =
     useNotes();
+
+  // The notebook whose pages fill the pad: 'sandbox' (the local notes) or a subject slug
+  // (its pages pulled from the server). The switcher on the dashboard sets this.
+  const [selectedNb, setSelectedNb] = useState(SANDBOX_KEY);
+  const subjectSlug = selectedNb === SANDBOX_KEY ? null : selectedNb;
+  // Lazily-loaded pages for the selected subject notebook (empty in Sandbox mode). `ensure`
+  // pulls a page + its neighbours; `bodies` holds whatever has been fetched so far.
+  const { stubs, bodies, ensure } = useNotebookPages(subjectSlug);
 
   const pagerRef = useRef<PaperPagerHandle>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -142,23 +161,48 @@ export default function NotebookScreen() {
     transform: [{ scale: 1 + smoothOver.value * 0.08 }],
   }));
 
-  const pages = useMemo<Page[]>(
-    () => [
-      ...notes.map(note => ({ kind: 'note' as const, note })),
-      { kind: 'dashboard' as const },
-    ],
-    [notes],
-  );
+  // In Sandbox the content pages are the local notes; in a subject they're the notebook's
+  // virtual pages. The dashboard is always the trailing page, so the switcher stays reachable.
+  const pages = useMemo<Page[]>(() => {
+    const content: Page[] = subjectSlug
+      ? stubs.map(stub => ({ kind: 'virtual' as const, stub }))
+      : notes.map(note => ({ kind: 'note' as const, note }));
+    return [...content, { kind: 'dashboard' as const }];
+  }, [subjectSlug, stubs, notes]);
+
+  // Number of content pages (excludes the trailing dashboard) for the chrome + scrubber.
+  const contentCount = subjectSlug ? stubs.length : notes.length;
+
+  // Swapping notebooks resets to the first page, so the reader lands on the new notebook's
+  // opening page (its Appendix / table of contents) rather than a stale index. While a
+  // subject's index is still loading, page 0 is the dashboard, which then becomes the
+  // Appendix once the stubs arrive — no second flip needed.
+  useEffect(() => {
+    pagerRef.current?.flipTo(0);
+  }, [selectedNb]);
+
+  // Keep the current subject page and its immediate neighbours fetched, so a swipe lands on
+  // content that's already in hand. (The first/last pages are warmed by the hook on swap.)
+  useEffect(() => {
+    if (!subjectSlug || stubs.length === 0) return;
+    const nums: number[] = [];
+    for (let i = currentIndex - 1; i <= currentIndex + 1; i++) {
+      if (i >= 0 && i < stubs.length) nums.push(stubs[i].num);
+    }
+    if (nums.length > 0) ensure(nums);
+  }, [subjectSlug, stubs, currentIndex, ensure]);
 
   const handleCreate = useCallback(() => {
+    // A new note belongs to the local pad, so creating one returns to Sandbox.
+    setSelectedNb(SANDBOX_KEY);
     pendingFlipToNewNote.current = true;
     fireAndForget(createNote(), 'create note');
   }, [createNote]);
 
-  // Flip to the trailing dashboard page (the last page).
+  // Flip to the trailing dashboard page (always the last page, in either mode).
   const goToDashboard = useCallback(() => {
-    pagerRef.current?.flipTo(notes.length);
-  }, [notes.length]);
+    pagerRef.current?.flipTo(pages.length - 1);
+  }, [pages.length]);
 
   // Jump straight to a note page as the user scrubs the progress bubble.
   const handleScrub = useCallback((index: number) => {
@@ -184,9 +228,11 @@ export default function NotebookScreen() {
   const keyForIndex = useCallback(
     (index: number) => {
       const page = pages[index];
-      return !page || page.kind === 'dashboard' ? DASHBOARD_PAGE_KEY : page.note.id;
+      if (!page || page.kind === 'dashboard') return DASHBOARD_PAGE_KEY;
+      if (page.kind === 'virtual') return `v:${subjectSlug}:${page.stub.num}`;
+      return page.note.id;
     },
-    [pages],
+    [pages, subjectSlug],
   );
 
   const renderPage = useCallback(
@@ -200,8 +246,13 @@ export default function NotebookScreen() {
             dragShared={drag.shared}
             onLift={drag.lift}
             onRelease={drag.release}
+            selectedNb={selectedNb}
+            onSelectNotebook={setSelectedNb}
           />
         );
+      }
+      if (page.kind === 'virtual') {
+        return <VirtualNotePage body={bodies[page.stub.num]} width={width} isActive={isActive} />;
       }
       return (
         <NotePage
@@ -214,18 +265,33 @@ export default function NotebookScreen() {
         />
       );
     },
-    [pages, width, updateNoteContent, updateNoteTitle, deleteNote, drag.shared, drag.lift, drag.release],
+    [
+      pages,
+      width,
+      bodies,
+      selectedNb,
+      updateNoteContent,
+      updateNoteTitle,
+      deleteNote,
+      drag.shared,
+      drag.lift,
+      drag.release,
+    ],
   );
 
   const currentPage = pages[currentIndex];
   const currentNote =
     currentPage && currentPage.kind === 'note' ? currentPage.note : null;
+  const currentVirtual =
+    currentPage && currentPage.kind === 'virtual' ? currentPage.stub : null;
 
-  // The pad header shows the current page's title. Untitled pages (no `/clean`
-  // yet) fall back to their positional name, "Smart Note #<page number>".
+  // The pad header shows the current page's title. Untitled local pages (no `/clean` yet)
+  // fall back to "Smart Note #<n>"; virtual subject pages use their own page title.
   const headerTitle = currentNote
     ? currentNote.title.trim() || `Smart Note #${currentIndex + 1}`
-    : 'Dashboard';
+    : currentVirtual
+      ? currentVirtual.title || `Page ${currentIndex + 1}`
+      : 'Dashboard';
 
   return (
     <View
@@ -252,7 +318,14 @@ export default function NotebookScreen() {
             </Text>
           </View>
           <Text className="text-xs text-faint">
-            {notes.length} {notes.length === 1 ? 'note' : 'notes'}
+            {contentCount}{' '}
+            {subjectSlug
+              ? contentCount === 1
+                ? 'page'
+                : 'pages'
+              : contentCount === 1
+                ? 'note'
+                : 'notes'}
           </Text>
         </View>
       </Animated.View>
@@ -269,9 +342,10 @@ export default function NotebookScreen() {
               <NoteHeader
                 note={currentNote}
                 pageNumber={currentIndex + 1}
-                totalPages={notes.length}
+                totalPages={contentCount}
                 onDelete={deleteNote}
                 onCreateNote={handleCreate}
+                readOnlyTitle={currentVirtual ? currentVirtual.title : undefined}
               />
             </View>
           </Animated.View>
@@ -319,7 +393,7 @@ export default function NotebookScreen() {
           <PageIndicator
             currentIndex={currentIndex}
             prevIndex={prevIndexRef.current}
-            noteCount={notes.length}
+            noteCount={contentCount}
             onPressDashboard={goToDashboard}
             onPressProgress={goToPreviousPage}
             scrubWidth={width}

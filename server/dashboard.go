@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -16,14 +17,50 @@ import (
 // consolidation queues), so they are cheap and can't run arbitrary code. Both are
 // bearer-token authed over the same pinned TLS the rest of the server uses.
 
-// dashServer is one capability server as the dashboard sees it: its identity plus
-// the full markdown of its notes (read straight off disk, so freshly ingested
-// notes show even before the queryable MCP binary is scaffolded).
+// dashServer is one notebook as the dashboard sees it: its identity (from the
+// notebook.json manifest) plus its ordered notes pages (read straight off disk, so
+// freshly ingested notes show even before the queryable MCP binary is scaffolded).
+// Name stays the slug so the phone can key cards to it by `source`; Title/Icon/Accent/
+// Pinned/UpdatedAt come from the manifest for a richer view. Pages[0] is the Appendix.
 type dashServer struct {
-	Name    string   `json:"name"`
-	Summary string   `json:"summary"`
-	Tools   []string `json:"tools"`
-	Notes   string   `json:"notes"`
+	Name      string     `json:"name"`
+	Title     string     `json:"title"`
+	Summary   string     `json:"summary"`
+	Icon      string     `json:"icon,omitempty"`
+	Accent    string     `json:"accent,omitempty"`
+	Pinned    bool       `json:"pinned"`
+	UpdatedAt string     `json:"updated_at,omitempty"`
+	Tools     []string   `json:"tools"`
+	Pages     []notePage `json:"pages"`
+}
+
+// readDashServer assembles the dashboard view of one notebook from its manifest,
+// notes/ pages, and capability.json (for the queryable tool list, if built yet).
+func readDashServer(mcpDir, slug string) dashServer {
+	nb := loadNotebook(mcpDir, slug)
+	var tools []string
+	if capData, err := os.ReadFile(filepath.Join(mcpDir, slug, "capability.json")); err == nil {
+		var c struct {
+			Tools []string `json:"tools"`
+		}
+		json.Unmarshal(capData, &c)
+		tools = c.Tools
+	}
+	pages := listPages(mcpDir, slug)
+	if pages == nil {
+		pages = []notePage{}
+	}
+	return dashServer{
+		Name:      nb.Slug,
+		Title:     nb.Title,
+		Summary:   nb.Summary,
+		Icon:      nb.Icon,
+		Accent:    nb.Accent,
+		Pinned:    nb.Pinned,
+		UpdatedAt: nb.UpdatedAt,
+		Tools:     tools,
+		Pages:     pages,
+	}
 }
 
 // dashSuggestion is an optional, non-blocking merge proposal the orchestrator
@@ -81,36 +118,18 @@ func stateHandler(token, root string) http.HandlerFunc {
 		mcpDir, stateDir := rootDirs(root)
 		state := dashState{Servers: []dashServer{}, Suggestions: []dashSuggestion{}, Cards: []dashCard{}}
 
-		entries, _ := os.ReadDir(mcpDir)
-		for _, e := range entries {
-			name := e.Name()
-			if !e.IsDir() || name == "mcpx" || name == "bin" {
-				continue
+		// One dashServer per notebook (folder with a manifest), plus that notebook's
+		// own cards — cards now live under each notebook, not in a global queue.
+		for _, slug := range listNotebookSlugs(mcpDir) {
+			state.Servers = append(state.Servers, readDashServer(mcpDir, slug))
+			for _, c := range loadCards(mcpDir, slug) {
+				if !c.Dismissed {
+					state.Cards = append(state.Cards, c)
+				}
 			}
-			capData, err := os.ReadFile(filepath.Join(mcpDir, name, "capability.json"))
-			if err != nil {
-				continue // not a capability server (no manifest)
-			}
-			var c struct {
-				Name    string   `json:"name"`
-				Summary string   `json:"summary"`
-				Tools   []string `json:"tools"`
-			}
-			if json.Unmarshal(capData, &c) != nil {
-				continue
-			}
-			if c.Name == "" {
-				c.Name = name
-			}
-			notes, _ := os.ReadFile(filepath.Join(mcpDir, name, name+".md"))
-			state.Servers = append(state.Servers, dashServer{
-				Name:    c.Name,
-				Summary: c.Summary,
-				Tools:   c.Tools,
-				Notes:   string(notes),
-			})
 		}
 		sort.Slice(state.Servers, func(i, j int) bool { return state.Servers[i].Name < state.Servers[j].Name })
+		sort.Slice(state.Cards, func(i, j int) bool { return state.Cards[i].ID < state.Cards[j].ID })
 
 		if sugEntries, err := os.ReadDir(filepath.Join(stateDir, "suggestions")); err == nil {
 			for _, e := range sugEntries {
@@ -129,28 +148,98 @@ func stateHandler(token, root string) http.HandlerFunc {
 			sort.Slice(state.Suggestions, func(i, j int) bool { return state.Suggestions[i].Into < state.Suggestions[j].Into })
 		}
 
-		// Cards (tasks + notifications + any future kind). Read every card file,
-		// drop dismissed ones, and hand the rest over unsorted — the UI computes
-		// the priority+date sort key so a new kind needs no backend change.
-		if cardEntries, err := os.ReadDir(filepath.Join(stateDir, "cards")); err == nil {
-			for _, e := range cardEntries {
-				if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
-					continue
-				}
-				data, err := os.ReadFile(filepath.Join(stateDir, "cards", e.Name()))
-				if err != nil {
-					continue
-				}
-				var c dashCard
-				if json.Unmarshal(data, &c) == nil && c.ID != "" && !c.Dismissed {
-					state.Cards = append(state.Cards, c)
-				}
-			}
-			sort.Slice(state.Cards, func(i, j int) bool { return state.Cards[i].ID < state.Cards[j].ID })
-		}
-
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(state)
+	}
+}
+
+// notebookHandler answers GET /notebook?slug=<x> with a single notebook's detail:
+// its manifest identity, notes/ pages, and its own cards. This is the lazy per-notebook
+// fetch the phone uses when swapping notebooks, so the index (/state) can stay cheap.
+//
+// With ?meta=1 it returns the same shape but strips every page body, so the phone gets a
+// cheap page index (num/title/file only) to virtualize against — it then pulls individual
+// bodies via /page as the reader moves. Without it, bodies are included (the eager form).
+type notebookDetail struct {
+	dashServer
+	Cards []dashCard `json:"cards"`
+}
+
+func notebookHandler(token, root string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !authOK(r, token) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if root == "" {
+			http.Error(w, "mcp disabled", http.StatusNotFound)
+			return
+		}
+		slug := r.URL.Query().Get("slug")
+		if !validSlug(slug) {
+			http.Error(w, "bad slug", http.StatusBadRequest)
+			return
+		}
+		mcpDir, _ := rootDirs(root)
+		if !isNotebook(mcpDir, slug) {
+			http.Error(w, "notebook not found", http.StatusNotFound)
+			return
+		}
+		detail := notebookDetail{dashServer: readDashServer(mcpDir, slug), Cards: []dashCard{}}
+		// The cheap index form: keep the page list (num/title/file) but drop the bodies,
+		// which the phone fetches lazily per page via /page.
+		if r.URL.Query().Get("meta") != "" {
+			for i := range detail.Pages {
+				detail.Pages[i].Body = ""
+			}
+		}
+		for _, c := range loadCards(mcpDir, slug) {
+			if !c.Dismissed {
+				detail.Cards = append(detail.Cards, c)
+			}
+		}
+		sort.Slice(detail.Cards, func(i, j int) bool { return detail.Cards[i].ID < detail.Cards[j].ID })
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(detail)
+	}
+}
+
+// pageHandler answers GET /page?slug=<x>&num=<n> with a single notebook page and its
+// markdown body, reading only that one file. It's the per-page fetch behind the phone's
+// virtualized reader: after loading a notebook's index (/notebook?meta=1), the phone pulls
+// the current page and its neighbours through here so swiping stays instant.
+func pageHandler(token, root string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !authOK(r, token) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if root == "" {
+			http.Error(w, "mcp disabled", http.StatusNotFound)
+			return
+		}
+		slug := r.URL.Query().Get("slug")
+		if !validSlug(slug) {
+			http.Error(w, "bad slug", http.StatusBadRequest)
+			return
+		}
+		num, err := strconv.Atoi(r.URL.Query().Get("num"))
+		if err != nil {
+			http.Error(w, "bad page number", http.StatusBadRequest)
+			return
+		}
+		mcpDir, _ := rootDirs(root)
+		if !isNotebook(mcpDir, slug) {
+			http.Error(w, "notebook not found", http.StatusNotFound)
+			return
+		}
+		page, ok := readPage(mcpDir, slug, num)
+		if !ok {
+			http.Error(w, "page not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(page)
 	}
 }
 
@@ -173,23 +262,26 @@ func actionHandler(token, root string) http.HandlerFunc {
 			Into   string   `json:"into"`
 			From   []string `json:"from"`
 			ID     string   `json:"id"`
+			Source string   `json:"source"` // optional notebook slug the card lives under
 		}
 		if json.NewDecoder(r.Body).Decode(&req) != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		_, stateDir := rootDirs(root)
+		mcpDir, stateDir := rootDirs(root)
 
-		// Card actions carry an id and mutate a single state/cards/<id>.json.
-		// "dismiss" is shared with suggestions, so an id routes it here; without
-		// one it falls through to the suggestion switch below (keyed on 'into').
+		// Card actions carry an id and mutate a single mcp/<slug>/cards/<id>.json.
+		// `source` (when the phone knows it) points straight at the owning notebook;
+		// otherwise updateCard searches every notebook. "dismiss" is shared with
+		// suggestions, so an id routes it here; without one it falls through to the
+		// suggestion switch below (keyed on 'into').
 		switch req.Action {
 		case "complete", "uncomplete":
 			if !validSlug(req.ID) {
 				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
-			if !updateCard(stateDir, req.ID, func(c *dashCard) { c.Done = req.Action == "complete" }) {
+			if !updateCard(mcpDir, req.Source, req.ID, func(c *dashCard) { c.Done = req.Action == "complete" }) {
 				http.Error(w, "card not found", http.StatusNotFound)
 				return
 			}
@@ -201,7 +293,7 @@ func actionHandler(token, root string) http.HandlerFunc {
 					http.Error(w, "bad request", http.StatusBadRequest)
 					return
 				}
-				if !updateCard(stateDir, req.ID, func(c *dashCard) { c.Dismissed = true }) {
+				if !updateCard(mcpDir, req.Source, req.ID, func(c *dashCard) { c.Dismissed = true }) {
 					http.Error(w, "card not found", http.StatusNotFound)
 					return
 				}
@@ -255,24 +347,39 @@ func writeOK(w http.ResponseWriter) {
 	_, _ = w.Write([]byte("{\"ok\":true}\n"))
 }
 
-// updateCard reads state/cards/<id>.json, applies mutate, bumps updated_at, and
-// writes it back. It reports false when the card is missing or unreadable so the
-// caller can 404. id must already be validSlug-checked so it can't escape the dir.
-func updateCard(stateDir, id string, mutate func(*dashCard)) bool {
-	path := filepath.Join(stateDir, "cards", id+".json")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return false
+// updateCard finds mcp/<slug>/cards/<id>.json, applies mutate, bumps updated_at, and
+// writes it back. `hint` (the card's source notebook, when the caller knows it) is
+// tried first; otherwise every notebook is searched. Reports false when the card is
+// missing so the caller can 404. id and hint must already be validSlug-checked.
+func updateCard(mcpDir, hint, id string, mutate func(*dashCard)) bool {
+	try := func(slug string) bool {
+		path := filepath.Join(cardsDirFor(mcpDir, slug), id+".json")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return false
+		}
+		var c dashCard
+		if json.Unmarshal(data, &c) != nil {
+			return false
+		}
+		mutate(&c)
+		c.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+		out, err := json.MarshalIndent(c, "", "  ")
+		if err != nil {
+			return false
+		}
+		return os.WriteFile(path, append(out, '\n'), 0o644) == nil
 	}
-	var c dashCard
-	if json.Unmarshal(data, &c) != nil {
-		return false
+	if validSlug(hint) && try(hint) {
+		return true
 	}
-	mutate(&c)
-	c.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	out, err := json.MarshalIndent(c, "", "  ")
-	if err != nil {
-		return false
+	for _, slug := range listNotebookSlugs(mcpDir) {
+		if slug == hint {
+			continue
+		}
+		if try(slug) {
+			return true
+		}
 	}
-	return os.WriteFile(path, append(out, '\n'), 0o644) == nil
+	return false
 }

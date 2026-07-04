@@ -48,6 +48,12 @@ interface NoteEditorWebViewProps {
   onSetTitle: (title: string) => void;
   /** Called when `/ingest` finishes filing this page — the page is then deleted. */
   onIngested: () => void;
+  /**
+   * Render the content read-only: no caret, no typing, no edits (CM6 editable off +
+   * EditorState.readOnly). Used for subject-notebook pages pulled from the server, which
+   * are viewable but not editable on the phone — only the local Sandbox is edited.
+   */
+  readOnly?: boolean;
 }
 
 /**
@@ -65,6 +71,7 @@ export default function NoteEditorWebView({
   onChangeContent,
   onSetTitle,
   onIngested,
+  readOnly = false,
 }: NoteEditorWebViewProps) {
   const ref = useRef<WebViewInstance>(null);
   // Live /ask runs keyed by the editor-side card id, so we can cancel them if
@@ -99,9 +106,14 @@ export default function NoteEditorWebView({
       // RN → web bridge helper (the editor exposes window.__ai* globals).
       const inject = (js: string) => ref.current?.injectJavaScript(js + ' true;');
       if (msg.type === 'ready') {
-        // Seed the document once the CM6 editor has mounted inside the WebView.
+        // Once the CM6 editor has mounted: for server-owned pages lock it read-only FIRST
+        // (which also enables whole-doc decoration), then seed the document — so the seeding
+        // transaction renders the parsed markdown immediately instead of waiting for a tap.
+        // Sandbox pages skip the lock and stay editable.
         ref.current?.injectJavaScript(
-          `window.__setDoc(${JSON.stringify(initialContent)}); true;`,
+          (readOnly ? 'window.__setReadOnly(true); ' : '') +
+            `window.__setDoc(${JSON.stringify(initialContent)});` +
+            ' true;',
         );
       } else if (msg.type === 'change' && typeof msg.text === 'string') {
         onChangeContent(msg.text);
@@ -288,7 +300,7 @@ export default function NoteEditorWebView({
         deleteRecordings([msg.file]).catch(() => {});
       }
     },
-    [initialContent, hasTitle, onChangeContent, onSetTitle, onIngested],
+    [initialContent, hasTitle, onChangeContent, onSetTitle, onIngested, readOnly],
   );
 
   // Feed a resolved pairing outcome back into the /pair card, then close scanner.

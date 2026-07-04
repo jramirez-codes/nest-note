@@ -35,6 +35,12 @@ interface NoteHeaderProps {
   onDelete: (id: string) => void;
   /** Create a fresh note — surfaced as the dashboard page's header action. */
   onCreateNote: () => void;
+  /**
+   * Title of a read-only subject page (a virtual page pulled from a swapped-to notebook).
+   * When set — and there's no editable `note` — the header shows the page number and title
+   * with no delete/new-note action, since server-owned pages aren't edited on the phone.
+   */
+  readOnlyTitle?: string;
 }
 
 /**
@@ -46,7 +52,14 @@ interface NoteHeaderProps {
  * While a dashboard card is dragged, the screen fades this whole bar out and
  * reveals a red delete banner in its place (see NotebookScreen).
  */
-function NoteHeader({ note, pageNumber, totalPages, onDelete, onCreateNote }: NoteHeaderProps) {
+function NoteHeader({
+  note,
+  pageNumber,
+  totalPages,
+  onDelete,
+  onCreateNote,
+  readOnlyTitle,
+}: NoteHeaderProps) {
   const colors = useTheme();
   const [confirmVisible, setConfirmVisible] = useState(false);
 
@@ -74,6 +87,15 @@ function NoteHeader({ note, pageNumber, totalPages, onDelete, onCreateNote }: No
             accessibilityLabel="Delete note">
             <Text className="text-xs font-semibold text-danger">Delete</Text>
           </Pressable>
+        </>
+      ) : readOnlyTitle !== undefined ? (
+        <>
+          <Text className="text-xs font-semibold uppercase tracking-wider text-faint">
+            Page {pageNumber} / {totalPages}
+          </Text>
+          <Text numberOfLines={1} className="flex-1 pl-3 text-right text-xs text-muted">
+            {readOnlyTitle}
+          </Text>
         </>
       ) : (
         <>
