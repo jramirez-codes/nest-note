@@ -1,10 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Modal,
   Pressable,
   RefreshControl,
   ScrollView,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -19,8 +21,11 @@ import {
   Folder,
   GitMerge,
   Inbox,
+  Layers,
   Lightbulb,
   ListChecks,
+  PenLine,
+  Search,
   Sparkles,
   TriangleAlert,
   type LucideIcon,
@@ -134,6 +139,195 @@ function humanizeKind(kind: string): string {
   return titled.endsWith('s') ? titled : titled + 's';
 }
 
+// --- Notebook switcher -----------------------------------------------------
+
+// One entry in the notebook picker. `key` is 'all' (the roll-up), 'sandbox' (the
+// single local pad), or a subject slug. Counts are the open tasks + notifications
+// that notebook owns, shown inline so the list itself reads as a map of the world.
+interface NotebookOption {
+  key: string;
+  label: string;
+  summary?: string;
+  kind: 'all' | 'local' | 'server';
+  tasks: number;
+  notifs: number;
+}
+
+const nbIcon = (kind: NotebookOption['kind']): LucideIcon =>
+  kind === 'all' ? Layers : kind === 'local' ? PenLine : Folder;
+
+// A one-line summary of what a notebook holds, e.g. "2 tasks · 1 alert", falling
+// back to the subject's own summary (or a hint for the special entries).
+function nbSubtitle(o: NotebookOption): string {
+  const parts: string[] = [];
+  if (o.tasks) parts.push(`${o.tasks} task${o.tasks === 1 ? '' : 's'}`);
+  if (o.notifs) parts.push(`${o.notifs} alert${o.notifs === 1 ? '' : 's'}`);
+  if (parts.length) return parts.join(' · ');
+  if (o.kind === 'local') return 'Local scratch pad';
+  if (o.kind === 'all') return 'Everything filed';
+  return o.summary || 'No open items';
+}
+
+// Renders a label with the typed query substring highlighted in the accent color,
+// so the autocomplete visibly matches what the user typed.
+function HighlightedLabel({ text, query }: { text: string; query: string }) {
+  const q = query.trim();
+  const i = q ? text.toLowerCase().indexOf(q.toLowerCase()) : -1;
+  if (i < 0) {
+    return (
+      <Text className="text-sm font-semibold text-text" numberOfLines={1}>
+        {text}
+      </Text>
+    );
+  }
+  return (
+    <Text className="text-sm font-semibold text-text" numberOfLines={1}>
+      {text.slice(0, i)}
+      <Text className="text-accent">{text.slice(i, i + q.length)}</Text>
+      {text.slice(i + q.length)}
+    </Text>
+  );
+}
+
+/**
+ * The notebook picker pinned to the top of the dashboard: a tap-to-open control
+ * showing the current notebook, and a dropdown with a search field that
+ * autocompletes the notebook list as the user types. The dropdown is anchored
+ * under the trigger (measured in window coords) inside a transparent Modal, so it
+ * floats cleanly over the scrolling content and gets native keyboard handling.
+ */
+function NotebookSwitcher({
+  options,
+  selected,
+  onSelect,
+  colors,
+}: {
+  options: NotebookOption[];
+  selected: NotebookOption;
+  onSelect: (key: string) => void;
+  colors: ThemeColors;
+}) {
+  const triggerRef = useRef<View>(null);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [anchor, setAnchor] = useState({ x: 0, y: 0, width: 0, height: 0 });
+
+  const openMenu = useCallback(() => {
+    triggerRef.current?.measureInWindow((x, y, width, height) => {
+      setAnchor({ x, y, width, height });
+      setQuery('');
+      setOpen(true);
+    });
+  }, []);
+  const close = useCallback(() => setOpen(false), []);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return options;
+    return options.filter(o => o.label.toLowerCase().includes(q));
+  }, [options, query]);
+
+  const TriggerIcon = nbIcon(selected.kind);
+
+  return (
+    <>
+      <Pressable
+        ref={triggerRef}
+        onPress={openMenu}
+        accessibilityRole="button"
+        accessibilityLabel={`Notebook: ${selected.label}`}
+        className="flex-row items-center rounded-2xl border border-surface1 bg-surface px-3.5 py-3 active:opacity-80">
+        <View className="mr-3 h-9 w-9 items-center justify-center rounded-xl bg-accent/20">
+          <TriggerIcon size={18} color={colors.accent} strokeWidth={2} />
+        </View>
+        <View className="flex-1 pr-2">
+          <Text className="text-base font-bold text-text" numberOfLines={1}>
+            {selected.label}
+          </Text>
+          <Text className="mt-0.5 text-xs text-muted" numberOfLines={1}>
+            {nbSubtitle(selected)}
+          </Text>
+        </View>
+        <ChevronDown size={20} color={colors.faint} strokeWidth={2} />
+      </Pressable>
+
+      <Modal visible={open} transparent animationType="fade" onRequestClose={close} statusBarTranslucent>
+        {/* Full-screen scrim: a tap anywhere outside the card dismisses the menu. */}
+        <Pressable className="flex-1" style={{ backgroundColor: 'rgba(0,0,0,0.45)' }} onPress={close}>
+          <View
+            style={{
+              position: 'absolute',
+              top: anchor.y + anchor.height + 6,
+              left: anchor.x,
+              width: anchor.width,
+            }}>
+            {/* Inner Pressable swallows taps so they don't reach the scrim. */}
+            <Pressable
+              onPress={() => {}}
+              className="overflow-hidden rounded-2xl border border-surface1 bg-surface">
+              {/* Search field. */}
+              <View className="flex-row items-center gap-2 border-b border-surface1 px-3 py-2.5">
+                <Search size={16} color={colors.faint} strokeWidth={2} />
+                <TextInput
+                  autoFocus
+                  value={query}
+                  onChangeText={setQuery}
+                  placeholder="Search notebooks…"
+                  placeholderTextColor={colors.faint}
+                  className="flex-1 p-0 text-sm text-text"
+                  returnKeyType="done"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </View>
+              <ScrollView
+                keyboardShouldPersistTaps="handled"
+                style={{ maxHeight: 320 }}
+                contentContainerStyle={{ paddingVertical: 4 }}>
+                {filtered.length === 0 ? (
+                  <Text className="px-3 py-4 text-center text-sm text-muted">No notebooks match.</Text>
+                ) : (
+                  filtered.map(o => {
+                    const RowIcon = nbIcon(o.kind);
+                    const isSel = o.key === selected.key;
+                    return (
+                      <Pressable
+                        key={o.key}
+                        onPress={() => {
+                          onSelect(o.key);
+                          close();
+                        }}
+                        className="flex-row items-center px-2.5 py-2.5 active:bg-surface1/50">
+                        <View className="mr-3 h-8 w-8 items-center justify-center rounded-lg bg-background">
+                          <RowIcon size={16} color={isSel ? colors.accent : colors.muted} strokeWidth={2} />
+                        </View>
+                        <View className="flex-1 pr-2">
+                          <HighlightedLabel text={o.label} query={query} />
+                          <Text className="mt-0.5 text-xs text-muted" numberOfLines={1}>
+                            {nbSubtitle(o)}
+                          </Text>
+                        </View>
+                        {o.kind === 'local' && (
+                          <View className="mr-2 rounded-full bg-overlay0/30 px-2 py-0.5">
+                            <Text className="text-[10px] font-semibold uppercase tracking-wide text-muted">
+                              Local
+                            </Text>
+                          </View>
+                        )}
+                        {isSel && <Check size={16} color={colors.accent} strokeWidth={2.5} />}
+                      </Pressable>
+                    );
+                  })
+                )}
+              </ScrollView>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Modal>
+    </>
+  );
+}
+
 /**
  * The dashboard: the trailing page of the pad. It's the home for the MCP world
  * `/ingest` builds up — its reminders and action items, each subject's notes, and
@@ -148,6 +342,9 @@ function DashboardPage({ width, isActive, dragShared, onLift, onRelease }: Dashb
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
+  // The notebook currently in view: 'all' (roll-up), 'sandbox' (local), or a subject
+  // slug. Drives which cards / notes the dashboard shows.
+  const [selectedNb, setSelectedNb] = useState('all');
   // Keys (suggestion 'into' or card id) currently being acted on, to disable their
   // controls while the write is in flight.
   const [busy, setBusy] = useState<Record<string, boolean>>({});
@@ -265,9 +462,55 @@ function DashboardPage({ width, isActive, dragShared, onLift, onRelease }: Dashb
     onRelease();
   }, [onRelease]);
 
-  const servers = state?.servers ?? [];
-  const suggestions = state?.suggestions ?? [];
-  const cards = state?.cards ?? [];
+  // Memoized so they're stable render-to-render (a fresh `?? []` each time would
+  // otherwise re-trigger the notebook-options memo below on every render).
+  const allServers = useMemo(() => state?.servers ?? [], [state]);
+  const allCards = useMemo(() => state?.cards ?? [], [state]);
+  const allSuggestions = state?.suggestions ?? [];
+
+  // The notebook picker's entries: an "All" roll-up, the single local Sandbox, and
+  // one per subject server, each tagged with its own open-task / notification counts
+  // (a card belongs to a notebook via its `source` slug).
+  const nbOptions = useMemo<NotebookOption[]>(() => {
+    const countFor = (name: string) => {
+      let tasks = 0;
+      let notifs = 0;
+      for (const c of allCards) {
+        if (c.source !== name) continue;
+        if (c.kind === 'task') {
+          if (!c.done) tasks++;
+        } else if (c.kind === 'notification') notifs++;
+      }
+      return { tasks, notifs };
+    };
+    const opts: NotebookOption[] = [
+      {
+        key: 'all',
+        label: 'All notebooks',
+        kind: 'all',
+        tasks: allCards.filter(c => c.kind === 'task' && !c.done).length,
+        notifs: allCards.filter(c => c.kind === 'notification').length,
+      },
+      { key: 'sandbox', label: 'Sandbox', kind: 'local', tasks: 0, notifs: 0 },
+    ];
+    for (const s of allServers) {
+      const { tasks, notifs } = countFor(s.name);
+      opts.push({ key: s.name, label: s.name, summary: s.summary, kind: 'server', tasks, notifs });
+    }
+    return opts;
+  }, [allCards, allServers]);
+
+  // The chosen notebook, falling back to "All" if the selection vanished (e.g. its
+  // subject was merged away since it was picked).
+  const selected = nbOptions.find(o => o.key === selectedNb) ?? nbOptions[0];
+  const isAll = selected.kind === 'all';
+  const isLocal = selected.kind === 'local';
+
+  // Narrow the world to the selected notebook. The local Sandbox has no filed cards
+  // or subject notes of its own yet; suggestions are cross-notebook, so All-only.
+  const cards = isLocal ? [] : isAll ? allCards : allCards.filter(c => c.source === selected.key);
+  const servers = isLocal ? [] : isAll ? allServers : allServers.filter(s => s.name === selected.key);
+  const suggestions = isAll ? allSuggestions : [];
 
   // Split cards into their sections. Tasks and notifications are first-class; every
   // other kind is grouped by kind and rendered through the generic idea-card grid,
@@ -282,9 +525,15 @@ function DashboardPage({ width, isActive, dragShared, onLift, onRelease }: Dashb
   const otherKindNames = Object.keys(otherKinds).sort();
 
   const openTaskCount = tasks.filter(t => !t.done).length;
-  const pending = openTaskCount + notifications.length;
   const nothingAtAll =
-    cards.length === 0 && servers.length === 0 && suggestions.length === 0;
+    !isLocal && cards.length === 0 && servers.length === 0 && suggestions.length === 0;
+
+  // Switch notebooks; opening a specific subject also expands its notes so its
+  // filed markdown is visible straight away.
+  const onSelectNotebook = useCallback((key: string) => {
+    setSelectedNb(key);
+    setExpanded(key === 'all' || key === 'sandbox' ? null : key);
+  }, []);
 
   // Shared drag props handed to every draggable card.
   const dragProps = {
@@ -307,14 +556,15 @@ function DashboardPage({ width, isActive, dragShared, onLift, onRelease }: Dashb
             tintColor={colors.muted}
           />
         }>
-        {/* Greeting / action-center header. */}
-        <View className="mb-5">
-          <Text className="text-2xl font-bold text-text">Action Center</Text>
-          <Text className="mt-0.5 text-sm text-muted">
-            {pending > 0
-              ? `${pending} item${pending === 1 ? '' : 's'} need${pending === 1 ? 's' : ''} your attention`
-              : 'You’re all caught up ✨'}
-          </Text>
+        {/* Notebook switcher — the top-of-dashboard control to swap notebooks. */}
+        <View className="mb-5 z-10">
+          <SectionHeader icon={Folder} title="Subjects" count={nbOptions.length} colors={colors} />
+          <NotebookSwitcher
+            options={nbOptions}
+            selected={selected}
+            onSelect={onSelectNotebook}
+            colors={colors}
+          />
         </View>
 
         {loading && !state ? (
@@ -336,6 +586,16 @@ function DashboardPage({ width, isActive, dragShared, onLift, onRelease }: Dashb
             {error && (
               <View className="mb-4 rounded-2xl border border-surface1 bg-surface p-3">
                 <Text className="text-sm text-danger">{error}</Text>
+              </View>
+            )}
+
+            {isLocal && (
+              <View className="items-center rounded-2xl border border-surface1 bg-surface px-6 py-10">
+                <PenLine size={32} color={colors.faint} strokeWidth={1.75} />
+                <Text className="mt-3 text-center text-sm text-muted">
+                  Your local scratch pad. Write freely on the pages, then run{' '}
+                  <Text className="text-text">/ingest</Text> to file notes into notebooks.
+                </Text>
               </View>
             )}
 
@@ -448,7 +708,6 @@ function DashboardPage({ width, isActive, dragShared, onLift, onRelease }: Dashb
             {/* Subjects — the per-topic notes stores /ingest builds up. */}
             {servers.length > 0 && (
               <View className="mb-6">
-                <SectionHeader icon={Folder} title="Subjects" count={servers.length} colors={colors} />
                 {servers.map(srv => (
                   <ServerCard
                     key={srv.name}

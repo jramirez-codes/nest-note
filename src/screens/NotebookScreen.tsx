@@ -61,12 +61,16 @@ export default function NotebookScreen() {
   const [currentIndex, setCurrentIndex] = useState(0);
   // The page we were on before the current one — a tap on the progress bubble
   // returns here, so e.g. Dashboard → tap bubble jumps back to the note you left.
+  // Tracked in refs (not derived inside a setState updater, which can run more
+  // than once under concurrent rendering) so the previous index is deterministic.
+  const currentIndexRef = useRef(0);
   const prevIndexRef = useRef(0);
   const handleIndexChange = useCallback((next: number) => {
-    setCurrentIndex(prev => {
-      if (next !== prev) prevIndexRef.current = prev;
-      return next;
-    });
+    if (next !== currentIndexRef.current) {
+      prevIndexRef.current = currentIndexRef.current;
+      currentIndexRef.current = next;
+    }
+    setCurrentIndex(next);
   }, []);
   // Set when the user adds a note, so the effect below flips to the new page
   // once it has been committed to the list.

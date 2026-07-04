@@ -1,8 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
+  type GestureResponderEvent,
   Keyboard,
   PanResponder,
+  type PanResponderGestureState,
   Pressable,
   StyleSheet,
   Text,
@@ -35,8 +37,6 @@ const MAX_PAGES_PER_SEC = 14;
 const FOLLOW_LIMIT = 28;
 /** How high the bubble pops up while held. */
 const LIFT_DISTANCE = 46;
-/** A press shorter than this (and that never scrubbed a page) counts as a tap. */
-const TAP_MAX_MS = 300;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -100,6 +100,9 @@ function PageIndicator({
   // Horizontal follow so the bubble trails the finger a touch as you scrub.
   const panX = useRef(new Animated.Value(0)).current;
   const [scrubbing, setScrubbing] = useState(false);
+  // True while the dashboard "back" button is held, for a quick press highlight
+  // (the scrub lift doesn't run on the dashboard, so this is its only feedback).
+  const [pressed, setPressed] = useState(false);
 
   // Shuttle state. The gesture only sets a paging *rate*; a requestAnimationFrame
   // loop integrates that rate over time and steps the page index, so parking a
@@ -109,18 +112,13 @@ function PageIndicator({
   const scrubIndexRef = useRef(0); // integer note index currently shown
   const rafRef = useRef<number | null>(null);
   const lastTsRef = useRef(0);
-  // For tap detection: when the press began, and whether it ever stepped a page.
-  const grantTsRef = useRef(0);
-  const scrubbedRef = useRef(false);
 
   // Latest values for the pan handlers, which close over a stable responder.
-  const scrubState = useRef({ currentIndex, noteCount, scrubWidth });
-  scrubState.current = { currentIndex, noteCount, scrubWidth };
-
-  // Latest onPress, reached through a ref so the memoised responder can fire it
-  // without being re-created every render.
-  const onPressRef = useRef(onPressProgress);
-  onPressRef.current = onPressProgress;
+  // `onDashboard` flips the bubble's whole mode: a note page enables scrubbing
+  // (and tapping does nothing); the dashboard disables scrubbing and the bubble
+  // is a plain "press to go back to the previous page" button.
+  const scrubState = useRef({ currentIndex, noteCount, scrubWidth, onDashboard });
+  scrubState.current = { currentIndex, noteCount, scrubWidth, onDashboard };
 
   // The tick body, reassigned each render so it always sees the latest onScrub.
   const tickRef = useRef(() => {});
@@ -138,7 +136,6 @@ function PageIndicator({
         const idx = wrapIndex(scrubIndexRef.current + step, total);
         if (idx !== scrubIndexRef.current) {
           scrubIndexRef.current = idx;
-          scrubbedRef.current = true;
           onScrub(idx);
         }
       }
@@ -163,13 +160,17 @@ function PageIndicator({
         onStartShouldSetPanResponder: () => scrubState.current.noteCount > 0,
         onMoveShouldSetPanResponder: () => scrubState.current.noteCount > 0,
         onPanResponderGrant: () => {
+          // On the dashboard the bubble is a plain "back" button — no scrub, so
+          // skip the lift + shuttle entirely and let the release do the routing.
+          if (scrubState.current.onDashboard) {
+            setPressed(true);
+            return;
+          }
           const { currentIndex: idx, noteCount: total } = scrubState.current;
           scrubIndexRef.current = clamp(idx, 0, Math.max(0, total - 1));
           accRef.current = 0;
           rateRef.current = 0;
           lastTsRef.current = Date.now();
-          grantTsRef.current = Date.now();
-          scrubbedRef.current = false;
           // Scrubbing pages under an open keyboard looks jittery; tuck it away.
           Keyboard.dismiss();
           setScrubbing(true);
@@ -184,28 +185,22 @@ function PageIndicator({
           }
         },
         onPanResponderMove: (_, g) => {
+          // No scrubbing on the dashboard — the bubble is just a button there.
+          if (scrubState.current.onDashboard) return;
           // Drag only steers the shuttle: displacement from the press point sets
           // how fast and which way pages advance. The ticker does the stepping,
           // so holding at the left/right of the screen keeps paging.
           rateRef.current = pagesPerSecond(g.dx, scrubState.current.scrubWidth);
           panX.setValue(clamp(g.dx, -FOLLOW_LIMIT, FOLLOW_LIMIT));
         },
-        onPanResponderRelease: (_, g) => {
-          // A tap means "go back to the previous page". It's a quick press that
-          // never scrubbed a page and didn't travel sideways. Vertical movement
-          // is ignored on purpose: the bubble pops up under the finger, so a tap
-          // often drifts upward as the finger follows it — that must still count.
-          const tapped =
-            !scrubbedRef.current &&
-            Math.abs(g.dx) < SCRUB_DEAD_ZONE &&
-            Date.now() - grantTsRef.current < TAP_MAX_MS;
-          settleBack();
-          if (tapped) onPressRef.current();
-        },
-        onPanResponderTerminate: settleBack,
+        // Both the normal lift-of-finger (Release) and a forced hand-off
+        // (Terminate) end the gesture. A quick tap on Android frequently comes
+        // through as Terminate, not Release, so we treat both the same.
+        onPanResponderRelease: endGesture,
+        onPanResponderTerminate: endGesture,
         onPanResponderTerminationRequest: () => false,
       }),
-    // settleBack is a hoisted declaration delegating to a ref, and onScrub is
+    // endGesture is a hoisted declaration delegating to a ref, and onScrub is
     // reached through tickRef (reassigned each render), so neither belongs here;
     // lift/panX are the only reactive values closed over.
     [lift, panX],
@@ -233,6 +228,26 @@ function PageIndicator({
     settleBackRef.current();
   }
 
+  // End the gesture. On the dashboard the bubble is a back button: a press that
+  // didn't drag off the bubble routes to the previous page. On a note it's a
+  // scrubber: just drop the bubble home — tapping to route is disabled there.
+  // Reassigned each render (via a ref) so it always sees the latest
+  // onPressProgress, letting `endGesture` stay stable for the memoised responder.
+  const endGestureRef = useRef((_g: PanResponderGestureState) => {});
+  endGestureRef.current = (g: PanResponderGestureState) => {
+    if (scrubState.current.onDashboard) {
+      setPressed(false);
+      const isPress =
+        Math.abs(g.dx) < SCRUB_DEAD_ZONE && Math.abs(g.dy) < SCRUB_DEAD_ZONE;
+      if (isPress) onPressProgress();
+      return;
+    }
+    settleBack();
+  };
+  function endGesture(_e: GestureResponderEvent, g: PanResponderGestureState) {
+    endGestureRef.current(g);
+  }
+
   const translateY = lift.interpolate({
     inputRange: [0, 1],
     outputRange: [0, -LIFT_DISTANCE],
@@ -247,7 +262,11 @@ function PageIndicator({
       <Animated.View
         {...panResponder.panHandlers}
         accessibilityRole="button"
-        accessibilityLabel="Go to previous page; hold and slide to scrub through pages"
+        accessibilityLabel={
+          onDashboard
+            ? 'Go to previous page'
+            : 'Hold and slide to scrub through pages'
+        }
         style={[
           styles.scrubWrapper,
           scrubbing && styles.scrubWrapperActive,
@@ -255,9 +274,8 @@ function PageIndicator({
         ]}>
         <View
           className={
-            onDashboard && !scrubbing
-              ? 'h-9 flex-row items-center rounded-full bg-surface px-4 opacity-40'
-              : 'h-9 flex-row items-center rounded-full bg-surface px-4'
+            'h-9 flex-row items-center rounded-full bg-surface px-4' +
+            (onDashboard && pressed ? ' opacity-70' : '')
           }>
           <View className="h-1.5 w-16 overflow-hidden rounded-full bg-background">
             <View
