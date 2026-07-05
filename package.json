@@ -8,6 +8,9 @@
   "scripts": {
     "android": "react-native run-android",
     "ios": "react-native run-ios",
+    "apk:build": "cd android && ./gradlew assembleDebug",
+    "apk:install": "adb install -r android/app/build/outputs/apk/debug/app-debug.apk",
+    "apk": "yarn apk:build && yarn apk:install",
     "lint": "eslint .",
     "postinstall": "patch-package",
     "server:build": "cd server && go build -o ainotepad-server .",
