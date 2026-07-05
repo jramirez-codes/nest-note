@@ -35,6 +35,12 @@ local.properties
 !debug.keystore
 .kotlin/
 
+# Distribution / build artifacts
+#
+*.apk
+*.aab
+dist/
+
 # node.js
 #
 node_modules/
