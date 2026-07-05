@@ -4,7 +4,7 @@
  * Transport (./transport), so this file runs unchanged under Node and RN.
  */
 
-import type { Transport } from './transport';
+import type { Transport, SecureSocket } from './transport';
 import { parseStreamLine, type StreamEvent } from './protocol';
 
 /** The three facts needed to reach a paired server. `pin` guards every connection. */
@@ -16,6 +16,28 @@ export interface ServerAddress {
 
 function origin(a: ServerAddress, scheme: 'https' | 'wss'): string {
   return `${scheme}://${a.host}:${a.port}`;
+}
+
+/**
+ * Durable-session options shared by the three streaming clients (run / exec /
+ * code). `id` opts a run into a server-side durable session that survives the
+ * socket dropping (background / app-kill); the client then auto-reconnects by id
+ * and the server replays the buffered tail. `resumeOnly` opens as a pure resume
+ * (never starts a fresh run — the server answers `gone` if it's already reaped).
+ * `onReset` fires just before a reconnect replays that tail, so the consumer can
+ * clear its stale accumulated view and rebuild cleanly.
+ */
+export interface SessionOpts {
+  id: string;
+  resumeOnly?: boolean;
+  onReset?: () => void;
+}
+
+/** How many times a dropped durable socket retries before giving up. */
+export const MAX_RECONNECT = 6;
+/** Backoff (ms) for reconnect attempt n: 0.5s, 1s, 2s, 4s, 8s, 8s… */
+export function reconnectDelayMs(attempt: number): number {
+  return Math.min(500 * 2 ** (attempt - 1), 8000);
 }
 
 /**
@@ -72,8 +94,13 @@ export interface RunHandle {
 /**
  * Stream `prompt` through Claude on the server, invoking `onEvent` for each
  * parsed stream line as it arrives. Returns immediately with a handle; the
- * socket is opened asynchronously. Cancelling closes the socket, which the
- * server treats as a disconnect and uses to kill the Claude subprocess.
+ * socket is opened asynchronously.
+ *
+ * With `session`, the run is a durable server session: if the socket drops
+ * unexpectedly (background / app-kill) the client reconnects by id and the server
+ * replays the buffered tail — `session.onReset` fires first so the consumer clears
+ * its stale view. The run ends only on the terminal `result` line, an explicit
+ * cancel (which sends kill), or `gone` on a resume of an already-reaped session.
  */
 export function run(
   t: Transport,
@@ -81,62 +108,119 @@ export function run(
   token: string,
   prompt: string,
   onEvent: (e: StreamEvent) => void,
+  session: SessionOpts,
 ): RunHandle {
-  let socketClose: (() => void) | null = null;
+  let sock: SecureSocket | null = null;
   let cancelled = false;
+  let terminated = false; // saw the result line or `gone` — a clean end
+  let settled = false;
+  let attempt = 0;
+  let final: RunResult = { result: '', isError: false };
 
   let settle!: (r: RunResult) => void;
-  let fail!: (e: Error) => void;
-  const done = new Promise<RunResult>((resolve, reject) => {
+  const done = new Promise<RunResult>(resolve => {
     settle = resolve;
-    fail = reject;
   });
+  const finish = () => {
+    if (settled) return;
+    settled = true;
+    settle(final);
+  };
 
   const url = `${origin(a, 'wss')}/run`;
-  t.openPinnedSocket(url, a.pin, { Authorization: `Bearer ${token}` })
-    .then(sock => {
-      socketClose = () => sock.close();
-      if (cancelled) {
-        sock.close();
-        fail(new Error('run cancelled'));
-        return;
-      }
 
-      let final: RunResult = { result: '', isError: false };
-      let closed = false;
-
-      sock.onMessage(text => {
-        for (const ev of parseStreamLine(text)) {
-          if (ev.kind === 'result') {
-            final = { result: ev.text, isError: ev.isError };
-          }
+  const connect = (resumeOnly: boolean) => {
+    t.openPinnedSocket(url, a.pin, { Authorization: `Bearer ${token}` })
+      .then(s => {
+        sock = s;
+        if (cancelled) {
+          s.close();
+          finish();
+          return;
+        }
+        s.onMessage(text => {
+          attempt = 0; // a healthy frame resets the reconnect budget
+          // Intercept the durable-session `gone` control frame before stream-json
+          // parsing (every /run frame is JSON, but none is `type:"gone"`).
           try {
-            onEvent(ev);
+            const o = JSON.parse(text) as { type?: string };
+            if (o && o.type === 'gone') {
+              terminated = true;
+              final = { result: 'The run ended and can no longer be resumed.', isError: true };
+              s.close();
+              return;
+            }
           } catch {
-            // A misbehaving UI callback must not kill the stream.
+            /* not JSON — fall through to the stream parser */
           }
+          for (const ev of parseStreamLine(text)) {
+            if (ev.kind === 'result') {
+              final = { result: ev.text, isError: ev.isError };
+              terminated = true;
+            }
+            try {
+              onEvent(ev);
+            } catch {
+              // A misbehaving UI callback must not kill the stream.
+            }
+          }
+          if (terminated) s.close();
+        });
+        s.onError(() => {}); // surfaced via onClose
+        s.onClose(() => {
+          sock = null;
+          if (cancelled || terminated) {
+            finish();
+            return;
+          }
+          reconnect();
+        });
+        // (Re)connect handshake; a reconnect resets the consumer's view first.
+        if (resumeOnly) session.onReset?.();
+        s.send(JSON.stringify({ sessionId: session.id, resumeOnly, prompt: resumeOnly ? '' : prompt }));
+      })
+      .catch(err => {
+        sock = null;
+        if (cancelled || terminated) {
+          finish();
+          return;
+        }
+        if (resumeOnly) {
+          reconnect();
+        } else {
+          // The very first connect failed — the run never started.
+          final = { result: err instanceof Error ? err.message : String(err), isError: true };
+          finish();
         }
       });
-      sock.onError(err => {
-        if (closed) return;
-        closed = true;
-        fail(err);
-      });
-      sock.onClose(() => {
-        if (closed) return;
-        closed = true;
-        settle(final);
-      });
+  };
 
-      sock.send(JSON.stringify({ prompt }));
-    })
-    .catch(err => fail(err instanceof Error ? err : new Error(String(err))));
+  const reconnect = () => {
+    if (attempt >= MAX_RECONNECT) {
+      final = { result: 'Lost connection to the run.', isError: true };
+      finish();
+      return;
+    }
+    attempt++;
+    setTimeout(() => connect(true), reconnectDelayMs(attempt));
+  };
+
+  connect(session.resumeOnly ?? false);
 
   return {
     done,
     cancel() {
       cancelled = true;
-      socketClose?.();
+      // Ask the server to actually kill the run (durable sessions don't die on a
+      // mere disconnect), then drop the socket.
+      if (sock) {
+        try {
+          sock.send(JSON.stringify({ type: 'kill' }));
+        } catch {
+          /* socket already gone */
+        }
+        sock.close();
+      }
     },
   };
 }

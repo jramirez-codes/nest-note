@@ -11,6 +11,7 @@
 import { exec, type ExecHandle } from './execClient';
 import { getTransport, currentServer, NO_MODULE } from './aiController';
 import { setServerStatus } from './status';
+import type { SessionOpts } from './client';
 
 export interface RunCallbacks {
   /** A chunk of live output, tagged with its stream. */
@@ -37,7 +38,12 @@ export interface RunHandle {
  * connection is established asynchronously, so input issued before it is up is
  * buffered and replayed once the underlying socket exists.
  */
-export function runCommand(cmd: string, dir: string | undefined, cb: RunCallbacks): RunHandle {
+export function runCommand(
+  cmd: string,
+  dir: string | undefined,
+  cb: RunCallbacks,
+  session: SessionOpts,
+): RunHandle {
   let handle: ExecHandle | null = null;
   let stopped = false;
   // Input issued before the exec handle exists, flushed in order once it does.
@@ -57,18 +63,26 @@ export function runCommand(cmd: string, dir: string | undefined, cb: RunCallback
     }
     if (stopped) return; // stopped before we even connected
 
-    handle = exec(t, server, server.token, cmd, dir, {
-      onLog: (stream, data) => {
-        // Any frame off the socket proves the server is live right now.
-        setServerStatus('connected');
-        cb.onLog(stream, data);
+    handle = exec(
+      t,
+      server,
+      server.token,
+      cmd,
+      dir,
+      {
+        onLog: (stream, data) => {
+          // Any frame off the socket proves the server is live right now.
+          setServerStatus('connected');
+          cb.onLog(stream, data);
+        },
+        onExit: code => cb.onExit(code),
+        onError: msg => {
+          setServerStatus('disconnected');
+          cb.onError(msg);
+        },
       },
-      onExit: code => cb.onExit(code),
-      onError: msg => {
-        setServerStatus('disconnected');
-        cb.onError(msg);
-      },
-    });
+      session,
+    );
 
     // Replay anything the user did during the connect window.
     for (const data of pendingStdin) handle.sendStdin(data);

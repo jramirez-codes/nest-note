@@ -8,10 +8,11 @@
  * lifting (pinned socket, multi-turn stream-json framing) lives in ./agentClient.
  */
 
-import { openAgent, type AgentHandle } from './agentClient';
+import { openAgent, listProjects, type AgentHandle } from './agentClient';
 import { getTransport, currentServer, NO_MODULE } from './aiController';
 import { setServerStatus } from './status';
 import type { StreamEvent } from './protocol';
+import type { SessionOpts } from './client';
 
 export interface CodeCallbacks {
   /** A parsed Claude stream event: assistant text/deltas, tool calls/results, results. */
@@ -41,6 +42,7 @@ export function startCode(
   name: string,
   firstPrompt: string | undefined,
   cb: CodeCallbacks,
+  session: SessionOpts,
 ): CodeHandle {
   let handle: AgentHandle | null = null;
   let stopped = false;
@@ -60,18 +62,26 @@ export function startCode(
     }
     if (stopped) return; // stopped before we even connected
 
-    handle = openAgent(t, server, server.token, name, firstPrompt, {
-      onEvent: ev => {
-        // Any frame off the socket proves the server is live right now.
-        setServerStatus('connected');
-        cb.onEvent(ev);
+    handle = openAgent(
+      t,
+      server,
+      server.token,
+      name,
+      firstPrompt,
+      {
+        onEvent: ev => {
+          // Any frame off the socket proves the server is live right now.
+          setServerStatus('connected');
+          cb.onEvent(ev);
+        },
+        onExit: () => cb.onExit(),
+        onError: msg => {
+          setServerStatus('disconnected');
+          cb.onError(msg);
+        },
       },
-      onExit: () => cb.onExit(),
-      onError: msg => {
-        setServerStatus('disconnected');
-        cb.onError(msg);
-      },
-    });
+      session,
+    );
 
     // Replay anything the user queued during the connect window.
     for (const text of pendingPrompts) handle.prompt(text);
@@ -89,4 +99,18 @@ export function startCode(
       handle?.kill();
     },
   };
+}
+
+/**
+ * List the project directories on the paired server so the editor can
+ * autocomplete `/code <name>`. Reuses the shared transport/server singletons
+ * (like startCode), and resolves to an empty list when nothing is paired or the
+ * server can't be reached — so the caller never has to handle an error path.
+ */
+export async function fetchProjects(): Promise<string[]> {
+  const t = getTransport();
+  if (!t) return [];
+  const server = await currentServer();
+  if (!server) return [];
+  return listProjects(t, server, server.token);
 }

@@ -49,7 +49,9 @@ const LEGACY_RE = /^<!--ai ([A-Za-z0-9+/=]+)-->$/;
 
 // Keys whose stored string value should be coerced back to a non-string type.
 const BOOL_KEYS = new Set(['open']);
-const NUM_KEYS = new Set(['v', 'ms', 'startedAt', 'code']);
+// `seq` is the last server frame sequence the persisted partial reflects, so a
+// cold start can resume a durable session from just past it (see runRegistry).
+const NUM_KEYS = new Set(['v', 'ms', 'startedAt', 'code', 'seq']);
 
 // Statuses where the card is still in-flight and the async server callbacks
 // (__aiStream / __aiDone) need to find it by id. Once a card reaches a terminal

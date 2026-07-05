@@ -7,7 +7,7 @@ import {
   insertNewlineContinueMarkupCommand,
 } from '@codemirror/lang-markdown';
 import { syntaxHighlighting } from '@codemirror/language';
-import { autocompletion } from '@codemirror/autocomplete';
+import { autocompletion, startCompletion } from '@codemirror/autocomplete';
 
 import { theme, highlight } from './theme.js';
 import { post } from './bridge.js';
@@ -36,9 +36,14 @@ import { codeBlocks, codeLanguages } from './codeBlocks.js';
 import { blockquotes } from './blockquotes.js';
 import { openLinks } from './links.js';
 import { WikiLink } from './wikilinks.js';
-import { slashCommandSource, aiCommandOnEnter } from './commands.js';
+import {
+  slashCommandSource,
+  codeProjectSource,
+  setCodeProjects,
+  aiCommandOnEnter,
+} from './commands.js';
 import { lineStartReplace } from './lineStartReplace.js';
-import { encodeAiMarker, findAiLine, mergeAiDone } from './aiMarker.js';
+import { encodeAiMarker, findAiLine, mergeAiDone, eachAiLine } from './aiMarker.js';
 
 /**
  * The CodeMirror 6 markdown editor that runs inside the React Native WebView.
@@ -115,9 +120,13 @@ const extensions = [
   keymap.of([...defaultKeymap, ...historyKeymap]),
   lineStartReplace,
   autocompletion({
-    override: [slashCommandSource],
+    override: [slashCommandSource, codeProjectSource],
     icons: false,
     activateOnTyping: true,
+    // Picking `/code` from the slash menu lands the caret on `/code ` — re-open
+    // completion straight away so the project list (codeProjectSource) shows
+    // without waiting for the first keystroke. Other commands close as usual.
+    activateOnCompletion: c => c.label === '/code',
     aboveCursor: false,
   }),
   openLinks,
@@ -146,13 +155,95 @@ const view = new EditorView({
   state: EditorState.create({ doc: '', extensions }),
 });
 
+// Statuses where a card's run is still in flight: after seeding a document, any
+// marker in one of these had a run going when the note was last shown, so RN is
+// asked to re-adopt it from the app-level registry (window __setDoc → reattach).
+const INFLIGHT_STATUS = new Set(['streaming', 'pending', 'running']);
+
 // RN calls this (via injectJavaScript) to seed / replace the document without
-// losing the editor instance.
+// losing the editor instance. After seeding, scan for in-flight AI markers and
+// ask RN to reattach each to its live run (repaint + resume), so swiping back to
+// a note whose /ask or /code was still running picks the stream back up.
 window.__setDoc = function (text) {
   view.dispatch({
     changes: { from: 0, to: view.state.doc.length, insert: text ?? '' },
   });
+  eachAiLine(view.state, obj => {
+    if (obj.id && INFLIGHT_STATUS.has(obj.status)) {
+      post({ type: 'reattach', id: obj.id, kind: obj.kind });
+    }
+  });
 };
+
+// --- Throttled interim persistence ------------------------------------------
+// Streamed output lives only in the live fields (askLive/runLive/codeLive), so a
+// force-quit mid-run would lose everything received so far. To make output
+// "tracked", fold the current partial into the marker roughly every 1.5s while a
+// run streams — never per token (that would thrash the caret and save on every
+// keystroke of output). Status stays in-flight, so the card keeps showing its
+// live view; this only updates what's persisted for a cold reopen.
+const PARTIAL_INTERVAL_MS = 1500;
+const commitTimers = Object.create(null);
+
+// Write the current live partial for `id` into its marker, keeping the in-flight
+// status. No-op once the card has reached a terminal status (the terminal commit
+// owns the block from then on).
+function commitPartial(id) {
+  const found = findAiLine(view.state, id);
+  if (!found || !INFLIGHT_STATUS.has(found.obj.status)) return;
+  const obj = found.obj;
+  let patch = null;
+  if (obj.kind === 'ask') {
+    const live = view.state.field(askLiveField)[id];
+    if (live) patch = { a: live.a };
+  } else if (obj.kind === 'chat') {
+    const live = view.state.field(askLiveField)[id];
+    const turns = obj.turns || [];
+    if (live && turns.length) {
+      const next = turns.slice();
+      next[next.length - 1] = { ...next[next.length - 1], a: live.a };
+      patch = { turns: next };
+    }
+  } else if (obj.kind === 'run') {
+    const live = view.state.field(runLiveField)[id];
+    if (live) {
+      let out = live.out;
+      if (out.length > RUN_DOC_CAP) out = '…\n' + out.slice(out.length - RUN_DOC_CAP);
+      patch = { out };
+    }
+  } else if (obj.kind === 'code') {
+    const live = view.state.field(codeLiveField)[id];
+    if (live) {
+      const items = live.items
+        .slice(Math.max(0, live.items.length - CODE_DOC_ITEMS))
+        .map(({ open, ...rest }) => rest);
+      patch = { items };
+    }
+  }
+  if (!patch) return;
+  view.dispatch({
+    changes: { from: found.from, to: found.to, insert: encodeAiMarker({ ...obj, ...patch }) },
+  });
+}
+
+// Throttle: schedule at most one partial commit per window while updates keep
+// arriving, so continuous streaming persists ~every PARTIAL_INTERVAL_MS.
+function schedulePartial(id) {
+  if (commitTimers[id]) return;
+  commitTimers[id] = setTimeout(() => {
+    delete commitTimers[id];
+    commitPartial(id);
+  }, PARTIAL_INTERVAL_MS);
+}
+
+// Drop any pending partial commit for `id` — called by the terminal commits so a
+// late partial can't clobber the final answer written to the marker.
+function cancelPartial(id) {
+  if (commitTimers[id]) {
+    clearTimeout(commitTimers[id]);
+    delete commitTimers[id];
+  }
+}
 
 // RN calls this to make the page read-only (subject-notebook pages) or editable again
 // (the Sandbox). Read-only turns off contentEditable so there's no caret or typing, and
@@ -188,11 +279,36 @@ window.__setPreview = function (url, data) {
   broadcastPreview(url, data);
 };
 
+// RN calls this before replaying a run's buffered output on a reconnect: clear the
+// live field for `id` so the replay rebuilds it from scratch (no duplication).
+// `kind` picks which live field the card reads from.
+window.__liveReset = function (id, kind) {
+  if (kind === 'run') view.dispatch({ effects: clearRunLog.of(id) });
+  else if (kind === 'code') view.dispatch({ effects: clearCodeLive.of(id) });
+  else view.dispatch({ effects: clearAskLive.of(id) });
+};
+
 // RN streams answer chunks here as they arrive from the server. This updates a
 // live field only (no document change), so the answer grows in place without
 // disturbing the caret or triggering a save on every token.
 window.__aiStream = function (id, answer) {
   view.dispatch({ effects: setAskLive.of({ id, a: answer, status: 'streaming' }) });
+  schedulePartial(id);
+};
+
+// RN answers a listProjects request here with the paired laptop's project dirs,
+// caching them for the `/code <name>` autocomplete. If the caret is sitting on a
+// `/code ` line right now, re-open completion so a list that arrived after the
+// menu first showed (the fetch is a round-trip) still populates it live.
+window.__setProjects = function (names) {
+  setCodeProjects(names);
+  if (!view.hasFocus) return;
+  const sel = view.state.selection.main;
+  if (!sel.empty) return;
+  const line = view.state.doc.lineAt(sel.head);
+  if (/^\/ ?code\s/.test(line.text.slice(0, sel.head - line.from))) {
+    startCompletion(view);
+  }
 };
 
 // RN toggles a /record card's playback state here (no document change): true when
@@ -207,6 +323,11 @@ window.__recPlay = function (id, playing) {
 // `patch` merges into the marker payload, e.g. { a, status:'done' } for an
 // answer or { status:'ok'|'error', msg } for pairing.
 window.__aiDone = function (id, patch) {
+  cancelPartial(id);
+  // Never let an empty answer overwrite content already persisted in the marker —
+  // e.g. a cold-start resume that came back `gone`, or an error with no partial,
+  // clears the live field first, so committing that empty would wipe a good answer.
+  if (patch && !patch.a) delete patch.a;
   const found = findAiLine(view.state, id);
   const effects = [clearAskLive.of(id)];
   if (!found) {
@@ -228,6 +349,7 @@ window.__aiDone = function (id, patch) {
 // in place without disturbing the caret or saving on every chunk.
 window.__runLog = function (id, chunk) {
   view.dispatch({ effects: setRunLog.of({ id, chunk }) });
+  schedulePartial(id);
 };
 
 // A finished /run keeps no live state: fold a capped tail of its output into the
@@ -235,10 +357,13 @@ window.__runLog = function (id, chunk) {
 // `patch` is { status:'done', code } on a clean exit or { status:'error', msg }.
 const RUN_DOC_CAP = 8 * 1024;
 function commitRun(id, patch) {
+  cancelPartial(id);
   const live = view.state.field(runLiveField)[id];
-  let out = live ? live.out : '';
-  if (out.length > RUN_DOC_CAP) out = '…\n' + out.slice(out.length - RUN_DOC_CAP);
   const found = findAiLine(view.state, id);
+  // Fall back to the marker's persisted output if the live field is empty (a
+  // resume that came back `gone` cleared it), so we don't wipe what was captured.
+  let out = live && live.out ? live.out : (found && found.obj.out) || '';
+  if (out.length > RUN_DOC_CAP) out = '…\n' + out.slice(out.length - RUN_DOC_CAP);
   const effects = [clearRunLog.of(id)];
   if (!found) {
     view.dispatch({ effects });
@@ -271,6 +396,7 @@ window.__runError = function (id, msg) {
 // the document. `ev` is a compact {t, ...} block (see reduceCodeItems).
 window.__codeEvent = function (id, ev) {
   view.dispatch({ effects: appendCodeEvent.of({ id, ev }) });
+  schedulePartial(id);
 };
 
 // A finished /code session keeps no live state: fold a capped snapshot of its
@@ -279,13 +405,16 @@ window.__codeEvent = function (id, ev) {
 // { status:'error', msg } if it failed.
 const CODE_DOC_ITEMS = 60; // persist at most the newest N blocks
 function commitCode(id, patch) {
+  cancelPartial(id);
   const live = view.state.field(codeLiveField)[id];
-  let items = live ? live.items : [];
+  const found = findAiLine(view.state, id);
+  // Fall back to the marker's persisted transcript if the live field is empty (a
+  // resume that came back `gone` cleared it), so we don't wipe what was captured.
+  let items = live && live.items.length ? live.items : (found && found.obj.items) || [];
   // Drop the transient "open" flag and cap how much we persist.
   items = items
     .slice(Math.max(0, items.length - CODE_DOC_ITEMS))
     .map(({ open, ...rest }) => rest);
-  const found = findAiLine(view.state, id);
   const effects = [clearCodeLive.of(id)];
   if (!found) {
     view.dispatch({ effects });

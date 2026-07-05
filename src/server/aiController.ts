@@ -8,7 +8,13 @@
  * the live server; this only wires it to editor ids and persists the pairing.
  */
 
-import { pair as pairServer, run, checkHealth, type RunHandle } from './client';
+import {
+  pair as pairServer,
+  run,
+  checkHealth,
+  type RunHandle,
+  type SessionOpts,
+} from './client';
 import { createNativeTransport, isNativeTransportAvailable } from './nativeTransport';
 import { loadServer, saveServer, parsePairInput, type PairedServer } from './store';
 import { setServerStatus } from './status';
@@ -137,7 +143,12 @@ function buildPrompt(question: string, context?: AskContext): string {
  * socket, killing the server-side Claude process). `context`, when present,
  * threads a prior card's Q&A into the prompt so follow-ups stay in-conversation.
  */
-export function runAsk(question: string, cb: AskCallbacks, context?: AskContext): AskHandle {
+export function runAsk(
+  question: string,
+  cb: AskCallbacks,
+  session: SessionOpts,
+  context?: AskContext,
+): AskHandle {
   let cancelled = false;
   let handle: RunHandle | null = null;
   // `answer` holds committed turns; `streaming` holds the live token buffer for
@@ -146,6 +157,18 @@ export function runAsk(question: string, cb: AskCallbacks, context?: AskContext)
   // sources never double-count. onDone/onError report `answer` (+ any tail).
   let answer = '';
   let streaming = '';
+
+  // On a reconnect the server replays the whole answer, so clear our local
+  // accumulation first (then let the registry clear its buffer + the webview live
+  // field) — otherwise the replayed text would double the committed answer.
+  const reconnectSession: SessionOpts = {
+    ...session,
+    onReset: () => {
+      answer = '';
+      streaming = '';
+      session.onReset?.();
+    },
+  };
 
   (async () => {
     const t = getTransport();
@@ -160,22 +183,29 @@ export function runAsk(question: string, cb: AskCallbacks, context?: AskContext)
     }
     if (cancelled) return;
 
-    handle = run(t, server, server.token, buildPrompt(question, context), ev => {
-      // Any event off the socket proves the server is live right now.
-      setServerStatus('connected');
-      if (ev.kind === 'assistant-delta') {
-        // A freshly generated token: grow the live buffer and show it typing out.
-        streaming += ev.text;
-        cb.onDelta(answer + streaming);
-      } else if (ev.kind === 'assistant-text') {
-        // The turn's authoritative full text landed; commit it and drop the
-        // delta buffer that built it so the answer doesn't double. (When the CLI
-        // isn't streaming partials, this is the only event and still works.)
-        answer += ev.text;
-        streaming = '';
-        cb.onDelta(answer);
-      }
-    });
+    handle = run(
+      t,
+      server,
+      server.token,
+      buildPrompt(question, context),
+      ev => {
+        // Any event off the socket proves the server is live right now.
+        setServerStatus('connected');
+        if (ev.kind === 'assistant-delta') {
+          // A freshly generated token: grow the live buffer and show it typing out.
+          streaming += ev.text;
+          cb.onDelta(answer + streaming);
+        } else if (ev.kind === 'assistant-text') {
+          // The turn's authoritative full text landed; commit it and drop the
+          // delta buffer that built it so the answer doesn't double. (When the CLI
+          // isn't streaming partials, this is the only event and still works.)
+          answer += ev.text;
+          streaming = '';
+          cb.onDelta(answer);
+        }
+      },
+      reconnectSession,
+    );
 
     try {
       const res = await handle.done;
@@ -271,20 +301,25 @@ export function runClean(
   guidance: string,
   needTitle: boolean,
   cb: CleanCallbacks,
+  session: SessionOpts,
 ): AskHandle {
-  return runAsk(buildCleanPrompt(pageText, guidance, needTitle), {
-    onDelta: () => {},
-    onDone: answer => {
-      const { title, body } = splitTitle(answer.trim());
-      const cleaned = stripFence(body);
-      // An empty rewrite would blank the note — treat it as a failure so the
-      // original page text is left untouched.
-      if (cleaned) cb.onDone(cleaned, needTitle ? title : '');
-      else cb.onError('Cleanup returned nothing.');
+  return runAsk(
+    buildCleanPrompt(pageText, guidance, needTitle),
+    {
+      onDelta: () => {},
+      onDone: answer => {
+        const { title, body } = splitTitle(answer.trim());
+        const cleaned = stripFence(body);
+        // An empty rewrite would blank the note — treat it as a failure so the
+        // original page text is left untouched.
+        if (cleaned) cb.onDone(cleaned, needTitle ? title : '');
+        else cb.onError('Cleanup returned nothing.');
+      },
+      // Leave the page as-is on failure; the card shows the error, notes are safe.
+      onError: msg => cb.onError(msg),
     },
-    // Leave the page as-is on failure; the card shows the error, notes are safe.
-    onError: msg => cb.onError(msg),
-  });
+    session,
+  );
 }
 
 export interface IngestCallbacks {
@@ -341,12 +376,16 @@ function buildIngestPrompt(pageText: string): string {
  * caller deletes the page (the notes now live in the dashboard); on failure the
  * page is left untouched. Cancelling tears down the underlying run.
  */
-export function runIngest(pageText: string, cb: IngestCallbacks): AskHandle {
-  return runAsk(buildIngestPrompt(pageText), {
-    onDelta: () => {},
-    onDone: answer => cb.onDone(answer.trim()),
-    onError: msg => cb.onError(msg),
-  });
+export function runIngest(pageText: string, cb: IngestCallbacks, session: SessionOpts): AskHandle {
+  return runAsk(
+    buildIngestPrompt(pageText),
+    {
+      onDelta: () => {},
+      onDone: answer => cb.onDone(answer.trim()),
+      onError: msg => cb.onError(msg),
+    },
+    session,
+  );
 }
 
 // --- Dashboard state (read) + optional merge actions (write) -----------------
@@ -500,6 +539,19 @@ export interface DashboardState {
   servers: DashboardServer[];
   suggestions: DashboardSuggestion[];
   cards: DashboardCard[];
+}
+
+// The last dashboard state we held, kept in module scope so it outlives the
+// DashboardPage component. The pager unmounts non-current pages, so swiping away
+// from the dashboard and back would otherwise drop its data and flash the loading
+// spinner on every return. Seeding a remount from this cache paints the last-known
+// cards instantly while a background refresh reconciles with the server.
+let dashboardCache: DashboardState | null = null;
+export function getCachedDashboardState(): DashboardState | null {
+  return dashboardCache;
+}
+export function setCachedDashboardState(state: DashboardState | null): void {
+  dashboardCache = state;
 }
 
 function serverOrigin(s: PairedServer): string {

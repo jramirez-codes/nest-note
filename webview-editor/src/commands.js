@@ -78,6 +78,42 @@ export function slashCommandSource(context) {
   return { from: line.from, to: context.pos, options, filter: false };
 }
 
+// --- `/code <name>` project autocomplete -------------------------------------
+// The project directories the paired laptop reported, kept in sync by RN pushing
+// window.__setProjects (see editor.js) with the reply to each listProjects post.
+// Starts empty; the first `/code ` keystroke asks for the list and the menu
+// repopulates as soon as it lands.
+let codeProjects = [];
+export function setCodeProjects(names) {
+  codeProjects = Array.isArray(names) ? names.filter(n => typeof n === 'string') : [];
+}
+
+// Autocomplete the project name after `/code `. Reads the laptop's directory
+// listing (setCodeProjects) and offers it prefix-filtered by what's typed so far;
+// picking one inserts `<name> `, ready for the first prompt. Distinct from
+// slashCommandSource, which only fires before the command's trailing space —
+// once that space is typed this source takes over the same line.
+export function codeProjectSource(context) {
+  const line = context.state.doc.lineAt(context.pos);
+  const before = line.text.slice(0, context.pos - line.from);
+  // `/code ` (space-tolerant slash, per slashCommandSource) then the partial name
+  // the caret sits at the end of. The name may not contain whitespace, so a
+  // second word (the prompt starting) stops matching and closes the menu.
+  const m = /^\/ ?code\s+(\S*)$/.exec(before);
+  if (!m) return null;
+  // Ask RN to (re)send the current listing; the reply refreshes codeProjects and
+  // re-opens the menu (see window.__setProjects). Fire-and-forget — serve cache now.
+  post({ type: 'listProjects' });
+  const word = m[1].toLowerCase();
+  const options = codeProjects
+    .filter(name => name.toLowerCase().startsWith(word))
+    .map(name => ({ label: name, type: 'text', apply: name + ' ' }));
+  if (!options.length) return null;
+  // Replace just the partial name (from the caret back over m[1]), leaving the
+  // `/code ` prefix intact; CM's own filter is off since we prefix-matched already.
+  return { from: context.pos - m[1].length, to: context.pos, options, filter: false };
+}
+
 // Enter on a `/ask <question>` or `/pair <payload>` line turns that line into a
 // card and hands the work to RN. Returns true to swallow the newline when it
 // fires; otherwise Enter behaves normally.

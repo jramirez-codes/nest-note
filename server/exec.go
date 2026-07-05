@@ -16,14 +16,16 @@ import (
 	"github.com/coder/websocket"
 )
 
-// execRequest is the first frame the client sends: the shell command to run and
-// an optional project subdirectory (relative to the server's base workdir) to
-// run it in. The subdir only sets the *starting* directory — a shell can cd
-// anywhere the server's user can — so it is a convenience, not a security
-// boundary. The real gate is -allow-exec plus the pinned tunnel + token.
+// execRequest is the first frame the client sends. SessionID keys the durable
+// session; ResumeOnly reconnects to an existing one (or gets `gone`). Cmd/Dir
+// start a new session's shell — the subdir only sets the *starting* directory (a
+// shell can cd anywhere the server's user can), so it is a convenience, not a
+// security boundary. The real gate is -allow-exec plus the pinned tunnel + token.
 type execRequest struct {
-	Cmd string `json:"cmd"`
-	Dir string `json:"dir"`
+	SessionID  string `json:"sessionId"`
+	ResumeOnly bool   `json:"resumeOnly"`
+	Cmd        string `json:"cmd"`
+	Dir        string `json:"dir"`
 }
 
 // execControl is any client frame after the first: live stdin for the running
@@ -40,7 +42,7 @@ type execControl struct {
 // spawns Claude — it is the direct "/run <cmd>" terminal channel. That makes it
 // the most dangerous endpoint (arbitrary code as the server's user), so it only
 // does anything when the operator started the server with -allow-exec.
-func execHandler(token, baseWorkdir string, enabled bool) http.HandlerFunc {
+func execHandler(token, baseWorkdir string, enabled bool, reg *sessionRegistry) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !authOK(r, token) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -58,8 +60,8 @@ func execHandler(token, baseWorkdir string, enabled bool) http.HandlerFunc {
 		}
 		defer c.CloseNow()
 
-		// First frame names the command, with a short deadline so a client that
-		// connects but never speaks can't hold the socket.
+		// First frame names the session (and, for a new one, the command), with a
+		// short deadline so a client that connects but never speaks can't hold it.
 		readCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		_, data, err := c.Read(readCtx)
 		cancel()
@@ -68,87 +70,105 @@ func execHandler(token, baseWorkdir string, enabled bool) http.HandlerFunc {
 			return
 		}
 		var req execRequest
-		if err := json.Unmarshal(data, &req); err != nil || strings.TrimSpace(req.Cmd) == "" {
+		if err := json.Unmarshal(data, &req); err != nil {
 			// 4400 (application range), not a reserved code — some WS clients
 			// throw on reserved close codes and never surface the reason.
+			c.Close(4400, "expected {sessionId | cmd}")
+			return
+		}
+
+		if req.ResumeOnly {
+			sess := reg.get(strings.TrimSpace(req.SessionID))
+			if strings.TrimSpace(req.SessionID) == "" || sess == nil {
+				writeGone(c)
+				return
+			}
+			serveExecSocket(c, sess, reg)
+			return
+		}
+
+		// No sessionId: an un-updated client wanting the old, non-durable behaviour
+		// — mint an ephemeral id (unresumable, killed on disconnect).
+		id := strings.TrimSpace(req.SessionID)
+		ephemeral := id == ""
+		if ephemeral {
+			id = randomSessionID()
+		}
+		sess, created := reg.findOrCreate(id, "exec")
+		if !created {
+			serveExecSocket(c, sess, reg)
+			return
+		}
+		sess.ephemeral = ephemeral
+		if strings.TrimSpace(req.Cmd) == "" {
+			reg.remove(id)
 			c.Close(4400, "expected {cmd}")
 			return
 		}
 		workdir, err := resolveExecDir(baseWorkdir, req.Dir)
 		if err != nil {
+			reg.remove(id)
 			c.Close(4400, "bad dir")
 			return
 		}
 
-		// No run-timeout: a dev server is meant to stay up. The run ends when the
-		// command exits, the client disconnects (control-read loop cancels), or
-		// the client sends kill. ctx cancellation SIGKILLs the whole group.
-		ctx, cancelRun := context.WithCancel(context.Background())
-		defer cancelRun()
+		// Start the shell in a socket-independent owner goroutine (survives this
+		// socket dropping unless ephemeral), then attach + run the control loop.
+		startExecProcess(sess, workdir, req.Cmd)
+		serveExecSocket(c, sess, reg)
+	}
+}
 
-		cmd := exec.CommandContext(ctx, "bash", "-lc", req.Cmd)
-		cmd.Dir = workdir
-		setProcGroup(cmd)
+// startExecProcess launches the durable shell for a fresh session and pumps its
+// stdout/stderr into the session buffer from a goroutine not tied to any socket.
+// No run-timeout: a dev server is meant to stay up; it ends on kill, the command
+// exiting, or the orphan TTL.
+func startExecProcess(sess *session, workdir, cmdStr string) {
+	ctx, cancelRun := context.WithCancel(context.Background())
+	sess.setCancel(cancelRun)
 
-		stdin, err := cmd.StdinPipe()
-		if err != nil {
-			c.Close(websocket.StatusInternalError, "stdin pipe")
-			return
-		}
-		stdout, err := cmd.StdoutPipe()
-		if err != nil {
-			c.Close(websocket.StatusInternalError, "stdout pipe")
-			return
-		}
-		stderr, err := cmd.StderrPipe()
-		if err != nil {
-			c.Close(websocket.StatusInternalError, "stderr pipe")
-			return
-		}
+	cmd := exec.CommandContext(ctx, "bash", "-lc", cmdStr)
+	cmd.Dir = workdir
+	setProcGroup(cmd)
 
-		// Serialize every outbound frame: coder/websocket writes are not
-		// concurrent-safe, and the two pump goroutines plus the exit path all
-		// emit. A mutex is enough — frames are small and infrequent per source.
-		var wmu sync.Mutex
-		send := func(v any) {
-			b, _ := json.Marshal(v)
-			wmu.Lock()
-			defer wmu.Unlock()
-			_ = c.Write(ctx, websocket.MessageText, b)
-		}
+	fail := func(msg string) {
+		sess.emit(mustJSON(map[string]any{"type": "error", "message": msg}))
+		sess.emit(mustJSON(map[string]any{"type": "exit", "code": -1}))
+		sess.markDone()
+		cancelRun()
+	}
 
-		if err := cmd.Start(); err != nil {
-			send(map[string]any{"type": "error", "message": err.Error()})
-			c.Close(websocket.StatusNormalClosure, "start failed")
-			return
-		}
-		log.Printf("exec: start %.60q in %s", req.Cmd, workdir)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		fail("stdin pipe: " + err.Error())
+		return
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		fail("stdout pipe: " + err.Error())
+		return
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		fail("stderr pipe: " + err.Error())
+		return
+	}
+
+	// Wire the session's control hooks: stdin feeds live input, signal delivers a
+	// POSIX signal to the group. Any attached socket's control loop calls these.
+	sess.mu.Lock()
+	sess.input = func(d string) { _, _ = io.WriteString(stdin, d) }
+	sess.signal = func(sig string) { signalGroup(cmd, strings.ToUpper(sig)) }
+	sess.mu.Unlock()
+
+	if err := cmd.Start(); err != nil {
+		fail(err.Error())
+		return
+	}
+	log.Printf("exec: start %.60q in %s", cmdStr, workdir)
+
+	go func() {
 		start := time.Now()
-
-		// Control-read loop: stdin / signal / kill from the client. A read error
-		// means the client is gone — cancel to tear the process group down.
-		go func() {
-			for {
-				_, data, err := c.Read(ctx)
-				if err != nil {
-					cancelRun()
-					return
-				}
-				var ctl execControl
-				if json.Unmarshal(data, &ctl) != nil {
-					continue
-				}
-				switch ctl.Type {
-				case "stdin":
-					_, _ = io.WriteString(stdin, ctl.Data)
-				case "signal":
-					signalGroup(cmd, strings.ToUpper(ctl.Sig))
-				case "kill":
-					cancelRun()
-				}
-			}
-		}()
-
 		// Pump stdout and stderr as raw chunks (not lines) so partial output —
 		// prompts without a newline, progress bars — reaches the phone the moment
 		// it is written. json.Marshal replaces any invalid UTF-8 with U+FFFD, so a
@@ -160,7 +180,7 @@ func execHandler(token, baseWorkdir string, enabled bool) http.HandlerFunc {
 			for {
 				n, rerr := rd.Read(buf)
 				if n > 0 {
-					send(map[string]any{"type": "log", "stream": stream, "data": string(buf[:n])})
+					sess.emit(mustJSON(map[string]any{"type": "log", "stream": stream, "data": string(buf[:n])}))
 				}
 				if rerr != nil {
 					return
@@ -179,15 +199,50 @@ func execHandler(token, baseWorkdir string, enabled bool) http.HandlerFunc {
 			code = exitCode(waitErr)
 		}
 		log.Printf("exec: done in %s, exit=%d", time.Since(start).Round(time.Millisecond), code)
+		sess.emit(mustJSON(map[string]any{"type": "exit", "code": code}))
+		sess.markDone()
+		cancelRun()
+	}()
+}
 
-		// Final frame on a fresh context: if the client merely disconnected, ctx
-		// is already cancelled and this no-ops; if the command exited on its own
-		// we still report the code before closing cleanly.
-		fin, _ := json.Marshal(map[string]any{"type": "exit", "code": code})
-		wmu.Lock()
-		_ = c.Write(context.Background(), websocket.MessageText, fin)
-		wmu.Unlock()
-		c.Close(websocket.StatusNormalClosure, "done")
+// serveExecSocket attaches c (replaying the buffered tail) and runs the control
+// loop for stdin/signal/kill. On a socket read error the client is gone: detach
+// but leave the shell running for the next reconnect.
+func serveExecSocket(c *websocket.Conn, sess *session, reg *sessionRegistry) {
+	sess.attach(c)
+	for {
+		_, data, err := c.Read(context.Background())
+		if err != nil {
+			if sess.ephemeral {
+				sess.kill()
+				reg.remove(sess.id)
+			}
+			sess.detach(c)
+			return
+		}
+		var ctl execControl
+		if json.Unmarshal(data, &ctl) != nil {
+			continue
+		}
+		sess.mu.Lock()
+		input := sess.input
+		signal := sess.signal
+		sess.mu.Unlock()
+		switch ctl.Type {
+		case "stdin":
+			if input != nil {
+				input(ctl.Data)
+			}
+		case "signal":
+			if signal != nil {
+				signal(ctl.Sig)
+			}
+		case "kill":
+			sess.kill()
+			reg.remove(sess.id)
+			sess.detach(c)
+			return
+		}
 	}
 }
 

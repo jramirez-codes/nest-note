@@ -739,14 +739,11 @@ const components = {
       whiteSpace: 'pre-wrap',
       wordBreak: 'break-word',
     },
-    // Assistant prose (plain text in v1).
+    // Assistant prose — wraps a nested read-only markdown view (mountAnswerView),
+    // so it renders like the /ask answer. Only spacing lives here; the nested
+    // view's answerTheme owns typography.
     '.cm-code-text': {
-      padding: '2px 2px',
-      color: c.text,
-      fontSize: '14px',
-      lineHeight: '1.55',
-      whiteSpace: 'pre-wrap',
-      wordBreak: 'break-word',
+      padding: '0 2px',
     },
     // A tool call: monospace, muted, the name accented.
     '.cm-code-tool': {

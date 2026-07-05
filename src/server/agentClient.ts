@@ -11,18 +11,21 @@
  */
 
 import type { Transport, SecureSocket } from './transport';
-import type { ServerAddress } from './client';
+import { type ServerAddress, type SessionOpts, MAX_RECONNECT, reconnectDelayMs } from './client';
 import { parseStreamLine, type StreamEvent } from './protocol';
 
 /**
  * One server→client frame off the /code socket (server/agent.go emits these).
- * `cc` wraps a raw `claude` stream-json object under `msg`; `exit` marks the
- * session ended; `error` carries a terminal failure message.
+ * `cc` wraps a raw `claude` stream-json object under `msg`; `userprompt` echoes a
+ * user turn (so it lands in the transcript and replays on reconnect); `exit` marks
+ * the session ended; `error` carries a failure message; `gone` says a resume
+ * target was already reaped.
  */
 interface AgentFrame {
-  type?: 'cc' | 'exit' | 'error';
+  type?: 'cc' | 'userprompt' | 'exit' | 'error' | 'gone';
   msg?: unknown;
   message?: string;
+  text?: string;
 }
 
 export interface AgentCallbacks {
@@ -59,6 +62,32 @@ function origin(a: ServerAddress): string {
   return `wss://${a.host}:${a.port}`;
 }
 
+/**
+ * List the existing project directories on the paired server — the names
+ * `/code <name>` selects among — so the phone can autocomplete them. Reads over
+ * the pinned tunnel (server/agent.go's /projects). Never throws: a disabled
+ * /code, an unreachable server, a non-200, or a malformed reply all resolve to
+ * an empty list, so the caller treats the result as "the projects to suggest,
+ * possibly none".
+ */
+export async function listProjects(
+  t: Transport,
+  a: ServerAddress,
+  token: string,
+): Promise<string[]> {
+  try {
+    const res = await t.postPinned(`https://${a.host}:${a.port}/projects`, a.pin, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.status !== 200) return [];
+    const body = JSON.parse(res.text) as { projects?: unknown };
+    if (!Array.isArray(body.projects)) return [];
+    return body.projects.filter((n): n is string => typeof n === 'string');
+  } catch {
+    return [];
+  }
+}
+
 function parseAgentFrame(text: string): AgentFrame | null {
   try {
     return JSON.parse(text) as AgentFrame;
@@ -81,11 +110,14 @@ export function openAgent(
   project: string,
   firstPrompt: string | undefined,
   cb: AgentCallbacks,
+  session: SessionOpts,
 ): AgentHandle {
   let sock: SecureSocket | null = null;
   let killed = false;
+  let terminated = false; // saw exit / gone — a clean end, no reconnect
   let closed = false;
-  // Outbound frames issued before the socket is open, flushed on open in order.
+  let attempt = 0;
+  // Outbound frames issued while the socket is down, flushed on (re)open in order.
   const pending: string[] = [];
 
   let settle!: (r: AgentResult) => void;
@@ -93,7 +125,7 @@ export function openAgent(
     settle = resolve;
   });
 
-  // Error seen (if any), reported when the socket finally closes.
+  // Error seen (if any), reported when the session finally ends.
   let errorMsg: string | null = null;
 
   const finish = (): void => {
@@ -108,60 +140,107 @@ export function openAgent(
     else pending.push(text);
   };
 
-  t.openPinnedSocket(`${origin(a)}/code`, a.pin, { Authorization: `Bearer ${token}` })
-    .then(s => {
-      sock = s;
-      if (killed) {
-        s.close();
-        finish();
-        return;
-      }
-
-      s.onMessage(text => {
-        const f = parseAgentFrame(text);
-        if (!f) return;
-        try {
-          if (f.type === 'cc') {
-            // Re-stringify the wrapped claude object and reuse the shared
-            // stream-json parser so /code and the one-shot `run` render identically.
-            for (const ev of parseStreamLine(JSON.stringify(f.msg))) cb.onEvent(ev);
-          } else if (f.type === 'exit') {
-            cb.onExit();
-          } else if (f.type === 'error') {
-            errorMsg = f.message || 'The agent session failed on the server.';
-            cb.onError(errorMsg);
-          }
-        } catch {
-          // A misbehaving UI callback must not tear down the stream.
-        }
-      });
-      s.onError(err => {
-        if (closed) return;
-        errorMsg = err.message;
-        try {
-          cb.onError(err.message);
-        } catch {
-          /* ignore */
-        }
-        finish();
-      });
-      s.onClose(() => finish());
-
-      // First frame names the project (and an optional first prompt); then flush
-      // any turns the user queued during the connect window.
-      s.send(JSON.stringify({ project, prompt: firstPrompt ?? '' }));
-      for (const text of pending) s.send(text);
-      pending.length = 0;
-    })
-    .catch(err => {
-      errorMsg = err instanceof Error ? err.message : String(err);
+  const reconnect = (): void => {
+    if (attempt >= MAX_RECONNECT) {
+      errorMsg = 'Lost connection to the session.';
       try {
         cb.onError(errorMsg);
       } catch {
         /* ignore */
       }
       finish();
-    });
+      return;
+    }
+    attempt++;
+    setTimeout(() => connect(true), reconnectDelayMs(attempt));
+  };
+
+  const connect = (resumeOnly: boolean): void => {
+    t.openPinnedSocket(`${origin(a)}/code`, a.pin, { Authorization: `Bearer ${token}` })
+      .then(s => {
+        sock = s;
+        if (killed) {
+          s.close();
+          finish();
+          return;
+        }
+
+        s.onMessage(text => {
+          attempt = 0; // a healthy frame resets the reconnect budget
+          const f = parseAgentFrame(text);
+          if (!f) return;
+          try {
+            if (f.type === 'cc') {
+              // Re-stringify the wrapped claude object and reuse the shared
+              // stream-json parser so /code and the one-shot `run` render alike.
+              for (const ev of parseStreamLine(JSON.stringify(f.msg))) cb.onEvent(ev);
+            } else if (f.type === 'userprompt') {
+              // A user turn echoed by the server, so it replays on reconnect.
+              cb.onEvent({ kind: 'user-prompt', text: f.text ?? '' });
+            } else if (f.type === 'exit') {
+              terminated = true;
+              cb.onExit();
+              s.close();
+            } else if (f.type === 'error') {
+              // Not terminal on its own — the server sends error THEN exit.
+              errorMsg = f.message || 'The agent session failed on the server.';
+              cb.onError(errorMsg);
+            } else if (f.type === 'gone') {
+              terminated = true;
+              errorMsg = 'The session ended and can no longer be resumed.';
+              cb.onError(errorMsg);
+              s.close();
+            }
+          } catch {
+            // A misbehaving UI callback must not tear down the stream.
+          }
+        });
+        s.onError(() => {}); // surfaced via onClose
+        s.onClose(() => {
+          sock = null;
+          if (killed || terminated) {
+            finish();
+            return;
+          }
+          reconnect();
+        });
+
+        // (Re)connect handshake: name the session (and, for a fresh start, the
+        // project + first prompt). A reconnect resets the consumer's transcript
+        // first, since the server replays the whole buffered tail.
+        if (resumeOnly) session.onReset?.();
+        s.send(
+          JSON.stringify({
+            sessionId: session.id,
+            resumeOnly,
+            project,
+            prompt: resumeOnly ? '' : firstPrompt ?? '',
+          }),
+        );
+        for (const text of pending) s.send(text);
+        pending.length = 0;
+      })
+      .catch(err => {
+        sock = null;
+        if (killed || terminated) {
+          finish();
+          return;
+        }
+        if (resumeOnly) {
+          reconnect();
+        } else {
+          errorMsg = err instanceof Error ? err.message : String(err);
+          try {
+            cb.onError(errorMsg);
+          } catch {
+            /* ignore */
+          }
+          finish();
+        }
+      });
+  };
+
+  connect(session.resumeOnly ?? false);
 
   return {
     done,
@@ -170,7 +249,8 @@ export function openAgent(
     },
     kill() {
       killed = true;
-      // Ask the server to kill (in case the close race loses), then drop the socket.
+      // Ask the server to kill (durable sessions don't die on a mere disconnect),
+      // then drop the socket.
       if (sock) {
         sendFrame({ type: 'kill' });
         sock.close();

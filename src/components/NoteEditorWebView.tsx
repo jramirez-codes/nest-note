@@ -7,16 +7,23 @@ import {
   type WebViewProps,
 } from 'react-native-webview';
 import { EDITOR_HTML } from '../webview/editorHtml';
+import { pairFromPayload } from '../server/aiController';
+import { fetchProjects } from '../server/agentController';
 import {
-  pairFromPayload,
-  runAsk,
-  runClean,
-  runIngest,
-  type AskHandle,
-} from '../server/aiController';
-import { runCommand, type RunHandle } from '../server/codeController';
-import { startCode, type CodeHandle } from '../server/agentController';
-import type { StreamEvent } from '../server/protocol';
+  startAsk,
+  startClean,
+  startIngest,
+  startRun,
+  startCodeRun,
+  codePrompt,
+  runStdin,
+  runInterrupt,
+  stop as stopRun,
+  attach as attachRun,
+  detach as detachRun,
+  resume as resumeRun,
+  type RunSink,
+} from '../server/runRegistry';
 import {
   ensureRecordingPermissions,
   startRecording,
@@ -30,38 +37,6 @@ import {
   onPlaybackEnded,
 } from '../server/audioController';
 import QrPairModal from './QrPairModal';
-
-// Strip ANSI escape / color sequences so a dev server's output reads as plain
-// text in the terminal card (v1 renders no color), and normalise CRLF to LF.
-// eslint-disable-next-line no-control-regex
-const ANSI_RE = /[\u001b\u009b][[\]()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g;
-function stripAnsi(s: string): string {
-  return s.replace(ANSI_RE, '').replace(/\r\n/g, '\n');
-}
-
-/** One compact transcript block the editor's codeLive reducer understands. */
-type CodeBlock =
-  | { t: 'delta'; text: string }
-  | { t: 'text'; text: string }
-  | { t: 'tool'; name: string; input: unknown }
-  | { t: 'toolresult'; text: string; isError: boolean };
-
-// Map a parsed Claude stream event to a /code transcript block, or null for the
-// events the card doesn't render (session init, per-turn result markers, other).
-function codeEventToBlock(ev: StreamEvent): CodeBlock | null {
-  switch (ev.kind) {
-    case 'assistant-delta':
-      return { t: 'delta', text: ev.text };
-    case 'assistant-text':
-      return { t: 'text', text: ev.text };
-    case 'tool-use':
-      return { t: 'tool', name: ev.name, input: ev.input };
-    case 'tool-result':
-      return { t: 'toolresult', text: ev.text, isError: ev.isError };
-    default:
-      return null;
-  }
-}
 
 // react-native-webview@14's class-component typings resolve to `never` under
 // React 19's JSX types (RN 0.86), so re-type it as a normal component. Runtime
@@ -109,6 +84,12 @@ interface NoteEditorWebViewProps {
  *
  * Content is markdown in and markdown out (CM6 edits the source text), so notes
  * stay in the app's markdown storage format with no data migration.
+ *
+ * AI runs (/ask, /clean, /ingest, /run, /code) are NOT owned here — they live in
+ * the app-level runRegistry so they survive this component being unmounted when
+ * the page is swiped away. This component only attaches its WebView as a render
+ * sink while mounted and detaches (without cancelling) on unmount; a re-mount
+ * re-attaches by card id and repaints from the registry's buffer.
  */
 export default function NoteEditorWebView({
   initialContent,
@@ -123,20 +104,30 @@ export default function NoteEditorWebView({
   pageId,
 }: NoteEditorWebViewProps) {
   const ref = useRef<WebViewInstance>(null);
-  // Live /ask runs keyed by the editor-side card id, so we can cancel them if
-  // the note is swiped away / unmounted mid-stream.
-  const askHandles = useRef<Record<string, AskHandle>>({});
-  // Live /run terminal sessions keyed by card id, so we can feed stdin/signals
-  // and tear them down when the note is swiped away / unmounted.
-  const runHandles = useRef<Record<string, RunHandle>>({});
-  // Live /code agent sessions keyed by card id, so we can send follow-up prompts
-  // and tear them down when the note is swiped away / unmounted.
-  const codeHandles = useRef<Record<string, CodeHandle>>({});
+  // Card ids this mount is currently attached to in the registry, so we can
+  // detach exactly those (and no more) when the page unmounts.
+  const attachedIds = useRef<Set<string>>(new Set());
   // The /record card id whose clip is currently playing (only one at a time), so
   // starting another or a natural end can flip the right card's button back.
   const playingId = useRef<string | null>(null);
   // Set when a bare `/pair` asks to scan a QR; carries the card id to update.
   const [pairScan, setPairScan] = useState<{ id: string } | null>(null);
+
+  // Page-coupled callbacks the registry may fire long after this render (a run
+  // that finishes while detached, then re-attaches). Held in a ref so the stable
+  // sink below always calls the latest props.
+  const cbRef = useRef({ onSetTitle, onIngested, hasTitle });
+  cbRef.current = { onSetTitle, onIngested, hasTitle };
+
+  // A stable render sink for the registry: how to inject into THIS WebView plus
+  // the two side effects that don't go through it. Created once; `inject` reads
+  // `ref.current` at call time (null after unmount → a harmless no-op), and the
+  // side effects read the latest props via cbRef.
+  const sink = useRef<RunSink>({
+    inject: (js: string) => ref.current?.injectJavaScript(js + ' true;'),
+    onSetTitle: (t: string) => cbRef.current.onSetTitle(t),
+    onIngested: () => cbRef.current.onIngested(),
+  }).current;
 
   const handleMessage = useCallback(
     (e: WebViewMessageEvent) => {
@@ -145,6 +136,7 @@ export default function NoteEditorWebView({
         text?: string;
         url?: string;
         id?: string;
+        kind?: string;
         question?: string;
         context?: { q?: string; a?: string; turns?: { q?: string; a?: string }[] };
         payload?: string;
@@ -169,12 +161,25 @@ export default function NoteEditorWebView({
         // Once the CM6 editor has mounted: for server-owned pages lock it read-only FIRST
         // (which also enables whole-doc decoration), then seed the document — so the seeding
         // transaction renders the parsed markdown immediately instead of waiting for a tap.
-        // Sandbox pages skip the lock and stay editable.
+        // Sandbox pages skip the lock and stay editable. After seeding, the editor scans for
+        // in-flight AI markers and posts a `reattach` for each (handled below).
         ref.current?.injectJavaScript(
           (readOnly ? 'window.__setReadOnly(true); ' : '') +
             `window.__setDoc(${JSON.stringify(initialContent)});` +
             ' true;',
         );
+      } else if (msg.type === 'reattach' && typeof msg.id === 'string') {
+        // The editor found an in-flight AI marker after seeding. If the registry
+        // still has the live run (same app session, socket kept alive across the
+        // swap), adopt it — repaint the buffer and ride the stream. Otherwise the
+        // app was restarted: try a durable server-side resume by id, which either
+        // reconnects to the still-running laptop session (replaying its tail) or,
+        // if it was already reaped, finalizes the card as interrupted via `gone`.
+        const id = msg.id;
+        if (attachRun(id, sink) === 'none') {
+          resumeRun(id, msg.kind ?? 'ask', sink);
+        }
+        attachedIds.current.add(id);
       } else if (msg.type === 'change' && typeof msg.text === 'string') {
         onChangeContent(msg.text);
       } else if (msg.type === 'openUrl' && typeof msg.url === 'string') {
@@ -205,32 +210,10 @@ export default function NoteEditorWebView({
         typeof msg.id === 'string' &&
         typeof msg.question === 'string'
       ) {
-        // Stream the assistant's answer back into the card's live field, then
-        // commit the final text (or error) to the document so it persists.
-        const id = msg.id;
-        askHandles.current[id] = runAsk(msg.question, {
-          onDelta: answer =>
-            inject(`window.__aiStream(${JSON.stringify(id)}, ${JSON.stringify(answer)});`),
-          onDone: answer => {
-            delete askHandles.current[id];
-            inject(
-              `window.__aiDone(${JSON.stringify(id)}, ${JSON.stringify({
-                a: answer,
-                status: 'done',
-              })});`,
-            );
-          },
-          onError: (errMsg, partial) => {
-            delete askHandles.current[id];
-            inject(
-              `window.__aiDone(${JSON.stringify(id)}, ${JSON.stringify({
-                a: partial,
-                status: 'error',
-                msg: errMsg,
-              })});`,
-            );
-          },
-        }, msg.context);
+        // Stream the assistant's answer into the card (registry-owned so it
+        // survives page swaps); the final text (or error) commits to the document.
+        attachedIds.current.add(msg.id);
+        startAsk(msg.id, msg.question, sink, msg.context);
       } else if (
         msg.type === 'pair' &&
         typeof msg.id === 'string' &&
@@ -252,49 +235,18 @@ export default function NoteEditorWebView({
       ) {
         // Rewrite the whole page. On success the editor swaps in the cleaned
         // text behind an Accept/Reject bar; on error the notes are left as-is.
-        const id = msg.id;
-        askHandles.current[id] = runClean(msg.pageText, msg.guidance ?? '', !hasTitle, {
-          onDone: (cleaned, title) => {
-            delete askHandles.current[id];
-            inject(`window.__cleanApply(${JSON.stringify(id)}, ${JSON.stringify(cleaned)});`);
-            // Give the page a name if it had none (independent of Accept/Reject —
-            // the title describes the note's topic, which the rewrite preserves).
-            if (title) onSetTitle(title);
-          },
-          onError: errMsg => {
-            delete askHandles.current[id];
-            inject(
-              `window.__aiDone(${JSON.stringify(id)}, ${JSON.stringify({
-                status: 'error',
-                msg: errMsg,
-              })});`,
-            );
-          },
-        });
+        attachedIds.current.add(msg.id);
+        startClean(msg.id, msg.pageText, msg.guidance ?? '', !hasTitle, sink);
       } else if (
         msg.type === 'ingest' &&
         typeof msg.id === 'string' &&
         typeof msg.pageText === 'string'
       ) {
         // Sort the whole page into the dashboard's subject servers. On success the
-        // page is deleted (its notes now live in the dashboard, so the card goes
-        // with it); on failure the card shows the error and the page is untouched.
-        const id = msg.id;
-        askHandles.current[id] = runIngest(msg.pageText, {
-          onDone: () => {
-            delete askHandles.current[id];
-            onIngested();
-          },
-          onError: errMsg => {
-            delete askHandles.current[id];
-            inject(
-              `window.__aiDone(${JSON.stringify(id)}, ${JSON.stringify({
-                status: 'error',
-                msg: errMsg,
-              })});`,
-            );
-          },
-        });
+        // page is deleted (via the sink's onIngested); on failure the card shows
+        // the error and the page is untouched.
+        attachedIds.current.add(msg.id);
+        startIngest(msg.id, msg.pageText, sink);
       } else if (msg.type === 'pairScan' && typeof msg.id === 'string') {
         // Bare `/pair`: open the QR scanner; the scan result feeds pairing.
         setPairScan({ id: msg.id });
@@ -317,8 +269,8 @@ export default function NoteEditorWebView({
               pageId,
             );
             doneRec({ status: 'recording', file, startedAt });
-          } catch (e) {
-            doneRec({ status: 'error', msg: e instanceof Error ? e.message : String(e) });
+          } catch (err) {
+            doneRec({ status: 'error', msg: err instanceof Error ? err.message : String(err) });
           }
         })();
       } else if (msg.type === 'recordStop' && typeof msg.id === 'string') {
@@ -330,8 +282,8 @@ export default function NoteEditorWebView({
           try {
             const { file, ms } = await stopRecording();
             doneRec({ status: 'stopped', file, ms });
-          } catch (e) {
-            doneRec({ status: 'error', msg: e instanceof Error ? e.message : String(e) });
+          } catch (err) {
+            doneRec({ status: 'error', msg: err instanceof Error ? err.message : String(err) });
           }
         })();
       } else if (msg.type === 'recordExport' && typeof msg.file === 'string') {
@@ -368,94 +320,59 @@ export default function NoteEditorWebView({
         deleteRecordings([msg.file]).catch(() => {});
       } else if (msg.type === 'run' && typeof msg.id === 'string' && typeof msg.cmd === 'string') {
         // Stream a shell command from the paired laptop into the terminal card.
-        // stdout+stderr are merged (a real terminal interleaves them) and ANSI
-        // codes stripped for v1; the card finalizes on exit/error.
-        const id = msg.id;
-        runHandles.current[id] = runCommand(msg.cmd, undefined, {
-          onLog: (_stream, chunk) =>
-            inject(`window.__runLog(${JSON.stringify(id)}, ${JSON.stringify(stripAnsi(chunk))});`),
-          onExit: code => {
-            delete runHandles.current[id];
-            inject(`window.__runExit(${JSON.stringify(id)}, ${code});`);
-          },
-          onError: errMsg => {
-            delete runHandles.current[id];
-            inject(`window.__runError(${JSON.stringify(id)}, ${JSON.stringify(errMsg)});`);
-          },
-        });
+        // Registry-owned so it survives page swaps; stdout+stderr merged, ANSI
+        // stripped (handled in the registry); the card finalizes on exit/error.
+        attachedIds.current.add(msg.id);
+        startRun(msg.id, msg.cmd, sink);
       } else if (
         msg.type === 'runStdin' &&
         typeof msg.id === 'string' &&
         typeof msg.data === 'string'
       ) {
-        runHandles.current[msg.id]?.sendStdin(msg.data);
+        runStdin(msg.id, msg.data);
       } else if (msg.type === 'runSignal' && typeof msg.id === 'string') {
         // Ctrl-C: the process gets SIGINT and exits with its own code (the exit
-        // frame still flows, so the card finalizes via onExit above).
-        runHandles.current[msg.id]?.interrupt();
+        // frame still flows, so the card finalizes via the registry's onExit).
+        runInterrupt(msg.id);
       } else if (msg.type === 'runStop' && typeof msg.id === 'string') {
-        // Stop closes the socket, so no exit frame arrives — kill the session and
-        // finalize the card as "stopped" (negative code) ourselves.
+        // Stop closes the socket, so no exit frame arrives — tear the session down
+        // and finalize the card as "stopped" (negative code) ourselves.
         const id = msg.id;
-        runHandles.current[id]?.stop();
-        delete runHandles.current[id];
+        stopRun(id);
+        attachedIds.current.delete(id);
         inject(`window.__runExit(${JSON.stringify(id)}, -1);`);
       } else if (msg.type === 'code' && typeof msg.id === 'string' && typeof msg.project === 'string') {
         // Open a persistent Claude Code agent session in projects/<name> and
-        // stream its transcript into the /code card. Parsed stream events map to
-        // compact {t,...} blocks the editor's codeLive reducer folds in.
-        const id = msg.id;
-        codeHandles.current[id] = startCode(msg.project, undefined, {
-          onEvent: ev => {
-            const block = codeEventToBlock(ev);
-            if (block) inject(`window.__codeEvent(${JSON.stringify(id)}, ${JSON.stringify(block)});`);
-          },
-          onExit: () => {
-            // Finalize exactly once: the server sends an error frame *then* an
-            // exit frame on failure, so whichever lands first commits and the
-            // second (handle already gone) is ignored — else it would overwrite
-            // the transcript with an empty one (live is cleared on first commit).
-            if (!codeHandles.current[id]) return;
-            delete codeHandles.current[id];
-            inject(`window.__codeExit(${JSON.stringify(id)});`);
-          },
-          onError: errMsg => {
-            if (!codeHandles.current[id]) return;
-            delete codeHandles.current[id];
-            inject(`window.__codeError(${JSON.stringify(id)}, ${JSON.stringify(errMsg)});`);
-          },
-        });
+        // stream its transcript into the /code card (registry-owned so it survives
+        // page swaps). Parsed stream events map to compact {t,...} blocks.
+        attachedIds.current.add(msg.id);
+        startCodeRun(msg.id, msg.project, sink);
       } else if (
         msg.type === 'codePrompt' &&
         typeof msg.id === 'string' &&
         typeof msg.text === 'string'
       ) {
-        // Echo the prompt into the transcript, then feed it to the running session.
-        const id = msg.id;
-        inject(
-          `window.__codeEvent(${JSON.stringify(id)}, ${JSON.stringify({ t: 'user', text: msg.text })});`,
-        );
-        codeHandles.current[id]?.prompt(msg.text);
+        // Feed a follow-up turn to the running session; the registry echoes it into
+        // the transcript (and buffers it, so a re-attach still shows the prompt).
+        codePrompt(msg.id, msg.text);
+      } else if (msg.type === 'listProjects') {
+        // The editor is autocompleting `/code <name>`: fetch the current project
+        // dirs off the paired laptop and push them back so the menu can offer
+        // them. Fire-and-forget from the editor's side — an empty list (nothing
+        // paired / server down) just yields no suggestions.
+        fetchProjects().then(names => {
+          inject(`window.__setProjects(${JSON.stringify(names)});`);
+        });
       } else if (msg.type === 'codeStop' && typeof msg.id === 'string') {
         // Stop kills the session and closes the socket; finalize the card here
         // since no clean exit frame will arrive.
         const id = msg.id;
-        codeHandles.current[id]?.stop();
-        delete codeHandles.current[id];
+        stopRun(id);
+        attachedIds.current.delete(id);
         inject(`window.__codeExit(${JSON.stringify(id)});`);
       }
     },
-    [
-      initialContent,
-      hasTitle,
-      onChangeContent,
-      onSetTitle,
-      onIngested,
-      onOpenPage,
-      readOnly,
-      notebookId,
-      pageId,
-    ],
+    [initialContent, hasTitle, onChangeContent, onOpenPage, readOnly, notebookId, pageId, sink],
   );
 
   // Feed a resolved pairing outcome back into the /pair card, then close scanner.
@@ -472,18 +389,16 @@ export default function NoteEditorWebView({
     [],
   );
 
-  // Cancel any in-flight /ask streams and stop any live /run and /code sessions
-  // (killing the server-side processes) when this editor unmounts.
+  // On unmount, DETACH this WebView from every run it was rendering — the runs
+  // keep going in the registry (and keep buffering), so swiping back re-adopts
+  // them mid-stream. This is the crux of "swapping pages doesn't kill the output":
+  // we deliberately do NOT cancel here (that's only for an explicit Stop/×).
   useEffect(() => {
-    const handles = askHandles.current;
-    const runs = runHandles.current;
-    const codes = codeHandles.current;
+    const ids = attachedIds.current;
     return () => {
-      Object.values(handles).forEach(h => h.cancel());
-      Object.values(runs).forEach(h => h.stop());
-      Object.values(codes).forEach(h => h.stop());
+      for (const id of ids) detachRun(id, sink);
     };
-  }, []);
+  }, [sink]);
 
   // When a clip finishes on its own, flip its card's button back to Play. Also
   // stop playback when the editor goes away, so audio doesn't outlive the view.

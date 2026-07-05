@@ -93,15 +93,20 @@ func main() {
 		log.Fatalf("pairing: %v", err)
 	}
 
+	// Durable-session registry shared by the three streaming endpoints (/run,
+	// /exec, /code): it keeps a run's process alive and buffering when the socket
+	// drops, so the phone can background/reconnect without killing the work.
+	sessions := newSessionRegistry()
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprintln(w, "ok")
 	})
 	mux.HandleFunc("/pair", pairHandler(pr))
-	mux.HandleFunc("/run", runHandler(token, *workdir, *root, *threshold, *runTimeout, boot))
+	mux.HandleFunc("/run", runHandler(token, *workdir, *root, *threshold, *runTimeout, boot, sessions))
 	// Direct shell channel for /run <cmd> — streams stdout/stderr live, no Claude.
 	// Runs in the same base workdir Claude uses. Gated behind -allow-exec.
-	mux.HandleFunc("/exec", execHandler(token, runDir, *allowExec))
+	mux.HandleFunc("/exec", execHandler(token, runDir, *allowExec, sessions))
 	// Persistent Claude Code agent session for /code <name>. Each session opens
 	// projects/<slug> (created if missing) under the projects dir — <root>/projects
 	// when -root is set, else <workdir>/projects. Gated behind -allow-code.
@@ -109,7 +114,10 @@ func main() {
 	if *root != "" {
 		codeBase = runDir // already <root>/projects
 	}
-	mux.HandleFunc("/code", agentHandler(token, codeBase, *allowCode))
+	mux.HandleFunc("/code", agentHandler(token, codeBase, *allowCode, sessions))
+	// Read-only listing of projects/<name> dirs so the phone can autocomplete
+	// `/code <name>`. Same base and enable flag as /code; empty list when off.
+	mux.HandleFunc("/projects", projectsHandler(token, codeBase, *allowCode))
 	// Read-only dashboard state + the optional merge-approval action. Both only
 	// touch the scaffold's data files, so they need no Claude run.
 	mux.HandleFunc("/state", stateHandler(token, *root))

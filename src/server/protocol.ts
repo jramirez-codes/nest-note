@@ -48,6 +48,10 @@ export type StreamEvent =
   // these to type the answer out live; the closing assistant-text is the
   // authoritative full turn.
   | { kind: 'assistant-delta'; text: string; raw: unknown }
+  // A user turn the client sent, echoed back by the server so it lands in the
+  // transcript and replays on reconnect. Synthesized by the /code client from the
+  // server's `userprompt` frame (not a Claude stream line), so it has no `raw`.
+  | { kind: 'user-prompt'; text: string }
   | { kind: 'tool-use'; name: string; input: unknown; raw: unknown }
   // The output of a tool call, echoed back in a `user` frame. `isError` marks a
   // failed tool. Consumers (e.g. the /code agent card) render it under its call.

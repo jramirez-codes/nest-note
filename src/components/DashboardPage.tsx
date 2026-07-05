@@ -37,6 +37,8 @@ import {
   completeCard,
   dismissCard,
   fetchDashboardState,
+  getCachedDashboardState,
+  setCachedDashboardState,
   type DashboardCard,
   type DashboardState,
   type DashboardSuggestion,
@@ -339,7 +341,10 @@ function DashboardPage({
   onSelectNotebook,
 }: DashboardPageProps) {
   const colors = useTheme();
-  const [state, setState] = useState<DashboardState | null>(null);
+  // Seed from the module cache so a remount (the common case — swiping back to the
+  // dashboard, which the pager unmounts at rest) paints the last-known cards at once
+  // instead of flashing the spinner. A silent background refresh then reconciles.
+  const [state, setState] = useState<DashboardState | null>(() => getCachedDashboardState());
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -353,10 +358,14 @@ function DashboardPage({
   // Guard against setState after unmount / after a newer fetch superseded this one.
   const reqSeq = useRef(0);
 
-  const load = useCallback(async (mode: 'initial' | 'refresh') => {
+  // 'initial' shows the centered loader (only when there's nothing on screen yet),
+  // 'refresh' drives the pull-to-refresh control, and 'silent' reconciles in the
+  // background with no visible indicator — used for auto-refreshes when cards are
+  // already showing, so returning to the dashboard never flashes a spinner.
+  const load = useCallback(async (mode: 'initial' | 'refresh' | 'silent') => {
     const seq = ++reqSeq.current;
     if (mode === 'refresh') setRefreshing(true);
-    else setLoading(true);
+    else if (mode === 'initial') setLoading(true);
     try {
       const data = await fetchDashboardState();
       if (seq !== reqSeq.current) return;
@@ -373,15 +382,23 @@ function DashboardPage({
     }
   }, []);
 
+  // Keep the module cache in step with the latest state (fresh fetches and optimistic
+  // edits alike), so the next remount seeds from current data rather than a stale snapshot.
+  useEffect(() => {
+    if (state) setCachedDashboardState(state);
+  }, [state]);
+
   // Fetch on mount and whenever the page is flipped to (so ingesting a page and
-  // swiping here shows the freshly filed notes). Skip while already loading.
+  // swiping here shows the freshly filed notes). When cards are already on screen
+  // (seeded from cache, or previously loaded) the refresh is silent — no spinner.
   const wasActive = useRef(false);
   useEffect(() => {
-    if (isActive && !wasActive.current) load(state ? 'refresh' : 'initial');
+    if (isActive && !wasActive.current) load('silent');
     wasActive.current = isActive;
-  }, [isActive, load, state]);
+  }, [isActive, load]);
   useEffect(() => {
-    load('initial');
+    // A cold start with no cache shows the loader; a cache hit reconciles silently.
+    load(getCachedDashboardState() ? 'silent' : 'initial');
     return () => {
       reqSeq.current++; // invalidate any in-flight fetch on unmount
     };

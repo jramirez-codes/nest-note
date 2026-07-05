@@ -10,11 +10,11 @@
  */
 
 import type { Transport, SecureSocket } from './transport';
-import type { ServerAddress } from './client';
+import { type ServerAddress, type SessionOpts, MAX_RECONNECT, reconnectDelayMs } from './client';
 
 /** One server→client frame off the /exec socket (server/exec.go emits these). */
 interface ExecFrame {
-  type?: 'log' | 'exit' | 'error';
+  type?: 'log' | 'exit' | 'error' | 'gone';
   stream?: 'stdout' | 'stderr';
   data?: string;
   code?: number;
@@ -76,11 +76,14 @@ export function exec(
   cmd: string,
   dir: string | undefined,
   cb: ExecCallbacks,
+  session: SessionOpts,
 ): ExecHandle {
   let sock: SecureSocket | null = null;
   let killed = false;
+  let terminated = false; // saw exit / gone — a clean end, no reconnect
   let closed = false;
-  // Outbound frames issued before the socket is open, flushed on open in order.
+  let attempt = 0;
+  // Outbound frames issued while the socket is down, flushed on (re)open in order.
   const pending: string[] = [];
 
   let settle!: (r: ExecResult) => void;
@@ -88,7 +91,7 @@ export function exec(
     settle = resolve;
   });
 
-  // Last exit code / error seen, reported when the socket finally closes.
+  // Last exit code / error seen, reported when the session finally ends.
   let exitCode: number | null = null;
   let errorMsg: string | null = null;
 
@@ -104,58 +107,97 @@ export function exec(
     else pending.push(text);
   };
 
-  t.openPinnedSocket(`${origin(a)}/exec`, a.pin, { Authorization: `Bearer ${token}` })
-    .then(s => {
-      sock = s;
-      if (killed) {
-        s.close();
-        finish();
-        return;
-      }
-
-      s.onMessage(text => {
-        const f = parseExecFrame(text);
-        if (!f) return;
-        try {
-          if (f.type === 'log' && f.data) {
-            cb.onLog(f.stream === 'stderr' ? 'stderr' : 'stdout', f.data);
-          } else if (f.type === 'exit') {
-            exitCode = typeof f.code === 'number' ? f.code : -1;
-            cb.onExit(exitCode);
-          } else if (f.type === 'error') {
-            errorMsg = f.message || 'The command failed on the server.';
-            cb.onError(errorMsg);
-          }
-        } catch {
-          // A misbehaving UI callback must not tear down the stream.
-        }
-      });
-      s.onError(err => {
-        if (closed) return;
-        errorMsg = err.message;
-        try {
-          cb.onError(err.message);
-        } catch {
-          /* ignore */
-        }
-        finish();
-      });
-      s.onClose(() => finish());
-
-      // First frame states the command; then flush any buffered input.
-      s.send(JSON.stringify({ cmd, dir: dir ?? '' }));
-      for (const text of pending) s.send(text);
-      pending.length = 0;
-    })
-    .catch(err => {
-      errorMsg = err instanceof Error ? err.message : String(err);
+  const reconnect = (): void => {
+    if (attempt >= MAX_RECONNECT) {
+      errorMsg = 'Lost connection to the command.';
       try {
         cb.onError(errorMsg);
       } catch {
         /* ignore */
       }
       finish();
-    });
+      return;
+    }
+    attempt++;
+    setTimeout(() => connect(true), reconnectDelayMs(attempt));
+  };
+
+  const connect = (resumeOnly: boolean): void => {
+    t.openPinnedSocket(`${origin(a)}/exec`, a.pin, { Authorization: `Bearer ${token}` })
+      .then(s => {
+        sock = s;
+        if (killed) {
+          s.close();
+          finish();
+          return;
+        }
+
+        s.onMessage(text => {
+          attempt = 0; // a healthy frame resets the reconnect budget
+          const f = parseExecFrame(text);
+          if (!f) return;
+          try {
+            if (f.type === 'log' && f.data) {
+              cb.onLog(f.stream === 'stderr' ? 'stderr' : 'stdout', f.data);
+            } else if (f.type === 'exit') {
+              exitCode = typeof f.code === 'number' ? f.code : -1;
+              terminated = true;
+              cb.onExit(exitCode);
+              s.close();
+            } else if (f.type === 'error') {
+              errorMsg = f.message || 'The command failed on the server.';
+              cb.onError(errorMsg);
+            } else if (f.type === 'gone') {
+              terminated = true;
+              errorMsg = 'The command ended and can no longer be resumed.';
+              cb.onError(errorMsg);
+              s.close();
+            }
+          } catch {
+            // A misbehaving UI callback must not tear down the stream.
+          }
+        });
+        s.onError(() => {}); // surfaced via onClose
+        s.onClose(() => {
+          sock = null;
+          if (killed || terminated) {
+            finish();
+            return;
+          }
+          reconnect();
+        });
+
+        // (Re)connect handshake: name the session (and, for a fresh start, the
+        // command). A reconnect resets the consumer's view first, since the server
+        // replays the whole buffered tail.
+        if (resumeOnly) session.onReset?.();
+        s.send(
+          JSON.stringify({ sessionId: session.id, resumeOnly, cmd: resumeOnly ? '' : cmd, dir: dir ?? '' }),
+        );
+        for (const text of pending) s.send(text);
+        pending.length = 0;
+      })
+      .catch(err => {
+        sock = null;
+        if (killed || terminated) {
+          finish();
+          return;
+        }
+        if (resumeOnly) {
+          reconnect();
+        } else {
+          errorMsg = err instanceof Error ? err.message : String(err);
+          try {
+            cb.onError(errorMsg);
+          } catch {
+            /* ignore */
+          }
+          finish();
+        }
+      });
+  };
+
+  connect(session.resumeOnly ?? false);
 
   return {
     done,
@@ -167,7 +209,8 @@ export function exec(
     },
     kill() {
       killed = true;
-      // Ask the server to kill (in case the close race loses), then drop the socket.
+      // Ask the server to kill (durable sessions don't die on a mere disconnect),
+      // then drop the socket.
       if (sock) {
         sendFrame({ type: 'kill' });
         sock.close();
