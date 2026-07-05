@@ -15,6 +15,8 @@ import {
   type AskHandle,
 } from '../server/aiController';
 import { runCommand, type RunHandle } from '../server/codeController';
+import { startCode, type CodeHandle } from '../server/agentController';
+import type { StreamEvent } from '../server/protocol';
 import {
   ensureRecordingPermissions,
   startRecording,
@@ -35,6 +37,30 @@ import QrPairModal from './QrPairModal';
 const ANSI_RE = /[\u001b\u009b][[\]()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g;
 function stripAnsi(s: string): string {
   return s.replace(ANSI_RE, '').replace(/\r\n/g, '\n');
+}
+
+/** One compact transcript block the editor's codeLive reducer understands. */
+type CodeBlock =
+  | { t: 'delta'; text: string }
+  | { t: 'text'; text: string }
+  | { t: 'tool'; name: string; input: unknown }
+  | { t: 'toolresult'; text: string; isError: boolean };
+
+// Map a parsed Claude stream event to a /code transcript block, or null for the
+// events the card doesn't render (session init, per-turn result markers, other).
+function codeEventToBlock(ev: StreamEvent): CodeBlock | null {
+  switch (ev.kind) {
+    case 'assistant-delta':
+      return { t: 'delta', text: ev.text };
+    case 'assistant-text':
+      return { t: 'text', text: ev.text };
+    case 'tool-use':
+      return { t: 'tool', name: ev.name, input: ev.input };
+    case 'tool-result':
+      return { t: 'toolresult', text: ev.text, isError: ev.isError };
+    default:
+      return null;
+  }
 }
 
 // react-native-webview@14's class-component typings resolve to `never` under
@@ -103,6 +129,9 @@ export default function NoteEditorWebView({
   // Live /run terminal sessions keyed by card id, so we can feed stdin/signals
   // and tear them down when the note is swiped away / unmounted.
   const runHandles = useRef<Record<string, RunHandle>>({});
+  // Live /code agent sessions keyed by card id, so we can send follow-up prompts
+  // and tear them down when the note is swiped away / unmounted.
+  const codeHandles = useRef<Record<string, CodeHandle>>({});
   // The /record card id whose clip is currently playing (only one at a time), so
   // starting another or a natural end can flip the right card's button back.
   const playingId = useRef<string | null>(null);
@@ -127,6 +156,7 @@ export default function NoteEditorWebView({
         title?: string;
         cmd?: string;
         data?: string;
+        project?: string;
       };
       try {
         msg = JSON.parse(e.nativeEvent.data);
@@ -370,6 +400,49 @@ export default function NoteEditorWebView({
         runHandles.current[id]?.stop();
         delete runHandles.current[id];
         inject(`window.__runExit(${JSON.stringify(id)}, -1);`);
+      } else if (msg.type === 'code' && typeof msg.id === 'string' && typeof msg.project === 'string') {
+        // Open a persistent Claude Code agent session in projects/<name> and
+        // stream its transcript into the /code card. Parsed stream events map to
+        // compact {t,...} blocks the editor's codeLive reducer folds in.
+        const id = msg.id;
+        codeHandles.current[id] = startCode(msg.project, undefined, {
+          onEvent: ev => {
+            const block = codeEventToBlock(ev);
+            if (block) inject(`window.__codeEvent(${JSON.stringify(id)}, ${JSON.stringify(block)});`);
+          },
+          onExit: () => {
+            // Finalize exactly once: the server sends an error frame *then* an
+            // exit frame on failure, so whichever lands first commits and the
+            // second (handle already gone) is ignored — else it would overwrite
+            // the transcript with an empty one (live is cleared on first commit).
+            if (!codeHandles.current[id]) return;
+            delete codeHandles.current[id];
+            inject(`window.__codeExit(${JSON.stringify(id)});`);
+          },
+          onError: errMsg => {
+            if (!codeHandles.current[id]) return;
+            delete codeHandles.current[id];
+            inject(`window.__codeError(${JSON.stringify(id)}, ${JSON.stringify(errMsg)});`);
+          },
+        });
+      } else if (
+        msg.type === 'codePrompt' &&
+        typeof msg.id === 'string' &&
+        typeof msg.text === 'string'
+      ) {
+        // Echo the prompt into the transcript, then feed it to the running session.
+        const id = msg.id;
+        inject(
+          `window.__codeEvent(${JSON.stringify(id)}, ${JSON.stringify({ t: 'user', text: msg.text })});`,
+        );
+        codeHandles.current[id]?.prompt(msg.text);
+      } else if (msg.type === 'codeStop' && typeof msg.id === 'string') {
+        // Stop kills the session and closes the socket; finalize the card here
+        // since no clean exit frame will arrive.
+        const id = msg.id;
+        codeHandles.current[id]?.stop();
+        delete codeHandles.current[id];
+        inject(`window.__codeExit(${JSON.stringify(id)});`);
       }
     },
     [
@@ -399,14 +472,16 @@ export default function NoteEditorWebView({
     [],
   );
 
-  // Cancel any in-flight /ask streams and stop any live /run sessions (killing
-  // the server-side processes) when this editor unmounts.
+  // Cancel any in-flight /ask streams and stop any live /run and /code sessions
+  // (killing the server-side processes) when this editor unmounts.
   useEffect(() => {
     const handles = askHandles.current;
     const runs = runHandles.current;
+    const codes = codeHandles.current;
     return () => {
       Object.values(handles).forEach(h => h.cancel());
       Object.values(runs).forEach(h => h.stop());
+      Object.values(codes).forEach(h => h.stop());
     };
   }, []);
 

@@ -28,6 +28,11 @@ const SLASH_COMMANDS = [
     apply: '/run ',
   },
   {
+    label: '/code',
+    detail: 'Start a Claude Code agent in a project on the paired laptop — chat, watch its tools run',
+    apply: '/code ',
+  },
+  {
     label: '/pair',
     detail: 'Pair a device by QR code or payload',
     apply: '/pair ',
@@ -162,6 +167,31 @@ export function aiCommandOnEnter(view) {
       selection: { anchor: line.from + insert.length },
     });
     post({ type: 'run', id, cmd: runCmd[1] });
+    return true;
+  }
+
+  // `/code <name>`: open a persistent Claude Code agent session in projects/<name>
+  // on the paired laptop (the dir is created if missing). The whole argument is
+  // the project name; the first prompt is entered in the card, which threads
+  // follow-ups back into the same long-lived session. Pinned /code socket lives
+  // on the RN side; this only creates the card and posts the intent by id.
+  const codeCmd = /^\/code\s+(.+\S)\s*$/.exec(text);
+  if (codeCmd) {
+    const id = genId();
+    const marker = encodeAiMarker({
+      v: 1,
+      kind: 'code',
+      id,
+      project: codeCmd[1],
+      status: 'running',
+      open: true,
+    });
+    const insert = marker + '\n';
+    view.dispatch({
+      changes: { from: line.from, to: line.to, insert },
+      selection: { anchor: line.from + insert.length },
+    });
+    post({ type: 'code', id, project: codeCmd[1] });
     return true;
   }
 

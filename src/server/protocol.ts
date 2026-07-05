@@ -49,6 +49,9 @@ export type StreamEvent =
   // authoritative full turn.
   | { kind: 'assistant-delta'; text: string; raw: unknown }
   | { kind: 'tool-use'; name: string; input: unknown; raw: unknown }
+  // The output of a tool call, echoed back in a `user` frame. `isError` marks a
+  // failed tool. Consumers (e.g. the /code agent card) render it under its call.
+  | { kind: 'tool-result'; text: string; isError: boolean; raw: unknown }
   | { kind: 'result'; text: string; isError: boolean; raw: unknown }
   | { kind: 'other'; type: string; raw: unknown };
 
@@ -57,6 +60,26 @@ interface RawContentBlock {
   text?: string;
   name?: string;
   input?: unknown;
+  // tool_result blocks carry their output here — a bare string, or an array of
+  // {type:'text', text} parts, plus an error flag.
+  content?: unknown;
+  is_error?: boolean;
+}
+
+// A tool_result's `content` is either a plain string or an array of text parts;
+// flatten both to a single string for display.
+function toolResultText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map(part => {
+        if (typeof part === 'string') return part;
+        const p = part as { text?: string };
+        return typeof p?.text === 'string' ? p.text : '';
+      })
+      .join('');
+  }
+  return '';
 }
 
 // One partial-message envelope: {type:'stream_event', event:{...}}. We only care
@@ -108,6 +131,25 @@ export function parseStreamLine(line: string): StreamEvent[] {
       }
       // An assistant turn with no renderable blocks still deserves a marker.
       return events.length ? events : [{ kind: 'other', type: 'assistant', raw: msg }];
+    }
+
+    case 'user': {
+      // The CLI reports tool output as a `user` frame whose content holds
+      // tool_result blocks. Everything else in a user frame is our own echoed
+      // prompt, which the UI already shows, so it needs no event.
+      const blocks = msg.message?.content ?? [];
+      const events: StreamEvent[] = [];
+      for (const b of blocks) {
+        if (b.type === 'tool_result') {
+          events.push({
+            kind: 'tool-result',
+            text: toolResultText(b.content),
+            isError: !!b.is_error,
+            raw: msg,
+          });
+        }
+      }
+      return events.length ? events : [{ kind: 'other', type: 'user', raw: msg }];
     }
 
     case 'stream_event': {

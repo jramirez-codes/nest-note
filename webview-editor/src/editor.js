@@ -22,6 +22,9 @@ import {
   setRecPlay,
   setRunLog,
   clearRunLog,
+  codeLiveField,
+  appendCodeEvent,
+  clearCodeLive,
   cachePreview,
 } from './state.js';
 import { broadcastPreview } from './answerView.js';
@@ -124,6 +127,7 @@ const extensions = [
   askLiveField,
   recPlayField,
   runLiveField,
+  codeLiveField,
   cardField,
   previewFetcher,
   codeBlocks,
@@ -259,6 +263,52 @@ window.__runExit = function (id, code) {
 // RN calls this if the run couldn't start or the connection dropped mid-run.
 window.__runError = function (id, msg) {
   commitRun(id, { status: 'error', msg });
+};
+
+// RN streams /code agent events here as the session produces them (the user's
+// prompts, assistant prose/tokens, tool calls and results). Like __runLog this
+// only grows a live field, so the transcript builds in place without touching
+// the document. `ev` is a compact {t, ...} block (see reduceCodeItems).
+window.__codeEvent = function (id, ev) {
+  view.dispatch({ effects: appendCodeEvent.of({ id, ev }) });
+};
+
+// A finished /code session keeps no live state: fold a capped snapshot of its
+// transcript into the marker (so reopening the note shows what happened) and drop
+// the live entry. `patch` is { status:'done' } on a clean exit or
+// { status:'error', msg } if it failed.
+const CODE_DOC_ITEMS = 60; // persist at most the newest N blocks
+function commitCode(id, patch) {
+  const live = view.state.field(codeLiveField)[id];
+  let items = live ? live.items : [];
+  // Drop the transient "open" flag and cap how much we persist.
+  items = items
+    .slice(Math.max(0, items.length - CODE_DOC_ITEMS))
+    .map(({ open, ...rest }) => rest);
+  const found = findAiLine(view.state, id);
+  const effects = [clearCodeLive.of(id)];
+  if (!found) {
+    view.dispatch({ effects });
+    return;
+  }
+  view.dispatch({
+    changes: {
+      from: found.from,
+      to: found.to,
+      insert: encodeAiMarker({ ...found.obj, ...patch, items }),
+    },
+    effects,
+  });
+}
+
+// RN calls this when the agent session exits (Claude finished / was stopped).
+window.__codeExit = function (id) {
+  commitCode(id, { status: 'done' });
+};
+
+// RN calls this if the session couldn't start or the connection dropped.
+window.__codeError = function (id, msg) {
+  commitCode(id, { status: 'error', msg });
 };
 
 // RN calls this when a /clean run finishes: swap the whole document for the

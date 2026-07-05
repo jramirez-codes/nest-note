@@ -27,6 +27,7 @@ func main() {
 		runTimeout = flag.Duration("run-timeout", 2*time.Minute, "max time for a single Claude run before it is killed and reported as failed")
 		pairTTL    = flag.Duration("pair-ttl", 10*time.Minute, "how long the pairing code stays valid")
 		allowExec  = flag.Bool("allow-exec", false, "enable /exec: the direct \"/run <cmd>\" shell channel. OFF by default — it runs arbitrary commands as this user, gated only by the pinned tunnel + token")
+		allowCode  = flag.Bool("allow-code", false, "enable /code: a persistent Claude Code agent session in projects/<name> with every tool auto-accepted (bypassPermissions). OFF by default — full code execution as this user, gated only by the pinned tunnel + token")
 	)
 	flag.Parse()
 
@@ -101,6 +102,14 @@ func main() {
 	// Direct shell channel for /run <cmd> — streams stdout/stderr live, no Claude.
 	// Runs in the same base workdir Claude uses. Gated behind -allow-exec.
 	mux.HandleFunc("/exec", execHandler(token, runDir, *allowExec))
+	// Persistent Claude Code agent session for /code <name>. Each session opens
+	// projects/<slug> (created if missing) under the projects dir — <root>/projects
+	// when -root is set, else <workdir>/projects. Gated behind -allow-code.
+	codeBase := filepath.Join(*workdir, "projects")
+	if *root != "" {
+		codeBase = runDir // already <root>/projects
+	}
+	mux.HandleFunc("/code", agentHandler(token, codeBase, *allowCode))
 	// Read-only dashboard state + the optional merge-approval action. Both only
 	// touch the scaffold's data files, so they need no Claude run.
 	mux.HandleFunc("/state", stateHandler(token, *root))
@@ -156,6 +165,9 @@ func main() {
 	}
 	if *allowExec {
 		fmt.Printf("  exec       ENABLED at wss://%s/exec  (/run <cmd> runs arbitrary shell as this user)\n", listenAddr)
+	}
+	if *allowCode {
+		fmt.Printf("  code       ENABLED at wss://%s/code  (/code <name> runs a Claude agent in projects/<name>, tools auto-accepted)\n", listenAddr)
 	}
 	fmt.Printf("  spki pin   %s\n", pin)
 	fmt.Printf("  pair code  %s  (valid %s, single use)\n", pr.code, *pairTTL)

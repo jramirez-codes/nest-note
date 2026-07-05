@@ -36,6 +36,9 @@ const SEC_AGENT = '[agent]';
 // A /clean review marker stashes the pre-clean document here, so Reject can
 // restore it — multi-line, like the answer, so it's the block's last section.
 const SEC_BACKUP = '[backup]';
+// The /code agent transcript, stored as a single line of JSON (an array of typed
+// blocks) — see encodeAiMarker / parseBlockBody.
+const SEC_TRANSCRIPT = '[transcript]';
 // A /run terminal card stashes its final output tail here — multi-line like the
 // answer/backup, so it's the block's last section.
 const SEC_OUTPUT = '[output]';
@@ -80,7 +83,7 @@ function unescLine(val) {
 function escBody(val) {
   return String(val)
     .replace(/-->/g, '--&gt;')
-    .replace(/^\[(user|agent|backup|output)\]$/gm, '&#91;$1]');
+    .replace(/^\[(user|agent|backup|output|transcript)\]$/gm, '&#91;$1]');
 }
 function unescBody(val) {
   return val.replace(/&#91;/g, '[').replace(/--&gt;/g, '-->');
@@ -96,7 +99,7 @@ function coerce(key, val) {
 // question/answer becomes a header line, in object-key order (so the readable
 // order is v, kind, id, open, status, …).
 export function encodeAiMarker(obj) {
-  const { q, a, backup, turns, out, ...meta } = obj;
+  const { q, a, backup, turns, out, items, ...meta } = obj;
   // Chat cards keep their handle even when done: the id is how a later reply
   // (fired from the card's follow-up box) threads back into the same run. Record
   // cards keep it too — Record/Stop/Export all address the card by id.
@@ -128,6 +131,11 @@ export function encodeAiMarker(obj) {
   } else if (obj.kind === 'run' && out != null) {
     lines.push(SEC_OUTPUT);
     lines.push(escBody(out));
+  } else if (obj.kind === 'code' && items != null) {
+    // JSON.stringify emits no literal newlines, so the whole transcript is one
+    // body line; escBody only has to guard the comment terminator.
+    lines.push(SEC_TRANSCRIPT);
+    lines.push(escBody(JSON.stringify(items)));
   }
   lines.push(CLOSE_LINE);
   return lines.join('\n');
@@ -140,7 +148,14 @@ function parseBlockBody(bodyLines) {
   let i = 0;
   for (; i < bodyLines.length; i++) {
     const t = bodyLines[i];
-    if (t === SEC_USER || t === SEC_AGENT || t === SEC_BACKUP || t === SEC_OUTPUT) break;
+    if (
+      t === SEC_USER ||
+      t === SEC_AGENT ||
+      t === SEC_BACKUP ||
+      t === SEC_OUTPUT ||
+      t === SEC_TRANSCRIPT
+    )
+      break;
     const m = HEADER_RE.exec(t);
     if (m) obj[m[1]] = coerce(m[1], unescLine(m[2]));
   }
@@ -181,6 +196,12 @@ function parseBlockBody(bodyLines) {
     obj.backup = unescBody(bodyLines.slice(i + 1).join('\n'));
   } else if (bodyLines[i] === SEC_OUTPUT) {
     obj.out = unescBody(bodyLines.slice(i + 1).join('\n'));
+  } else if (bodyLines[i] === SEC_TRANSCRIPT) {
+    try {
+      obj.items = JSON.parse(unescBody(bodyLines.slice(i + 1).join('\n')));
+    } catch {
+      obj.items = [];
+    }
   }
   return obj.kind ? obj : null;
 }

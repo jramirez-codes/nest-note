@@ -85,6 +85,95 @@ export const runLiveField = StateField.define({
   },
 });
 
+// Live transcript for /code agent cards, keyed by session id: { items, status }.
+// A persistent Claude Code session streams a mix of blocks — the user's prompts,
+// assistant prose, tool calls and their results — and RN feeds them here as
+// discrete events (window.__codeEvent) so the transcript grows WITHOUT rewriting
+// the document, exactly like runLive. On completion a capped snapshot of `items`
+// is committed to the marker once and the live entry cleared.
+//
+// Each item is one of:
+//   { type:'user',   text }              a prompt the user sent
+//   { type:'text',   text, open }        assistant prose (open while streaming)
+//   { type:'tool',   name, input }       a tool call
+//   { type:'result', text, isError }     a tool's output
+const CODE_ITEM_CAP = 400; // keep the newest N blocks in memory
+const CODE_TEXT_CAP = 16 * 1024; // per assistant text block
+export const appendCodeEvent = StateEffect.define();
+export const setCodeStatus = StateEffect.define();
+export const clearCodeLive = StateEffect.define();
+export const codeLiveField = StateField.define({
+  create: () => Object.create(null),
+  update(value, tr) {
+    let next = value;
+    for (const e of tr.effects) {
+      if (e.is(appendCodeEvent)) {
+        const { id, ev } = e.value;
+        const prev = next[id] || { items: [], status: 'running' };
+        next = { ...next, [id]: { ...prev, items: reduceCodeItems(prev.items, ev) } };
+      } else if (e.is(setCodeStatus)) {
+        const { id, status } = e.value;
+        const prev = next[id] || { items: [], status: 'running' };
+        next = { ...next, [id]: { ...prev, status } };
+      } else if (e.is(clearCodeLive)) {
+        if (next[e.value] !== undefined) {
+          next = { ...next };
+          delete next[e.value];
+        }
+      }
+    }
+    return next;
+  },
+});
+
+// Fold one streamed event into the transcript. Assistant tokens (delta) extend
+// the open text block so prose types out in place; anything else closes it. The
+// final full-text block (t:'text') replaces whatever the deltas built, so a
+// dropped delta can't leave the block subtly wrong.
+function reduceCodeItems(items, ev) {
+  const out = items.slice();
+  const last = out[out.length - 1];
+  const openText = last && last.type === 'text' && last.open ? last : null;
+  const closeOpen = () => {
+    if (openText) out[out.length - 1] = { ...openText, open: false };
+  };
+  switch (ev.t) {
+    case 'delta':
+      if (openText) {
+        out[out.length - 1] = {
+          ...openText,
+          text: capText(openText.text + (ev.text || '')),
+        };
+      } else {
+        out.push({ type: 'text', text: capText(ev.text || ''), open: true });
+      }
+      break;
+    case 'text':
+      if (openText) out[out.length - 1] = { type: 'text', text: capText(ev.text || ''), open: false };
+      else out.push({ type: 'text', text: capText(ev.text || ''), open: false });
+      break;
+    case 'tool':
+      closeOpen();
+      out.push({ type: 'tool', name: ev.name || '', input: ev.input || '' });
+      break;
+    case 'toolresult':
+      closeOpen();
+      out.push({ type: 'result', text: ev.text || '', isError: !!ev.isError });
+      break;
+    case 'user':
+      closeOpen();
+      out.push({ type: 'user', text: ev.text || '' });
+      break;
+    default:
+      return items; // unknown event — no change
+  }
+  return out.length > CODE_ITEM_CAP ? out.slice(out.length - CODE_ITEM_CAP) : out;
+}
+
+function capText(s) {
+  return s.length > CODE_TEXT_CAP ? s.slice(s.length - CODE_TEXT_CAP) : s;
+}
+
 // Which /record card (by id) is currently playing back, so its button shows
 // Pause. Ephemeral like askLive — playback state never touches the document.
 // RN drives it via window.__recPlay (set true on play, false on pause/end).

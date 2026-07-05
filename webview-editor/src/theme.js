@@ -698,20 +698,87 @@ const components = {
     '.cm-run-stdin:focus': { borderColor: c.teal },
     '.cm-run-btn': {
       flexShrink: '0',
+      display: 'inline-flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: '34px',
       height: '34px',
-      padding: '0 12px',
+      padding: '0',
       border: `1px solid ${c.surface1}`,
       borderRadius: '9px',
       backgroundColor: c.surface0,
       color: c.text,
-      fontFamily: '-apple-system, Roboto, sans-serif',
-      fontSize: '13px',
-      fontWeight: '600',
       cursor: 'pointer',
       userSelect: 'none',
     },
-    '.cm-run-intr': { fontFamily: 'ui-monospace, Menlo, monospace' },
+    '.cm-run-btn svg': { width: '18px', height: '18px' },
     '.cm-run-stop': { borderColor: c.red, color: c.red },
+
+    // --- /code agent card ---------------------------------------------------
+    // Reuses the run card's head/badge/footer; the body is a scrolling
+    // transcript of typed blocks rather than a single terminal log.
+    '.cm-code-proj': { color: c.mauve },
+    '.cm-code-log': {
+      margin: '10px 0 0 0',
+      padding: '4px 2px',
+      maxHeight: '420px',
+      overflow: 'auto',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '8px',
+      WebkitOverflowScrolling: 'touch',
+    },
+    '.cm-code-hint': { color: c.overlay1, fontSize: '13px', fontStyle: 'italic', padding: '4px 2px' },
+    // A prompt the user sent — set off with an accent rail on the left.
+    '.cm-code-user': {
+      padding: '6px 10px',
+      borderLeft: `2px solid ${c.mauve}`,
+      color: c.text,
+      fontSize: '14px',
+      lineHeight: '1.5',
+      whiteSpace: 'pre-wrap',
+      wordBreak: 'break-word',
+    },
+    // Assistant prose (plain text in v1).
+    '.cm-code-text': {
+      padding: '2px 2px',
+      color: c.text,
+      fontSize: '14px',
+      lineHeight: '1.55',
+      whiteSpace: 'pre-wrap',
+      wordBreak: 'break-word',
+    },
+    // A tool call: monospace, muted, the name accented.
+    '.cm-code-tool': {
+      padding: '5px 10px',
+      borderRadius: '7px',
+      backgroundColor: c.mantle,
+      color: c.subtext0,
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+      fontSize: '12px',
+      lineHeight: '1.4',
+      whiteSpace: 'pre-wrap',
+      wordBreak: 'break-word',
+    },
+    '.cm-code-tool-name': { color: c.yellow, fontWeight: '600' },
+    '.cm-code-tool-args': { color: c.overlay1 },
+    // A tool result: dimmer, in the crust well like the terminal log.
+    '.cm-code-result': {
+      padding: '6px 10px',
+      backgroundColor: c.crust,
+      border: `1px solid ${c.surface0}`,
+      borderRadius: '7px',
+      color: c.subtext0,
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+      fontSize: '11.5px',
+      lineHeight: '1.45',
+      whiteSpace: 'pre-wrap',
+      wordBreak: 'break-word',
+    },
+    '.cm-code-result-err': { color: c.red, borderColor: c.red },
+    '.cm-code-prompt': { fontSize: '14px' },
+    '.cm-code-prompt:focus': { borderColor: c.mauve },
+    '.cm-code-send': { borderColor: c.mauve, color: c.mauve },
 
     // --- Slash-command autocomplete menu ------------------------------------
     // Each row stacks the command name over a wrapping description, so the
