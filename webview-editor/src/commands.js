@@ -50,23 +50,32 @@ const SLASH_COMMANDS = [
 ];
 
 // Only fires when the caret is on a line that is a lone `/word` (the slash at
-// column 0), so slashes inside prose or URLs never pop the menu.
+// column 0), so slashes inside prose or URLs never pop the menu. One space right
+// after the slash is tolerated (`/ ask` ≡ `/ask`): the `1`→`/` line-start
+// shortcut (see lineStartReplace) leaves mobile keyboards autocorrecting the
+// slash back to `1` when a letter lands on it immediately; typing a space first
+// breaks that composition, so the spaced form has to trigger the menu too.
 export function slashCommandSource(context) {
   const line = context.state.doc.lineAt(context.pos);
   const before = line.text.slice(0, context.pos - line.from);
-  const m = /^\/(\w*)$/.exec(before);
+  const m = /^\/ ?(\w*)$/.exec(before);
   if (!m) return null;
-  // Don't force the menu open on a bare cursor unless the user actually typed.
-  if (!context.explicit && m[1] === '' && before !== '/') return null;
-  return {
-    from: line.from,
-    options: SLASH_COMMANDS.map(cmd => ({
-      label: cmd.label,
-      detail: cmd.detail,
-      apply: cmd.apply,
-    })),
-    validFor: /^\/\w*$/,
-  };
+  // Don't force the menu open on a bare cursor unless the user actually typed
+  // the slash (bare `/` or the space-tolerant `/ `).
+  if (!context.explicit && m[1] === '' && before !== '/' && before !== '/ ') return null;
+  // Filter the list ourselves against the command word (`m[1]`, the part after
+  // the slash and optional space) and hand CM the result with `filter: false`.
+  // CM's own fuzzy filter scores against the slash-prefixed label over the whole
+  // matched range — the space in a `/ a` prefix has no counterpart in any label,
+  // so it would drop every option. Matching only the word, prefix-style, is both
+  // correct and what a command palette should do. `from`/`to` still span the
+  // full `/ …` prefix, so `apply` (the canonical `/ask `) replaces the space.
+  const word = m[1].toLowerCase();
+  const options = SLASH_COMMANDS.filter(cmd =>
+    cmd.label.slice(1).toLowerCase().startsWith(word),
+  ).map(cmd => ({ label: cmd.label, detail: cmd.detail, apply: cmd.apply }));
+  if (!options.length) return null;
+  return { from: line.from, to: context.pos, options, filter: false };
 }
 
 // Enter on a `/ask <question>` or `/pair <payload>` line turns that line into a
@@ -79,7 +88,11 @@ export function aiCommandOnEnter(view) {
   const line = state.doc.lineAt(sel.head);
   // Only when the caret is at end of the line, so mid-line Enter still splits.
   if (sel.head !== line.to) return false;
-  const text = line.text;
+  // Tolerate one space right after the slash so `/ ask …` matches `/ask …` (see
+  // slashCommandSource for why the spaced form exists). The whole line is
+  // replaced by the card marker below regardless, so normalizing `text` here is
+  // enough — every command regex sees the canonical `/command` form.
+  const text = line.text.replace(/^\/ /, '/');
 
   const ask = /^\/ask\s+(.+\S)\s*$/.exec(text);
   if (ask) {
