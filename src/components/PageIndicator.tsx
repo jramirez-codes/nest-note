@@ -1,15 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
-  type GestureResponderEvent,
   Keyboard,
-  PanResponder,
-  type PanResponderGestureState,
   Pressable,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 
 interface PageIndicatorProps {
   /** Zero-based index of the active page, spanning notes then the new-note sheet. */
@@ -115,7 +113,7 @@ function PageIndicator({
   // Whether the shuttle already stepped a page during the current gesture. A
   // quick drag-and-release integrates to less than one page, so the shuttle
   // alone moves nothing; on release we turn such a swipe into a single page step
-  // (see endGesture) — but only when the shuttle didn't already page.
+  // (see endGestureRef) — but only when the shuttle didn't already page.
   const steppedRef = useRef(false);
 
   // Latest values for the pan handlers, which close over a stable responder.
@@ -160,12 +158,30 @@ function PageIndicator({
   // Stop the loop if we unmount mid-scrub.
   useEffect(() => stopTicker, []);
 
-  const panResponder = useMemo(
+  // Gesture-callback bodies are held in refs and reassigned each render (below)
+  // so they always see the latest onScrub/onPressProgress while the gesture
+  // itself stays memoised. The ref *objects* must exist before the gesture is
+  // built: react-native-gesture-handler snapshots the identifiers a callback
+  // closes over when the Gesture is constructed, so a ref declared after the
+  // useMemo would be captured as undefined (and blow up inside onFinalize).
+  const settleBackRef = useRef(() => {});
+  const endGestureRef = useRef((_dx: number, _dy: number) => {});
+
+  // The bubble sits over the note pager, whose active page is a full-screen
+  // WebView (the CM6 editor). On Android react-native-webview disrupts the
+  // legacy JS responder system, so a PanResponder here stops receiving move
+  // events over a note — the scrub silently dies. react-native-gesture-handler
+  // uses native gesture recognizers that coordinate correctly over the WebView
+  // (the same reason the dashboard's card drag uses it), so the scrub works on
+  // every page. runOnJS(true) keeps the callbacks on the JS thread so they can
+  // drive the RN Animated values, the rAF ticker, and setState directly.
+  const panGesture = useMemo(
     () =>
-      PanResponder.create({
-        onStartShouldSetPanResponder: () => scrubState.current.noteCount > 0,
-        onMoveShouldSetPanResponder: () => scrubState.current.noteCount > 0,
-        onPanResponderGrant: () => {
+      Gesture.Pan()
+        .runOnJS(true)
+        .maxPointers(1)
+        .onBegin(() => {
+          if (scrubState.current.noteCount <= 0) return;
           // On the dashboard the bubble is a plain "back" button — no scrub, so
           // skip the lift + shuttle entirely and let the release do the routing.
           if (scrubState.current.onDashboard) {
@@ -190,32 +206,31 @@ function PageIndicator({
           if (rafRef.current === null) {
             rafRef.current = requestAnimationFrame(() => tickRef.current());
           }
-        },
-        onPanResponderMove: (_, g) => {
+        })
+        .onUpdate(e => {
+          if (scrubState.current.noteCount <= 0) return;
           // No scrubbing on the dashboard — the bubble is just a button there.
           if (scrubState.current.onDashboard) return;
           // Drag only steers the shuttle: displacement from the press point sets
           // how fast and which way pages advance. The ticker does the stepping,
           // so holding at the left/right of the screen keeps paging.
-          rateRef.current = pagesPerSecond(g.dx, scrubState.current.scrubWidth);
-          panX.setValue(clamp(g.dx, -FOLLOW_LIMIT, FOLLOW_LIMIT));
-        },
-        // Both the normal lift-of-finger (Release) and a forced hand-off
-        // (Terminate) end the gesture. A quick tap on Android frequently comes
-        // through as Terminate, not Release, so we treat both the same.
-        onPanResponderRelease: endGesture,
-        onPanResponderTerminate: endGesture,
-        onPanResponderTerminationRequest: () => false,
-      }),
-    // endGesture is a hoisted declaration delegating to a ref, and onScrub is
-    // reached through tickRef (reassigned each render), so neither belongs here;
-    // lift/panX are the only reactive values closed over.
+          rateRef.current = pagesPerSecond(e.translationX, scrubState.current.scrubWidth);
+          panX.setValue(clamp(e.translationX, -FOLLOW_LIMIT, FOLLOW_LIMIT));
+        })
+        // onFinalize fires whether or not the pan ever activated (a stationary
+        // tap included) and whether it ended cleanly or was cancelled, so it is
+        // the single place we settle the bubble and route a dashboard tap.
+        .onFinalize(e => {
+          if (scrubState.current.noteCount <= 0) return;
+          endGestureRef.current(e.translationX, e.translationY);
+        }),
+    // The handlers reach onScrub/onPressProgress through refs reassigned each
+    // render, so only the Animated values closed over here are real deps.
     [lift, panX],
   );
 
   // Stop paging and drop the bubble back to its origin. Held in a ref so the
-  // memoised responder can call it without re-creating on every render.
-  const settleBackRef = useRef(() => {});
+  // memoised gesture can call it without re-creating on every render.
   settleBackRef.current = () => {
     stopTicker();
     Animated.spring(lift, {
@@ -239,13 +254,11 @@ function PageIndicator({
   // didn't drag off the bubble routes to the previous page. On a note it's a
   // scrubber: just drop the bubble home — tapping to route is disabled there.
   // Reassigned each render (via a ref) so it always sees the latest
-  // onPressProgress, letting `endGesture` stay stable for the memoised responder.
-  const endGestureRef = useRef((_g: PanResponderGestureState) => {});
-  endGestureRef.current = (g: PanResponderGestureState) => {
+  // onPressProgress, letting the memoised gesture stay stable across renders.
+  endGestureRef.current = (dx: number, dy: number) => {
     if (scrubState.current.onDashboard) {
       setPressed(false);
-      const isPress =
-        Math.abs(g.dx) < SCRUB_DEAD_ZONE && Math.abs(g.dy) < SCRUB_DEAD_ZONE;
+      const isPress = Math.abs(dx) < SCRUB_DEAD_ZONE && Math.abs(dy) < SCRUB_DEAD_ZONE;
       if (isPress) onPressProgress();
       return;
     }
@@ -256,10 +269,9 @@ function PageIndicator({
     // forward, matching the shuttle and the fill bar advancing rightward), so
     // flicking the bar always indexes through the pages.
     const total = scrubState.current.noteCount;
-    const swiped =
-      Math.abs(g.dx) > SCRUB_DEAD_ZONE && Math.abs(g.dx) > Math.abs(g.dy);
+    const swiped = Math.abs(dx) > SCRUB_DEAD_ZONE && Math.abs(dx) > Math.abs(dy);
     if (!steppedRef.current && swiped && total > 1) {
-      const next = wrapIndex(scrubIndexRef.current + Math.sign(g.dx), total);
+      const next = wrapIndex(scrubIndexRef.current + Math.sign(dx), total);
       if (next !== scrubIndexRef.current) {
         scrubIndexRef.current = next;
         onScrub(next);
@@ -267,9 +279,6 @@ function PageIndicator({
     }
     settleBack();
   };
-  function endGesture(_e: GestureResponderEvent, g: PanResponderGestureState) {
-    endGestureRef.current(g);
-  }
 
   const translateY = lift.interpolate({
     inputRange: [0, 1],
@@ -282,35 +291,36 @@ function PageIndicator({
       {/* Progress bubble — active on a note page, and a page scrubber when held.
           The Animated wrapper carries the pop-up transform + gesture; the inner
           View keeps the bubble's visual styling. */}
-      <Animated.View
-        {...panResponder.panHandlers}
-        accessibilityRole="button"
-        accessibilityLabel={
-          onDashboard
-            ? 'Go to previous page'
-            : 'Hold and slide to scrub through pages'
-        }
-        style={[
-          styles.scrubWrapper,
-          scrubbing && styles.scrubWrapperActive,
-          { transform: [{ translateX: panX }, { translateY }, { scale }] },
-        ]}>
-        <View
-          className={
-            'h-9 flex-row items-center rounded-full bg-surface px-4' +
-            (onDashboard && pressed ? ' opacity-70' : '')
-          }>
-          <View className="h-1.5 w-16 overflow-hidden rounded-full bg-background">
-            <View
-              className="h-full rounded-full bg-accent"
-              style={{ width: `${progress * 100}%` }}
-            />
+      <GestureDetector gesture={panGesture}>
+        <Animated.View
+          accessibilityRole="button"
+          accessibilityLabel={
+            onDashboard
+              ? 'Go to previous page'
+              : 'Hold and slide to scrub through pages'
+          }
+          style={[
+            styles.scrubWrapper,
+            scrubbing && styles.scrubWrapperActive,
+            { transform: [{ translateX: panX }, { translateY }, { scale }] },
+          ]}>
+          <View
+            className={
+              'h-9 flex-row items-center rounded-full bg-surface px-4' +
+              (onDashboard && pressed ? ' opacity-70' : '')
+            }>
+            <View className="h-1.5 w-16 overflow-hidden rounded-full bg-background">
+              <View
+                className="h-full rounded-full bg-accent"
+                style={{ width: `${progress * 100}%` }}
+              />
+            </View>
+            <Text className="ml-3 text-xs font-semibold text-muted">
+              {notePosition} / {noteCount}
+            </Text>
           </View>
-          <Text className="ml-3 text-xs font-semibold text-muted">
-            {notePosition} / {noteCount}
-          </Text>
-        </View>
-      </Animated.View>
+        </Animated.View>
+      </GestureDetector>
 
       {/* Dashboard bubble — jumps to the trailing dashboard page; active there.
           The 2×2 grid glyph is drawn from four small squares (no icon dep). */}
