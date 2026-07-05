@@ -112,6 +112,11 @@ function PageIndicator({
   const scrubIndexRef = useRef(0); // integer note index currently shown
   const rafRef = useRef<number | null>(null);
   const lastTsRef = useRef(0);
+  // Whether the shuttle already stepped a page during the current gesture. A
+  // quick drag-and-release integrates to less than one page, so the shuttle
+  // alone moves nothing; on release we turn such a swipe into a single page step
+  // (see endGesture) — but only when the shuttle didn't already page.
+  const steppedRef = useRef(false);
 
   // Latest values for the pan handlers, which close over a stable responder.
   // `onDashboard` flips the bubble's whole mode: a note page enables scrubbing
@@ -136,6 +141,7 @@ function PageIndicator({
         const idx = wrapIndex(scrubIndexRef.current + step, total);
         if (idx !== scrubIndexRef.current) {
           scrubIndexRef.current = idx;
+          steppedRef.current = true;
           onScrub(idx);
         }
       }
@@ -170,6 +176,7 @@ function PageIndicator({
           scrubIndexRef.current = clamp(idx, 0, Math.max(0, total - 1));
           accRef.current = 0;
           rateRef.current = 0;
+          steppedRef.current = false;
           lastTsRef.current = Date.now();
           // Scrubbing pages under an open keyboard looks jittery; tuck it away.
           Keyboard.dismiss();
@@ -241,6 +248,22 @@ function PageIndicator({
         Math.abs(g.dx) < SCRUB_DEAD_ZONE && Math.abs(g.dy) < SCRUB_DEAD_ZONE;
       if (isPress) onPressProgress();
       return;
+    }
+    // On a note the bubble is a page scrubber. A slow park-and-hold lets the
+    // shuttle page (steppedRef set); but a quick drag-and-release integrates to
+    // less than one page and would otherwise move nothing. Treat such a decisive
+    // horizontal swipe as a single page step in the drag direction (right =
+    // forward, matching the shuttle and the fill bar advancing rightward), so
+    // flicking the bar always indexes through the pages.
+    const total = scrubState.current.noteCount;
+    const swiped =
+      Math.abs(g.dx) > SCRUB_DEAD_ZONE && Math.abs(g.dx) > Math.abs(g.dy);
+    if (!steppedRef.current && swiped && total > 1) {
+      const next = wrapIndex(scrubIndexRef.current + Math.sign(g.dx), total);
+      if (next !== scrubIndexRef.current) {
+        scrubIndexRef.current = next;
+        onScrub(next);
+      }
     }
     settleBack();
   };

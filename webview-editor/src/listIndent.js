@@ -1,5 +1,4 @@
 import { ViewPlugin, Decoration } from '@codemirror/view';
-import { StateEffect } from '@codemirror/state';
 import { syntaxTree } from '@codemirror/language';
 import { decoRanges } from './viewPlugin.js';
 
@@ -15,25 +14,27 @@ import { decoRanges } from './viewPlugin.js';
  * margin, so the first row's geometry is unchanged; padding-left is what the
  * wrapped rows honour.
  *
- * TWO WAYS TO GET <indent>, because the marker column varies with the proportional
- * font, nesting depth, and the "•"/checkbox widgets:
+ * HOW <indent> IS COMPUTED — synchronously, from the text, with canvas
+ * measureText (no DOM/layout). This runs inside update() so the decoration rides
+ * in the SAME transaction as the edit/seed, exactly like the other decorations
+ * (livePreview bullets, code cards, quotes) — so it paints on the FIRST render.
  *
- *  1. EDITABLE views measure it from the rendered layout (coordsAtPos) — exact.
- *     This needs a post-layout measure pass, which is applied by a follow-up
- *     dispatch. That's fine here: focus + typing keep the frame loop flushing
- *     measures and repainting.
+ * The earlier approach measured the rendered layout (coordsAtPos), which is
+ * pixel-exact but can only be applied by a follow-up dispatch after layout. On an
+ * EDITABLE view that self-heals (focus/typing keep flushing), but on a READ-ONLY
+ * view (subject notebooks seeded by __setReadOnly + __setDoc, /ask answer cards)
+ * nothing flushes the measure and an idle Android WebView won't even repaint an
+ * internal async change until it's touched — so wrapped rows stayed flush-left
+ * until the first tap. And on editable pages the very first paint had the same
+ * gap before the user interacted. Measuring synchronously from text sidesteps all
+ * of it; a sub-pixel off the exact layout is imperceptible.
  *
- *  2. READ-ONLY views (subject notebooks seeded by __setReadOnly + __setDoc, /ask
- *     answer cards) can't use (1): they get no caret, no typing, no tap, so after
- *     the WebView's first paint the frame loop idles and the measure never flushes
- *     — and even if it did, an idle Android WebView won't repaint an internal async
- *     change until it's touched. So the wrapped rows stayed flush-left until the
- *     first tap. Instead we ESTIMATE the indent synchronously with canvas
- *     measureText (no DOM/layout needed) and emit the decoration inside update(),
- *     so it rides in the SAME transaction as the seeded content — exactly how the
- *     other decorations (livePreview bullets, code cards, quotes) paint on first
- *     render. A couple of sub-pixels off the exact layout is imperceptible and far
- *     better than no indent at all.
+ * The rendered prefix depends on live-preview state: on the line(s) under the
+ * cursor livePreview REVEALS the raw markdown (`- `, `[ ]`) so it stays editable,
+ * elsewhere it swaps in the "•" dot / checkbox widget. We mirror that here — raw
+ * text width on active lines, widget-metric width otherwise — and recompute on
+ * selection changes so the indent tracks the caret. Read-only views never reveal,
+ * so every line uses the widget metrics.
  */
 
 // Leading indent + marker (`-`/`*`/`+` or `1.`/`1)`), the space after it, and an
@@ -48,11 +49,6 @@ const LIST_PREFIX = /^\s*(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?(?=\S)/;
 //   .cm-task   { width: 1.05em; margin-right: 0.3em }     → the checkbox box
 const BULLET_EM = 1.1;
 const CHECKBOX_EM = 1.05 + 0.3;
-
-// Dispatched (editable path only) to force a re-render once freshly measured
-// indents are ready; no state field consumes it — it just makes the transaction
-// produce a view update so the plugin's new `decorations` are picked up.
-const refresh = StateEffect.define();
 
 // One shared offscreen canvas for text measurement (no layout, unlike coordsAtPos).
 let CANVAS;
@@ -90,30 +86,25 @@ export const listIndent = ViewPlugin.fromClass(
     constructor(view) {
       this.view = view;
       this.sig = '';
-      // Read-only views may already be seeded by the time this runs; editable
-      // views start empty and measure lazily.
-      this.decorations = view.state.readOnly ? buildDeco(this.estimate()) : Decoration.none;
-      if (!view.state.readOnly) this.schedule();
+      this.decorations = buildDeco(this.compute());
     }
 
     update(u) {
-      const relevant =
+      // Recompute when the text, the visible range, the caret (which line renders
+      // raw vs. widgets), or the parse (code-block detection) changes — the same
+      // triggers livePreview reacts to, so the two stay in lock-step.
+      if (
         u.docChanged ||
         u.viewportChanged ||
-        syntaxTree(u.startState) !== syntaxTree(u.state);
-      if (u.state.readOnly) {
-        // Synchronous, canvas-based estimate emitted in-update so it paints with
-        // the content (see file header). No measure pass, no follow-up dispatch.
-        if (relevant) this.set(this.estimate());
-      } else if (relevant || u.geometryChanged) {
-        // Editable: exact layout measurement, applied via a follow-up dispatch.
-        this.schedule();
+        u.selectionSet ||
+        syntaxTree(u.startState) !== syntaxTree(u.state)
+      ) {
+        this.set(this.compute());
       }
     }
 
-    // Set `decorations` from freshly computed rows, if they changed. Called from
-    // update() (read-only estimate) — no dispatch needed, CM reads the field for
-    // this same transaction.
+    // Assign fresh decorations if the indents changed. Called from update(), so no
+    // dispatch is needed — CM reads `this.decorations` for this same transaction.
     set(rows) {
       const sig = rows.map(r => r.from + ':' + r.indent).join(',');
       if (sig === this.sig) return;
@@ -121,10 +112,21 @@ export const listIndent = ViewPlugin.fromClass(
       this.decorations = buildDeco(rows);
     }
 
-    // --- Read-only estimate (canvas measureText, no layout) -------------------
-    estimate() {
+    compute() {
       const view = this.view;
       const { state } = view;
+
+      // Lines under the selection show raw markdown (editable views only), so their
+      // prefix is measured as plain text, not as the "•"/checkbox widgets.
+      const active = new Set();
+      if (!state.readOnly) {
+        for (const r of state.selection.ranges) {
+          const first = state.doc.lineAt(r.from).number;
+          const last = state.doc.lineAt(r.to).number;
+          for (let n = first; n <= last; n++) active.add(n);
+        }
+      }
+
       const cs = getComputedStyle(view.contentDOM);
       const fs = parseFloat(cs.fontSize) || 17;
       const fam = cs.fontFamily || 'sans-serif';
@@ -138,8 +140,11 @@ export const listIndent = ViewPlugin.fromClass(
       for (const { from, to } of decoRanges(view)) {
         for (let pos = from; pos <= to; ) {
           const line = state.doc.lineAt(pos);
-          if (LIST_PREFIX.test(line.text) && !inCode(state, line.from)) {
-            const indent = this.prefixWidth(line.text, fs, w);
+          const m = LIST_PREFIX.exec(line.text);
+          if (m && !inCode(state, line.from)) {
+            const indent = active.has(line.number)
+              ? Math.round(w(m[0], fs)) // raw markdown revealed — plain text width
+              : this.widgetWidth(line.text, fs, w); // "•"/checkbox rendering
             if (indent > 0) rows.push({ from: line.from, indent });
           }
           pos = line.to + 1;
@@ -148,9 +153,9 @@ export const listIndent = ViewPlugin.fromClass(
       return rows;
     }
 
-    // Pixel width of the rendered prefix (whitespace + marker/checkbox + spaces),
-    // matching what livePreview paints, via canvas advances.
-    prefixWidth(text, fs, w) {
+    // Pixel width of the prefix as livePreview renders it (whitespace + "•" dot or
+    // checkbox box + trailing spaces), via canvas advances.
+    widgetWidth(text, fs, w) {
       const lead = /^[ \t]*/.exec(text)[0];
       const rest = text.slice(lead.length);
       let indent = w(lead, fs);
@@ -172,60 +177,6 @@ export const listIndent = ViewPlugin.fromClass(
         return 0;
       }
       return Math.round(indent);
-    }
-
-    // --- Editable exact measurement (coordsAtPos, needs layout) ----------------
-    // A subject page's editor is CONSTRUCTED editable (empty), so the constructor
-    // queues one of these measures; it then flips read-only (via __setReadOnly)
-    // and is seeded. When that stale measure finally fires it must NOT run: a
-    // read-only view's frame never properly flushes, so read() would get empty
-    // coords and apply() would wipe the synchronous estimate — the exact bug that
-    // left the indent gone until the first tap (while the /ask answer view, which
-    // is read-only from construction and so never queues a measure, worked). Once
-    // read-only, the estimate owns the decorations.
-    schedule() {
-      if (this.view.state.readOnly) return;
-      this.view.requestMeasure({
-        key: this,
-        read: () => this.read(),
-        write: rows => this.apply(rows),
-      });
-    }
-
-    read() {
-      const view = this.view;
-      const { state } = view;
-      const rows = [];
-      for (const { from, to } of decoRanges(view)) {
-        for (let pos = from; pos <= to; ) {
-          const line = state.doc.lineAt(pos);
-          const m = LIST_PREFIX.exec(line.text);
-          if (m && !inCode(state, line.from)) {
-            const start = view.coordsAtPos(line.from);
-            const text = view.coordsAtPos(line.from + m[0].length);
-            if (start && text) {
-              const indent = Math.round(text.left - start.left);
-              if (indent > 0) rows.push({ from: line.from, indent });
-            }
-          }
-          pos = line.to + 1;
-        }
-      }
-      return rows;
-    }
-
-    apply(rows) {
-      // Guard the same stale-measure case as schedule(): if the view went
-      // read-only after this measure was queued, the estimate is authoritative —
-      // don't let a late DOM read clobber it.
-      if (this.view.state.readOnly) return;
-      const sig = rows.map(r => r.from + ':' + r.indent).join(',');
-      if (sig === this.sig) return;
-      this.sig = sig;
-      this.decorations = buildDeco(rows);
-      // Measurement ran in a measure pass; dispatch out of it so CM re-reads the
-      // updated decorations. Guarded by the signature so a stable layout is quiet.
-      this.view.dispatch({ effects: refresh.of(null) });
     }
   },
   { decorations: v => v.decorations },
