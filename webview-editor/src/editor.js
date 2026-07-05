@@ -29,6 +29,7 @@ import { listIndent } from './listIndent.js';
 import { codeBlocks, codeLanguages } from './codeBlocks.js';
 import { blockquotes } from './blockquotes.js';
 import { openLinks } from './links.js';
+import { WikiLink } from './wikilinks.js';
 import { slashCommandSource, aiCommandOnEnter } from './commands.js';
 import { lineStartReplace } from './lineStartReplace.js';
 import { encodeAiMarker, findAiLine, mergeAiDone } from './aiMarker.js';
@@ -114,7 +115,7 @@ const extensions = [
     aboveCursor: false,
   }),
   openLinks,
-  markdown({ base: markdownLanguage, codeLanguages }),
+  markdown({ base: markdownLanguage, codeLanguages, extensions: [WikiLink] }),
   syntaxHighlighting(highlight),
   previewField,
   askLiveField,

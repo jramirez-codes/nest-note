@@ -57,6 +57,10 @@ type Page =
 
 const DASHBOARD_PAGE_KEY = '__dashboard__';
 
+// Normalize a page name for matching: a wikilink's inner `#N (Title)` against a page's
+// `#N (Title).md` file name — trim, drop the `.md`, lowercase.
+const norm = (s: string) => s.trim().replace(/\.md$/i, '').toLowerCase();
+
 /**
  * The notebook: a horizontally paged pad the user flips through, one note per
  * page, with a permanent blank sheet at the end for adding notes.
@@ -216,6 +220,63 @@ export default function NotebookScreen() {
     pagerRef.current?.flipTo(Math.max(0, target));
   }, [pages.length]);
 
+  // A tapped wikilink asks to open a page by title. Bare `[[Title]]` resolves in the
+  // current notebook; `[[slug::Title]]` switches notebooks first. Because a switched-to
+  // subject's pages load async, the request is stashed and resolved by the effect below
+  // once those pages are in hand.
+  const pendingOpen = useRef<{ nb: string; title: string } | null>(null);
+
+  // Flip to the content page a wikilink names. A wikilink's inner text is `#N (Title)`,
+  // which matches a page's on-disk FILE name (`#N (Title).md`), not its display title — so
+  // resolve subject pages against `file` (minus the extension). Local Sandbox notes have no
+  // such file, so fall back to matching their title there. Returns whether a match was
+  // found, so a pending cross-notebook open knows to stop waiting.
+  const flipToPage = useCallback(
+    (name: string): boolean => {
+      const target = norm(name);
+      if (!target) return false;
+      const idx = pages.findIndex(p =>
+        p.kind === 'virtual'
+          ? norm(p.stub.file) === target
+          : p.kind === 'note'
+            ? norm(p.note.title) === target
+            : false,
+      );
+      if (idx < 0) return false;
+      pagerRef.current?.flipTo(idx);
+      return true;
+    },
+    [pages],
+  );
+
+  const handleOpenPage = useCallback(
+    (slug: string, title: string) => {
+      // `slug` empty → stay in the current notebook; otherwise it names a subject notebook.
+      const nb = slug || selectedNb;
+      if (nb !== selectedNb) {
+        // Switch notebooks; the effect below flips once the new pages have loaded.
+        pendingOpen.current = { nb, title };
+        setSelectedNb(nb);
+        return;
+      }
+      flipToPage(title);
+    },
+    [selectedNb, flipToPage],
+  );
+
+  // Resolve a pending cross-notebook open once the switched-to notebook's pages arrive.
+  // Drop it if the user has since navigated to a different notebook, so a never-found
+  // title can't fire on an unrelated later swap.
+  useEffect(() => {
+    const pending = pendingOpen.current;
+    if (!pending) return;
+    if (pending.nb !== selectedNb) {
+      pendingOpen.current = null;
+    } else if (flipToPage(pending.title)) {
+      pendingOpen.current = null;
+    }
+  }, [selectedNb, flipToPage]);
+
   // After a create commits, flip to the freshly added note. Notes are sorted
   // newest-first, so the new note is page 0.
   useEffect(() => {
@@ -252,7 +313,14 @@ export default function NotebookScreen() {
         );
       }
       if (page.kind === 'virtual') {
-        return <VirtualNotePage body={bodies[page.stub.num]} width={width} isActive={isActive} />;
+        return (
+          <VirtualNotePage
+            body={bodies[page.stub.num]}
+            width={width}
+            isActive={isActive}
+            onOpenPage={handleOpenPage}
+          />
+        );
       }
       return (
         <NotePage
@@ -262,6 +330,7 @@ export default function NotebookScreen() {
           onChangeContent={updateNoteContent}
           onSetTitle={updateNoteTitle}
           onIngested={deleteNote}
+          onOpenPage={handleOpenPage}
         />
       );
     },
@@ -273,6 +342,7 @@ export default function NotebookScreen() {
       updateNoteContent,
       updateNoteTitle,
       deleteNote,
+      handleOpenPage,
       drag.shared,
       drag.lift,
       drag.release,

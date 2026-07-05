@@ -49,6 +49,11 @@ interface NoteEditorWebViewProps {
   /** Called when `/ingest` finishes filing this page — the page is then deleted. */
   onIngested: () => void;
   /**
+   * A wikilink (`[[slug::Title]]` / bare `[[Title]]`) was tapped: flip the pad to that page.
+   * `slug` selects a subject notebook (empty = the current one); `title` picks the page.
+   */
+  onOpenPage?: (slug: string, title: string) => void;
+  /**
    * Render the content read-only: no caret, no typing, no edits (CM6 editable off +
    * EditorState.readOnly). Used for subject-notebook pages pulled from the server, which
    * are viewable but not editable on the phone — only the local Sandbox is edited.
@@ -71,6 +76,7 @@ export default function NoteEditorWebView({
   onChangeContent,
   onSetTitle,
   onIngested,
+  onOpenPage,
   readOnly = false,
 }: NoteEditorWebViewProps) {
   const ref = useRef<WebViewInstance>(null);
@@ -97,6 +103,8 @@ export default function NoteEditorWebView({
         guidance?: string;
         label?: string;
         file?: string;
+        slug?: string;
+        title?: string;
       };
       try {
         msg = JSON.parse(e.nativeEvent.data);
@@ -123,6 +131,10 @@ export default function NoteEditorWebView({
         if (/^(https?|mailto):/i.test(msg.url)) {
           Linking.openURL(msg.url).catch(() => {});
         }
+      } else if (msg.type === 'openPage' && typeof msg.title === 'string') {
+        // A wikilink tap: flip the pad to the referenced page. `slug` (empty for a
+        // bare `[[Title]]`) selects the notebook; `title` selects the page in it.
+        onOpenPage?.(msg.slug ?? '', msg.title);
       } else if (msg.type === 'fetchPreview' && typeof msg.url === 'string') {
         // Unfurl a pasted link: fetch its metadata natively (no CORS) and hand
         // the card data back to the WebView to render.
@@ -300,7 +312,7 @@ export default function NoteEditorWebView({
         deleteRecordings([msg.file]).catch(() => {});
       }
     },
-    [initialContent, hasTitle, onChangeContent, onSetTitle, onIngested, readOnly],
+    [initialContent, hasTitle, onChangeContent, onSetTitle, onIngested, onOpenPage, readOnly],
   );
 
   // Feed a resolved pairing outcome back into the /pair card, then close scanner.

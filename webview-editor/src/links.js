@@ -17,6 +17,24 @@ let lastAt = 0;
 function handleTap(e, view) {
   let el = e.target;
   while (el && el !== view.dom) {
+    // A wikilink (`[[slug::title]]` or bare `[[title]]`) navigates to an internal
+    // subject page rather than opening a URL — RN handles `openPage`. Checked
+    // first since a wikilink title carries data-page-title, not data-url. `slug`
+    // is empty for a bare title, which RN resolves within the current notebook.
+    if (el.dataset && el.dataset.pageTitle != null) {
+      const slug = el.dataset.page || '';
+      const title = el.dataset.pageTitle;
+      e.preventDefault();
+      e.stopPropagation();
+      const now = Date.now();
+      // Collapse the mousedown+click pair (or a stray double-tap) for one target.
+      const key = slug || title;
+      if (key === lastUrl && now - lastAt < 700) return true;
+      lastUrl = key;
+      lastAt = now;
+      post({ type: 'openPage', slug, title });
+      return true;
+    }
     if (el.dataset && el.dataset.url) {
       const url = el.dataset.url;
       e.preventDefault();

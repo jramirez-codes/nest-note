@@ -10,6 +10,16 @@ const HIDE = Decoration.replace({});
 function linkDeco(url) {
   return Decoration.mark({ class: 'cm-link', attributes: { 'data-url': url } });
 }
+// Marks a wikilink's title as a tappable internal link. Both the target slug
+// (empty for a bare `[[Page Title]]`, which resolves within the current
+// notebook) and the title ride along as data attrs for the tap handler (see
+// openLinks) to hand to RN.
+function pageDeco(slug, title) {
+  return Decoration.mark({
+    class: 'cm-link cm-wikilink',
+    attributes: { 'data-page': slug, 'data-page-title': title },
+  });
+}
 
 // Lezer node names for the punctuation we hide (inline emphasis/code/strike, the
 // leading `#` of headings, and the `>` of blockquotes — the bar replaces it).
@@ -99,6 +109,26 @@ function buildLivePreview(view) {
           // hidden above, so descending is safe.
           return;
         }
+        // Wikilinks: `[[slug::PAGE TITLE]]` → render just "PAGE TITLE", tappable,
+        // carrying the slug so the tap navigates to that subject page. A bare
+        // `[[PAGE TITLE]]` (no slug) links to the same-titled page in the CURRENT
+        // notebook. Skip children so the inner slug/title text isn't re-processed
+        // as prose below.
+        if (node.name === 'WikiLink') {
+          if (active) return false; // show raw `[[…]]` so it stays editable
+          const titleNode = node.node.getChild('WikiLinkTitle');
+          const slugNode = node.node.getChild('WikiLinkSlug');
+          if (!titleNode) return false; // malformed — leave raw
+          const title = state.doc.sliceString(titleNode.from, titleNode.to);
+          // Explicit `slug::` targets that page directly; bare title resolves in
+          // the current notebook, so the slug is empty.
+          const slug = slugNode ? state.doc.sliceString(slugNode.from, slugNode.to) : '';
+          marks.push(HIDE.range(node.from, titleNode.from)); // "[[", slug, "::"
+          marks.push(pageDeco(slug, title).range(titleNode.from, titleNode.to));
+          marks.push(HIDE.range(titleNode.to, node.to)); // "]]"
+          return false;
+        }
+
         if (node.name === 'URL') {
           // A bare URL. If it's the destination inside a Link/Image, that parent
           // already hid + linked it, so skip (we now descend into links).

@@ -225,6 +225,13 @@ const components = {
     '.cm-link span': {
       color: c.blue,
     },
+    // Wikilinks (`[[…]]`) are internal navigation, not web URLs — mauve to set
+    // them apart from blue external links and match the theme's accent. Overrides
+    // the shared .cm-link colour (and the same descendant-span trick for links
+    // sitting inside a list/quote).
+    '.cm-wikilink, .cm-wikilink span': {
+      color: c.mauve,
+    },
 
     // --- Inline code (`code`) -----------------------------------------------
     // Green + monospace, robust to the block-level highlight colour of a

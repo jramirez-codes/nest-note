@@ -14,6 +14,8 @@ interface NotePageProps {
   onSetTitle: (id: string, title: string) => void;
   /** Called after `/ingest` files this page into the dashboard — deletes the page. */
   onIngested: (id: string) => void;
+  /** A tapped wikilink asks to flip the pad to `title` (in notebook `slug`, or the current one). */
+  onOpenPage?: (slug: string, title: string) => void;
 }
 
 /**
@@ -30,6 +32,7 @@ function NotePage({
   onChangeContent,
   onSetTitle,
   onIngested,
+  onOpenPage,
 }: NotePageProps) {
   const handleChangeContent = useCallback(
     (content: string) => onChangeContent(note.id, content),
@@ -56,6 +59,7 @@ function NotePage({
           onChangeContent={handleChangeContent}
           onSetTitle={handleSetTitle}
           onIngested={handleIngested}
+          onOpenPage={onOpenPage}
         />
       </KeyboardAvoidingView>
     </View>
