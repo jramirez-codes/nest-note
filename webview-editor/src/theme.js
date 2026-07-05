@@ -647,6 +647,72 @@ const components = {
       '50%': { boxShadow: `0 0 0 6px ${c.red}00` },
     },
 
+    // --- Run terminal card (/run …) -----------------------------------------
+    // Reuses the ask card shell (.cm-ask); the header shows the command in a
+    // monospace chip and a status badge, the body is a scrolling terminal log,
+    // and while live a footer holds the stdin box + interrupt/stop buttons.
+    '.cm-run-head': { gap: '8px' },
+    '.cm-run-cmd': {
+      flex: '1',
+      minWidth: '0',
+      color: c.teal,
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+      fontSize: '13px',
+      fontWeight: '600',
+      lineHeight: '1.4',
+      whiteSpace: 'nowrap',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+    },
+    '.cm-run-badge': {
+      flexShrink: '0',
+      fontSize: '11px',
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+      color: c.overlay1,
+      alignSelf: 'center',
+    },
+    '.cm-run-badge-live': { color: c.green, animation: 'cm-ask-blink 1.2s infinite both' },
+    '.cm-run-badge-ok': { color: c.green },
+    '.cm-run-badge-err': { color: c.red },
+    '.cm-run-log': {
+      margin: '10px 0 0 0',
+      padding: '10px',
+      maxHeight: '340px',
+      overflow: 'auto',
+      backgroundColor: c.crust,
+      border: `1px solid ${c.surface0}`,
+      borderRadius: '8px',
+      color: c.subtext0,
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+      fontSize: '12px',
+      lineHeight: '1.45',
+      whiteSpace: 'pre-wrap',
+      wordBreak: 'break-word',
+      WebkitOverflowScrolling: 'touch',
+    },
+    '.cm-run-foot': { gap: '6px' },
+    '.cm-run-stdin': {
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+      fontSize: '13px',
+    },
+    '.cm-run-stdin:focus': { borderColor: c.teal },
+    '.cm-run-btn': {
+      flexShrink: '0',
+      height: '34px',
+      padding: '0 12px',
+      border: `1px solid ${c.surface1}`,
+      borderRadius: '9px',
+      backgroundColor: c.surface0,
+      color: c.text,
+      fontFamily: '-apple-system, Roboto, sans-serif',
+      fontSize: '13px',
+      fontWeight: '600',
+      cursor: 'pointer',
+      userSelect: 'none',
+    },
+    '.cm-run-intr': { fontFamily: 'ui-monospace, Menlo, monospace' },
+    '.cm-run-stop': { borderColor: c.red, color: c.red },
+
     // --- Slash-command autocomplete menu ------------------------------------
     // Each row stacks the command name over a wrapping description, so the
     // menu sizes to its content instead of cropping the detail text.

@@ -16,6 +16,8 @@ interface NotePageProps {
   onIngested: (id: string) => void;
   /** A tapped wikilink asks to flip the pad to `title` (in notebook `slug`, or the current one). */
   onOpenPage?: (slug: string, title: string) => void;
+  /** Notebook this page lives in — /record clips are bucketed by notebook + page id. */
+  notebookId: string;
 }
 
 /**
@@ -33,6 +35,7 @@ function NotePage({
   onSetTitle,
   onIngested,
   onOpenPage,
+  notebookId,
 }: NotePageProps) {
   const handleChangeContent = useCallback(
     (content: string) => onChangeContent(note.id, content),
@@ -60,6 +63,8 @@ function NotePage({
           onSetTitle={handleSetTitle}
           onIngested={handleIngested}
           onOpenPage={onOpenPage}
+          notebookId={notebookId}
+          pageId={note.id}
         />
       </KeyboardAvoidingView>
     </View>

@@ -40,6 +40,8 @@ export default function WebViewSpike() {
           onChangeContent={setOut}
           onSetTitle={() => {}}
           onIngested={() => {}}
+          notebookId="spike"
+          pageId="spike"
         />
       </View>
       <View style={[styles.footer, { borderTopColor: colors.border }]}>

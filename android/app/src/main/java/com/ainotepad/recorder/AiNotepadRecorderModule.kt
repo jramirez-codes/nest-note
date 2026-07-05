@@ -33,6 +33,10 @@ class AiNotepadRecorderModule(private val reactContext: ReactApplicationContext)
   private var recorder: MediaRecorder? = null
   private var currentPath: String? = null
   private var startedElapsed: Long = 0L
+  // The notebook/page bucket of the active capture, so stop() can migrate the
+  // finished clip into that notebook's persistent media folder (see start/stop).
+  private var currentNb: String = FALLBACK_SEG
+  private var currentPage: String = FALLBACK_SEG
 
   // Playback is separate from recording: one MediaPlayer for the /record card's
   // play/pause button. `playingPath` lets play() resume a paused clip vs. start a
@@ -43,12 +47,20 @@ class AiNotepadRecorderModule(private val reactContext: ReactApplicationContext)
   override fun getName() = "AiNotepadRecorder"
 
   @ReactMethod
-  fun start(label: String?, promise: Promise) {
+  fun start(label: String?, notebookId: String?, pageId: String?, promise: Promise) {
     if (recorder != null) {
       promise.reject("busy", "A recording is already in progress.")
       return
     }
-    val file = File(reactContext.cacheDir, "rec_${System.currentTimeMillis()}.m4a")
+    // Capture into a per-notebook/per-page bucket under the (evictable) cache while
+    // recording; stop() migrates the finished clip into the matching persistent
+    // filesDir/media bucket. Bucketing keeps a notebook's clips together and lets
+    // page/notebook cleanup reason about them by path.
+    val nb = safeSeg(notebookId)
+    val page = safeSeg(pageId)
+    val dir = File(File(reactContext.cacheDir, MEDIA_DIR), "$nb/$page")
+    dir.mkdirs()
+    val file = File(dir, "rec_${System.currentTimeMillis()}.m4a")
     // Bring the foreground service up first: without it, mic access is denied the
     // moment the app is backgrounded.
     RecorderService.start(reactContext)
@@ -75,6 +87,8 @@ class AiNotepadRecorderModule(private val reactContext: ReactApplicationContext)
     }
     recorder = rec
     currentPath = file.absolutePath
+    currentNb = nb
+    currentPage = page
     startedElapsed = SystemClock.elapsedRealtime()
 
     val map = Arguments.createMap()
@@ -93,6 +107,8 @@ class AiNotepadRecorderModule(private val reactContext: ReactApplicationContext)
     // Duration from the monotonic clock, not wall time (immune to clock changes).
     val ms = SystemClock.elapsedRealtime() - startedElapsed
     val path = currentPath
+    val nb = currentNb
+    val page = currentPage
     recorder = null
     currentPath = null
     var failure: Exception? = null
@@ -111,8 +127,12 @@ class AiNotepadRecorderModule(private val reactContext: ReactApplicationContext)
       promise.reject("stop_failed", failure.message, failure)
       return
     }
+    // Move the completed clip out of the evictable cache into the notebook's
+    // persistent media folder so it survives OS cache pressure. Best-effort: on any
+    // migration hiccup keep the (still playable) cache path rather than losing it.
+    val finalPath = migrateToMedia(path, nb, page) ?: path
     val map = Arguments.createMap()
-    map.putString("file", path)
+    map.putString("file", finalPath)
     map.putDouble("ms", ms.toDouble())
     promise.resolve(map)
   }
@@ -146,6 +166,9 @@ class AiNotepadRecorderModule(private val reactContext: ReactApplicationContext)
    */
   @ReactMethod
   fun deleteFiles(paths: ReadableArray, promise: Promise) {
+    // Parent buckets of every clip we remove, so once the whole page's media is
+    // gone we can drop the now-empty <notebook>/<page> folder(s) too.
+    val buckets = mutableSetOf<File>()
     for (i in 0 until paths.size()) {
       val path = paths.getString(i) ?: continue
       if (path == currentPath) {
@@ -159,8 +182,13 @@ class AiNotepadRecorderModule(private val reactContext: ReactApplicationContext)
       }
       // If we're currently playing this clip back, tear the player down too.
       if (path == playingPath) releasePlayer()
-      runCatching { File(path).takeIf(File::exists)?.delete() }
+      val file = File(path)
+      file.parentFile?.let { buckets.add(it) }
+      runCatching { file.takeIf(File::exists)?.delete() }
     }
+    // A deleted page may hold several clips in one bucket; now that they're gone,
+    // prune the empty page folder (and its notebook folder if it too emptied out).
+    for (bucket in buckets) pruneEmptyBuckets(bucket)
     promise.resolve(null)
   }
 
@@ -285,4 +313,86 @@ class AiNotepadRecorderModule(private val reactContext: ReactApplicationContext)
   @ReactMethod fun addListener(eventName: String) {}
 
   @ReactMethod fun removeListeners(count: Double) {}
+
+  // --- media bucketing -------------------------------------------------------
+
+  /**
+   * Move a finished cache clip into filesDir/media/<notebook>/<page>/, returning
+   * the new absolute path, or null on any failure (caller keeps the cache path).
+   * Prefers an atomic rename; falls back to copy+delete when the two live on
+   * different mounts (cacheDir and filesDir usually don't, but be safe).
+   */
+  private fun migrateToMedia(cachePath: String?, nb: String, page: String): String? {
+    if (cachePath == null) return null
+    val src = File(cachePath)
+    if (!src.exists()) return null
+    val destDir = File(File(reactContext.filesDir, MEDIA_DIR), "$nb/$page")
+    if (!destDir.isDirectory && !destDir.mkdirs()) return null
+    val dest = File(destDir, src.name)
+    return try {
+      if (src.renameTo(dest)) {
+        dest.absolutePath
+      } else {
+        src.inputStream().use { input -> dest.outputStream().use { input.copyTo(it) } }
+        src.delete()
+        dest.absolutePath
+      }
+    } catch (e: Exception) {
+      runCatching { if (dest.exists() && dest != src) dest.delete() }
+      null
+    }
+  }
+
+  /**
+   * Walk up from a just-emptied bucket, deleting each folder that is now empty,
+   * stopping at the first non-empty one or at a media root (which is never
+   * removed). This turns filesDir/media/<nb>/<page>/ into nothing once a page's
+   * clips are all deleted, and also drops the <nb> folder if that was the
+   * notebook's last page with media. Confined to our media trees so it can never
+   * touch anything outside filesDir/media or cacheDir/media.
+   */
+  private fun pruneEmptyBuckets(bucket: File) {
+    val roots = listOf(
+      File(reactContext.filesDir, MEDIA_DIR),
+      File(reactContext.cacheDir, MEDIA_DIR),
+    )
+    var dir: File = bucket
+    // Only prune strict descendants of a media root (so a root itself, and
+    // anything outside the media trees, ends the walk immediately).
+    while (roots.any { isStrictlyUnder(it, dir) }) {
+      val entries = dir.list() ?: break
+      if (entries.isNotEmpty()) break
+      if (!dir.delete()) break
+      dir = dir.parentFile ?: break
+    }
+  }
+
+  companion object {
+    // Sub-folder (under both cacheDir and filesDir) that holds recording buckets.
+    private const val MEDIA_DIR = "media"
+    // Used when a notebook/page id is missing or sanitizes to empty, so a clip is
+    // never dropped at the media root without a bucket.
+    private const val FALLBACK_SEG = "_"
+
+    /**
+     * Reduce a notebook/page id to a single safe path segment. Ids are app-generated
+     * uuids/slugs, but sanitize defensively so nothing can traverse out of the media
+     * tree (no '/', '\', '..') or break the filesystem.
+     */
+    private fun safeSeg(raw: String?): String {
+      val cleaned = (raw ?: "").replace(Regex("[^A-Za-z0-9_-]"), "_")
+      return if (cleaned.isEmpty()) FALLBACK_SEG else cleaned
+    }
+
+    /**
+     * True when `dir` sits strictly inside `root` (a real descendant, not `root`
+     * itself). Uses canonical paths so a `..` or symlink can't smuggle the prune
+     * walk outside the media tree; a resolution failure is treated as "not under".
+     */
+    private fun isStrictlyUnder(root: File, dir: File): Boolean {
+      val r = runCatching { root.canonicalPath }.getOrNull() ?: return false
+      val d = runCatching { dir.canonicalPath }.getOrNull() ?: return false
+      return d.length > r.length && d.startsWith(r + File.separator)
+    }
+  }
 }

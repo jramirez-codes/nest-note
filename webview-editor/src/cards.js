@@ -4,10 +4,14 @@ import {
   previewField,
   askLiveField,
   recPlayField,
+  runLiveField,
   setPreviewEffect,
   setAskLive,
   clearAskLive,
   setRecPlay,
+  setRunLog,
+  setRunStatus,
+  clearRunLog,
 } from './state.js';
 import { LinkCardWidget, ImageWidget } from './widgets.js';
 import { AiCardWidget } from './aiCard.js';
@@ -21,6 +25,7 @@ function buildCards(state) {
   const previews = state.field(previewField);
   const askLive = state.field(askLiveField);
   const recPlay = state.field(recPlayField);
+  const runLive = state.field(runLiveField);
   // Lines touched by a selection stay raw so the URL can be edited. Read-only
   // views (the /ask answer preview) never reveal — cards always render.
   const activeLines = new Set();
@@ -55,9 +60,11 @@ function buildCards(state) {
   // Ask/pair cards always render as their widget (never revealed as raw base64),
   // so the marker line is replaced whether or not the cursor is on it.
   eachAiLine(state, (obj, line) => {
+    // Run cards read their live output from runLive; every other kind uses askLive.
+    const live = obj.kind === 'run' ? runLive[obj.id] : askLive[obj.id];
     marks.push(
       Decoration.replace({
-        widget: new AiCardWidget(obj, askLive[obj.id], !!recPlay[obj.id]),
+        widget: new AiCardWidget(obj, live, !!recPlay[obj.id]),
         block: true,
       }).range(line.from, line.to),
     );
@@ -78,7 +85,10 @@ export const cardField = StateField.define({
           e.is(setPreviewEffect) ||
           e.is(setAskLive) ||
           e.is(clearAskLive) ||
-          e.is(setRecPlay),
+          e.is(setRecPlay) ||
+          e.is(setRunLog) ||
+          e.is(setRunStatus) ||
+          e.is(clearRunLog),
       )
     ) {
       return buildCards(tr.state);

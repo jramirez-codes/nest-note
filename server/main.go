@@ -26,6 +26,7 @@ func main() {
 		threshold  = flag.Int("subject-threshold", 4, "mentions before the orchestrator proposes a dedicated server for a subject (with -root)")
 		runTimeout = flag.Duration("run-timeout", 2*time.Minute, "max time for a single Claude run before it is killed and reported as failed")
 		pairTTL    = flag.Duration("pair-ttl", 10*time.Minute, "how long the pairing code stays valid")
+		allowExec  = flag.Bool("allow-exec", false, "enable /exec: the direct \"/run <cmd>\" shell channel. OFF by default — it runs arbitrary commands as this user, gated only by the pinned tunnel + token")
 	)
 	flag.Parse()
 
@@ -97,6 +98,9 @@ func main() {
 	})
 	mux.HandleFunc("/pair", pairHandler(pr))
 	mux.HandleFunc("/run", runHandler(token, *workdir, *root, *threshold, *runTimeout, boot))
+	// Direct shell channel for /run <cmd> — streams stdout/stderr live, no Claude.
+	// Runs in the same base workdir Claude uses. Gated behind -allow-exec.
+	mux.HandleFunc("/exec", execHandler(token, runDir, *allowExec))
 	// Read-only dashboard state + the optional merge-approval action. Both only
 	// touch the scaffold's data files, so they need no Claude run.
 	mux.HandleFunc("/state", stateHandler(token, *root))
@@ -149,6 +153,9 @@ func main() {
 	if *root != "" {
 		fmt.Printf("  mcp servers %v (+ orchestrator, auto-grows at %d mentions)\n", boot.servers, *threshold)
 		fmt.Printf("  mcp config %v\n", boot.mcpConfigs)
+	}
+	if *allowExec {
+		fmt.Printf("  exec       ENABLED at wss://%s/exec  (/run <cmd> runs arbitrary shell as this user)\n", listenAddr)
 	}
 	fmt.Printf("  spki pin   %s\n", pin)
 	fmt.Printf("  pair code  %s  (valid %s, single use)\n", pr.code, *pairTTL)

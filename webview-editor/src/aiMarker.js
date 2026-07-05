@@ -36,6 +36,9 @@ const SEC_AGENT = '[agent]';
 // A /clean review marker stashes the pre-clean document here, so Reject can
 // restore it — multi-line, like the answer, so it's the block's last section.
 const SEC_BACKUP = '[backup]';
+// A /run terminal card stashes its final output tail here — multi-line like the
+// answer/backup, so it's the block's last section.
+const SEC_OUTPUT = '[output]';
 const HEADER_RE = /^(\w+):\s?(.*)$/;
 // Legacy: whole line is `<!--ai <base64>-->`. base64's alphabet has no `{`,
 // so this can never match a value written by the new encoder.
@@ -43,13 +46,13 @@ const LEGACY_RE = /^<!--ai ([A-Za-z0-9+/=]+)-->$/;
 
 // Keys whose stored string value should be coerced back to a non-string type.
 const BOOL_KEYS = new Set(['open']);
-const NUM_KEYS = new Set(['v', 'ms', 'startedAt']);
+const NUM_KEYS = new Set(['v', 'ms', 'startedAt', 'code']);
 
 // Statuses where the card is still in-flight and the async server callbacks
 // (__aiStream / __aiDone) need to find it by id. Once a card reaches a terminal
 // status nothing looks it up again, so the id is dropped to keep finished notes
 // free of machine gibberish.
-const INFLIGHT = new Set(['streaming', 'pending']);
+const INFLIGHT = new Set(['streaming', 'pending', 'running']);
 
 // UTF-8-safe base64 decode, kept only to read legacy markers (btoa/atob are
 // Latin1-only; answers contain emoji/Unicode).
@@ -77,7 +80,7 @@ function unescLine(val) {
 function escBody(val) {
   return String(val)
     .replace(/-->/g, '--&gt;')
-    .replace(/^\[(user|agent|backup)\]$/gm, '&#91;$1]');
+    .replace(/^\[(user|agent|backup|output)\]$/gm, '&#91;$1]');
 }
 function unescBody(val) {
   return val.replace(/&#91;/g, '[').replace(/--&gt;/g, '-->');
@@ -93,7 +96,7 @@ function coerce(key, val) {
 // question/answer becomes a header line, in object-key order (so the readable
 // order is v, kind, id, open, status, …).
 export function encodeAiMarker(obj) {
-  const { q, a, backup, turns, ...meta } = obj;
+  const { q, a, backup, turns, out, ...meta } = obj;
   // Chat cards keep their handle even when done: the id is how a later reply
   // (fired from the card's follow-up box) threads back into the same run. Record
   // cards keep it too — Record/Stop/Export all address the card by id.
@@ -122,6 +125,9 @@ export function encodeAiMarker(obj) {
   } else if (obj.kind === 'clean' && backup != null) {
     lines.push(SEC_BACKUP);
     lines.push(escBody(backup));
+  } else if (obj.kind === 'run' && out != null) {
+    lines.push(SEC_OUTPUT);
+    lines.push(escBody(out));
   }
   lines.push(CLOSE_LINE);
   return lines.join('\n');
@@ -134,7 +140,7 @@ function parseBlockBody(bodyLines) {
   let i = 0;
   for (; i < bodyLines.length; i++) {
     const t = bodyLines[i];
-    if (t === SEC_USER || t === SEC_AGENT || t === SEC_BACKUP) break;
+    if (t === SEC_USER || t === SEC_AGENT || t === SEC_BACKUP || t === SEC_OUTPUT) break;
     const m = HEADER_RE.exec(t);
     if (m) obj[m[1]] = coerce(m[1], unescLine(m[2]));
   }
@@ -173,6 +179,8 @@ function parseBlockBody(bodyLines) {
     obj.a = unescBody(bodyLines.slice(i + 1).join('\n'));
   } else if (bodyLines[i] === SEC_BACKUP) {
     obj.backup = unescBody(bodyLines.slice(i + 1).join('\n'));
+  } else if (bodyLines[i] === SEC_OUTPUT) {
+    obj.out = unescBody(bodyLines.slice(i + 1).join('\n'));
   }
   return obj.kind ? obj : null;
 }

@@ -15,10 +15,13 @@ import {
   previewField,
   askLiveField,
   recPlayField,
+  runLiveField,
   setPreviewEffect,
   setAskLive,
   clearAskLive,
   setRecPlay,
+  setRunLog,
+  clearRunLog,
   cachePreview,
 } from './state.js';
 import { broadcastPreview } from './answerView.js';
@@ -120,6 +123,7 @@ const extensions = [
   previewField,
   askLiveField,
   recPlayField,
+  runLiveField,
   cardField,
   previewFetcher,
   codeBlocks,
@@ -213,6 +217,48 @@ window.__aiDone = function (id, patch) {
     },
     effects,
   });
+};
+
+// RN streams terminal output chunks here as a /run command produces them. Like
+// __aiStream this only grows a live field (no document change), so the log grows
+// in place without disturbing the caret or saving on every chunk.
+window.__runLog = function (id, chunk) {
+  view.dispatch({ effects: setRunLog.of({ id, chunk }) });
+};
+
+// A finished /run keeps no live state: fold a capped tail of its output into the
+// marker (so reopening the note shows what happened) and drop the live entry.
+// `patch` is { status:'done', code } on a clean exit or { status:'error', msg }.
+const RUN_DOC_CAP = 8 * 1024;
+function commitRun(id, patch) {
+  const live = view.state.field(runLiveField)[id];
+  let out = live ? live.out : '';
+  if (out.length > RUN_DOC_CAP) out = '…\n' + out.slice(out.length - RUN_DOC_CAP);
+  const found = findAiLine(view.state, id);
+  const effects = [clearRunLog.of(id)];
+  if (!found) {
+    view.dispatch({ effects });
+    return;
+  }
+  view.dispatch({
+    changes: {
+      from: found.from,
+      to: found.to,
+      insert: encodeAiMarker({ ...found.obj, ...patch, out }),
+    },
+    effects,
+  });
+}
+
+// RN calls this once a /run command exits (code >= 0), was signalled/killed
+// (code < 0 → the card reads "stopped"), or on a natural interrupt.
+window.__runExit = function (id, code) {
+  commitRun(id, { status: 'done', code });
+};
+
+// RN calls this if the run couldn't start or the connection dropped mid-run.
+window.__runError = function (id, msg) {
+  commitRun(id, { status: 'error', msg });
 };
 
 // RN calls this when a /clean run finishes: swap the whole document for the

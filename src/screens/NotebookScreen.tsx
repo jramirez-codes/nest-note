@@ -26,6 +26,7 @@ import type { PaperPagerHandle } from '../components/PaperPager';
 import ServerStatusDot from '../components/ServerStatusDot';
 import VirtualNotePage from '../components/VirtualNotePage';
 import { useCardDrag } from '../components/cardDrag';
+import { DEFAULT_NOTEBOOK_ID } from '../storage/db';
 import { useNotes } from '../hooks/useNotes';
 import { useNotebookPages } from '../hooks/useNotebookPages';
 import type { NotePage as NotebookPageStub } from '../server/aiController';
@@ -319,6 +320,8 @@ export default function NotebookScreen() {
             width={width}
             isActive={isActive}
             onOpenPage={handleOpenPage}
+            notebookId={subjectSlug ?? SANDBOX_KEY}
+            pageId={String(page.stub.num)}
           />
         );
       }
@@ -331,6 +334,7 @@ export default function NotebookScreen() {
           onSetTitle={updateNoteTitle}
           onIngested={deleteNote}
           onOpenPage={handleOpenPage}
+          notebookId={DEFAULT_NOTEBOOK_ID}
         />
       );
     },
@@ -339,6 +343,7 @@ export default function NotebookScreen() {
       width,
       bodies,
       selectedNb,
+      subjectSlug,
       updateNoteContent,
       updateNoteTitle,
       deleteNote,

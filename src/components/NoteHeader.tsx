@@ -93,9 +93,6 @@ function NoteHeader({
           <Text className="text-xs font-semibold uppercase tracking-wider text-faint">
             Page {pageNumber} / {totalPages}
           </Text>
-          <Text numberOfLines={1} className="flex-1 pl-3 text-right text-xs text-muted">
-            {readOnlyTitle}
-          </Text>
         </>
       ) : (
         <>

@@ -25,8 +25,16 @@ import {
 } from 'react-native';
 
 interface RecorderModule {
-  /** Begin capturing; resolves with the temp file path and start epoch (ms). */
-  start(label: string): Promise<{ file: string; startedAt: number }>;
+  /**
+   * Begin capturing into the given notebook/page bucket; resolves with the cache
+   * file path and start epoch (ms). The clip migrates to that notebook's
+   * persistent media folder on stop().
+   */
+  start(
+    label: string,
+    notebookId: string,
+    pageId: string,
+  ): Promise<{ file: string; startedAt: number }>;
   /** Stop the active capture; resolves with the file path and its duration (ms). */
   stop(): Promise<{ file: string; ms: number }>;
   /** Stop the active capture and delete its half-written file (× while recording). */
@@ -90,9 +98,17 @@ export async function ensureRecordingPermissions(): Promise<string | null> {
   return null;
 }
 
-/** Start capturing `label`'s audio. Throws if a recording is already running. */
-export function startRecording(label: string): Promise<{ file: string; startedAt: number }> {
-  return requireNative().start(label);
+/**
+ * Start capturing `label`'s audio into the `notebookId`/`pageId` bucket. Throws if
+ * a recording is already running. The finished clip lands in that notebook's
+ * persistent media folder (see the native module's stop/migrate).
+ */
+export function startRecording(
+  label: string,
+  notebookId: string,
+  pageId: string,
+): Promise<{ file: string; startedAt: number }> {
+  return requireNative().start(label, notebookId, pageId);
 }
 
 /** Stop the active recording and get its file + duration back. */

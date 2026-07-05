@@ -14,6 +14,10 @@ interface VirtualNotePageProps {
   isActive: boolean;
   /** A tapped wikilink asks to flip the pad to `title` (in notebook `slug`, or the current one). */
   onOpenPage?: (slug: string, title: string) => void;
+  /** Subject slug + page id this virtual page belongs to (passed through for media bucketing;
+   *  these pages are read-only so recording never actually fires here). */
+  notebookId: string;
+  pageId: string;
 }
 
 /**
@@ -27,7 +31,14 @@ interface VirtualNotePageProps {
  * and viewed, not edited, on the phone — only the local Sandbox is editable. Keyed per page
  * by the pager, so each page mounts with the right content.
  */
-function VirtualNotePage({ body, width, isActive, onOpenPage }: VirtualNotePageProps) {
+function VirtualNotePage({
+  body,
+  width,
+  isActive,
+  onOpenPage,
+  notebookId,
+  pageId,
+}: VirtualNotePageProps) {
   const colors = useTheme();
   return (
     <View style={{ width }} className="flex-1 bg-background">
@@ -48,6 +59,8 @@ function VirtualNotePage({ body, width, isActive, onOpenPage }: VirtualNotePageP
             onSetTitle={noop}
             onIngested={noop}
             onOpenPage={onOpenPage}
+            notebookId={notebookId}
+            pageId={pageId}
           />
         </KeyboardAvoidingView>
       )}

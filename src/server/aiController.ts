@@ -15,7 +15,9 @@ import { setServerStatus } from './status';
 import type { Transport } from './transport';
 
 let transport: Transport | null = null;
-function getTransport(): Transport | null {
+// Exported so sibling controllers (e.g. ./codeController) share the one native
+// transport instance rather than each creating their own.
+export function getTransport(): Transport | null {
   if (!isNativeTransportAvailable()) return null;
   if (!transport) transport = createNativeTransport();
   return transport;
@@ -25,7 +27,9 @@ function getTransport(): Transport | null {
 // time. `loaded` distinguishes "not yet read" from "read, and there is none".
 let cachedServer: PairedServer | null = null;
 let loaded = false;
-async function currentServer(): Promise<PairedServer | null> {
+// Exported so sibling controllers share this cache (and any re-pair updates it),
+// keeping "which laptop are we talking to" single-sourced across the app.
+export async function currentServer(): Promise<PairedServer | null> {
   if (!loaded) {
     cachedServer = await loadServer();
     loaded = true;
@@ -53,7 +57,7 @@ export async function pingServer(): Promise<boolean> {
   return ok;
 }
 
-const NO_MODULE =
+export const NO_MODULE =
   'The secure connection module isn’t in this build. Rebuild the app (not just a ' +
   'JS reload) to enable the assistant.';
 
@@ -308,6 +312,13 @@ function buildIngestPrompt(pageText: string): string {
     '3. For each subject, call ingest_topic(subject, summary, notes) with that ' +
     "subject's notes (lightly cleaned for grammar). Preserve every fact; invent " +
     'nothing; file every note into exactly one subject.\n' +
+    '   • Any block that starts with a line "<!--ai" and ends with a line "-->" is ' +
+    'a rendered widget (e.g. a voice recording), NOT prose. Copy each such block ' +
+    'through VERBATIM — byte for byte, every line between "<!--" and "-->" ' +
+    'unchanged, including its "file:" path — into the notes of whichever subject it ' +
+    'belongs with. Never edit, reword, reformat, translate, summarize, split, or ' +
+    'drop anything inside an HTML comment, and keep the whole block intact on its ' +
+    'own lines.\n' +
     '4. Only if two EXISTING subjects clearly duplicate each other may you call ' +
     'suggest_merge. Never merge on your own.\n' +
     '5. Also surface anything actionable or time-sensitive as a dashboard card ' +

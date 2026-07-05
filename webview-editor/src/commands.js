@@ -23,6 +23,11 @@ const SLASH_COMMANDS = [
     apply: '/record',
   },
   {
+    label: '/run',
+    detail: 'Run a shell command on the paired laptop — output streams live into a terminal card',
+    apply: '/run ',
+  },
+  {
     label: '/pair',
     detail: 'Pair a device by QR code or payload',
     apply: '/pair ',
@@ -134,6 +139,29 @@ export function aiCommandOnEnter(view) {
       changes: { from: line.from, to: line.to, insert },
       selection: { anchor: line.from + insert.length },
     });
+    return true;
+  }
+
+  // `/run <cmd>`: drop a live terminal card and stream a shell command from the
+  // paired laptop into it. The pinned /exec socket lives on the RN side; this only
+  // creates the card and posts the intent by id. The card starts open and running.
+  const runCmd = /^\/run\s+(.+\S)\s*$/.exec(text);
+  if (runCmd) {
+    const id = genId();
+    const marker = encodeAiMarker({
+      v: 1,
+      kind: 'run',
+      id,
+      cmd: runCmd[1],
+      status: 'running',
+      open: true,
+    });
+    const insert = marker + '\n';
+    view.dispatch({
+      changes: { from: line.from, to: line.to, insert },
+      selection: { anchor: line.from + insert.length },
+    });
+    post({ type: 'run', id, cmd: runCmd[1] });
     return true;
   }
 

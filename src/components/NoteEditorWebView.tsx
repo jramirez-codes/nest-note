@@ -14,6 +14,7 @@ import {
   runIngest,
   type AskHandle,
 } from '../server/aiController';
+import { runCommand, type RunHandle } from '../server/codeController';
 import {
   ensureRecordingPermissions,
   startRecording,
@@ -27,6 +28,14 @@ import {
   onPlaybackEnded,
 } from '../server/audioController';
 import QrPairModal from './QrPairModal';
+
+// Strip ANSI escape / color sequences so a dev server's output reads as plain
+// text in the terminal card (v1 renders no color), and normalise CRLF to LF.
+// eslint-disable-next-line no-control-regex
+const ANSI_RE = /[\u001b\u009b][[\]()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g;
+function stripAnsi(s: string): string {
+  return s.replace(ANSI_RE, '').replace(/\r\n/g, '\n');
+}
 
 // react-native-webview@14's class-component typings resolve to `never` under
 // React 19's JSX types (RN 0.86), so re-type it as a normal component. Runtime
@@ -59,6 +68,12 @@ interface NoteEditorWebViewProps {
    * are viewable but not editable on the phone — only the local Sandbox is edited.
    */
   readOnly?: boolean;
+  /**
+   * Notebook + page this editor belongs to. /record clips are cached and then
+   * migrated into this notebook's per-page media bucket, so recording needs both.
+   */
+  notebookId: string;
+  pageId: string;
 }
 
 /**
@@ -78,11 +93,16 @@ export default function NoteEditorWebView({
   onIngested,
   onOpenPage,
   readOnly = false,
+  notebookId,
+  pageId,
 }: NoteEditorWebViewProps) {
   const ref = useRef<WebViewInstance>(null);
   // Live /ask runs keyed by the editor-side card id, so we can cancel them if
   // the note is swiped away / unmounted mid-stream.
   const askHandles = useRef<Record<string, AskHandle>>({});
+  // Live /run terminal sessions keyed by card id, so we can feed stdin/signals
+  // and tear them down when the note is swiped away / unmounted.
+  const runHandles = useRef<Record<string, RunHandle>>({});
   // The /record card id whose clip is currently playing (only one at a time), so
   // starting another or a natural end can flip the right card's button back.
   const playingId = useRef<string | null>(null);
@@ -105,6 +125,8 @@ export default function NoteEditorWebView({
         file?: string;
         slug?: string;
         title?: string;
+        cmd?: string;
+        data?: string;
       };
       try {
         msg = JSON.parse(e.nativeEvent.data);
@@ -259,7 +281,11 @@ export default function NoteEditorWebView({
             return;
           }
           try {
-            const { file, startedAt } = await startRecording(msg.label ?? '');
+            const { file, startedAt } = await startRecording(
+              msg.label ?? '',
+              notebookId,
+              pageId,
+            );
             doneRec({ status: 'recording', file, startedAt });
           } catch (e) {
             doneRec({ status: 'error', msg: e instanceof Error ? e.message : String(e) });
@@ -310,9 +336,53 @@ export default function NoteEditorWebView({
         // × on a finished card: delete just that clip; never disturbs a recording
         // that may be running on another card.
         deleteRecordings([msg.file]).catch(() => {});
+      } else if (msg.type === 'run' && typeof msg.id === 'string' && typeof msg.cmd === 'string') {
+        // Stream a shell command from the paired laptop into the terminal card.
+        // stdout+stderr are merged (a real terminal interleaves them) and ANSI
+        // codes stripped for v1; the card finalizes on exit/error.
+        const id = msg.id;
+        runHandles.current[id] = runCommand(msg.cmd, undefined, {
+          onLog: (_stream, chunk) =>
+            inject(`window.__runLog(${JSON.stringify(id)}, ${JSON.stringify(stripAnsi(chunk))});`),
+          onExit: code => {
+            delete runHandles.current[id];
+            inject(`window.__runExit(${JSON.stringify(id)}, ${code});`);
+          },
+          onError: errMsg => {
+            delete runHandles.current[id];
+            inject(`window.__runError(${JSON.stringify(id)}, ${JSON.stringify(errMsg)});`);
+          },
+        });
+      } else if (
+        msg.type === 'runStdin' &&
+        typeof msg.id === 'string' &&
+        typeof msg.data === 'string'
+      ) {
+        runHandles.current[msg.id]?.sendStdin(msg.data);
+      } else if (msg.type === 'runSignal' && typeof msg.id === 'string') {
+        // Ctrl-C: the process gets SIGINT and exits with its own code (the exit
+        // frame still flows, so the card finalizes via onExit above).
+        runHandles.current[msg.id]?.interrupt();
+      } else if (msg.type === 'runStop' && typeof msg.id === 'string') {
+        // Stop closes the socket, so no exit frame arrives — kill the session and
+        // finalize the card as "stopped" (negative code) ourselves.
+        const id = msg.id;
+        runHandles.current[id]?.stop();
+        delete runHandles.current[id];
+        inject(`window.__runExit(${JSON.stringify(id)}, -1);`);
       }
     },
-    [initialContent, hasTitle, onChangeContent, onSetTitle, onIngested, onOpenPage, readOnly],
+    [
+      initialContent,
+      hasTitle,
+      onChangeContent,
+      onSetTitle,
+      onIngested,
+      onOpenPage,
+      readOnly,
+      notebookId,
+      pageId,
+    ],
   );
 
   // Feed a resolved pairing outcome back into the /pair card, then close scanner.
@@ -329,11 +399,14 @@ export default function NoteEditorWebView({
     [],
   );
 
-  // Cancel any in-flight /ask streams when this editor unmounts.
+  // Cancel any in-flight /ask streams and stop any live /run sessions (killing
+  // the server-side processes) when this editor unmounts.
   useEffect(() => {
     const handles = askHandles.current;
+    const runs = runHandles.current;
     return () => {
       Object.values(handles).forEach(h => h.cancel());
+      Object.values(runs).forEach(h => h.stop());
     };
   }, []);
 

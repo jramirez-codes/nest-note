@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"syscall"
 )
 
 // orchestrationPrompt is appended to Claude's system prompt when MCP is enabled.
@@ -71,20 +70,13 @@ func runClaude(ctx context.Context, workdir string, mcpConfigs, allowedTools []s
 	stderr.limit = 64 * 1024
 	cmd.Stderr = &stderr
 
-	// Run Claude in its own process group. Claude spawns the MCP servers as
-	// child processes that inherit the stdout pipe, so a lingering MCP child can
-	// hold the pipe's write end open after Claude itself exits — which would
-	// leave the reader below blocked on EOF forever (an eternal spinner on the
-	// phone). The process group lets us signal the whole tree, not just Claude.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	// On ctx timeout/cancel, kill the entire group (Claude + every MCP server),
-	// not just Claude — otherwise the surviving children keep the pipe open.
-	cmd.Cancel = func() error {
-		if cmd.Process != nil {
-			return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		}
-		return nil
-	}
+	// Run Claude in its own process group so the whole tree — Claude plus every
+	// MCP server it spawns — can be signalled together. A lingering MCP child
+	// that inherited the stdout pipe would otherwise hold its write end open
+	// after Claude exits, leaving the reader below blocked on EOF forever (an
+	// eternal spinner on the phone). setProcGroup also SIGKILLs the group on ctx
+	// timeout/cancel. Shared with the /exec handler (procgroup.go).
+	setProcGroup(cmd)
 
 	// Own the pipe (rather than StdoutPipe) so its lifetime isn't coupled to
 	// Wait: we close the parent's write end after Start, leaving only the child
@@ -116,10 +108,8 @@ func runClaude(ctx context.Context, workdir string, mcpConfigs, allowedTools []s
 	waitErr := cmd.Wait()
 	// Claude has exited. Reap any MCP servers it left in the group so they
 	// release the pipe's write end and the reader can reach EOF instead of
-	// blocking indefinitely. ESRCH (group already gone) is fine to ignore.
-	if cmd.Process != nil {
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-	}
+	// blocking indefinitely.
+	killGroup(cmd)
 	scanErr := <-scanDone
 	pr.Close()
 
