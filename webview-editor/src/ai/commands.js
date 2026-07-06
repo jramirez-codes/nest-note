@@ -1,5 +1,6 @@
-import { encodeAiMarker, genId } from './aiMarker.js';
-import { post } from './bridge.js';
+import { encodeAiMarker, genId } from './marker.js';
+import { post } from '../bridge.js';
+import { c } from '../theme/palette.js';
 
 // --- Slash-command autocomplete ---------------------------------------------
 // A Claude-Code-style menu: type `/` at the start of a line and a dropdown of
@@ -341,3 +342,58 @@ export function aiCommandOnEnter(view) {
 
   return false;
 }
+
+// The slash-command menu (CM's autocomplete tooltip, restyled). Each row stacks
+// the command name over a wrapping description, so the menu sizes to its content
+// instead of cropping the detail text.
+export const styles = {
+  '.cm-tooltip.cm-tooltip-autocomplete': {
+    border: `1px solid ${c.surface1}`,
+    borderRadius: '12px',
+    backgroundColor: c.mantle,
+    boxShadow: '0 8px 24px rgba(0,0,0,0.45)',
+    overflow: 'hidden',
+    minWidth: '260px',
+    maxWidth: '340px',
+  },
+  '.cm-tooltip.cm-tooltip-autocomplete > ul': {
+    fontFamily: '-apple-system, Roboto, sans-serif',
+    whiteSpace: 'normal',
+    maxHeight: '18em',
+    padding: '4px',
+  },
+  '.cm-tooltip.cm-tooltip-autocomplete > ul > li': {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    gap: '2px',
+    padding: '8px 12px',
+    borderRadius: '8px',
+    lineHeight: '1.35',
+    color: c.text,
+    whiteSpace: 'normal',
+    overflow: 'visible',
+    textOverflow: 'clip',
+  },
+  '.cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected]': {
+    backgroundColor: c.surface0,
+    color: c.text,
+  },
+  '.cm-completionLabel': {
+    color: c.mauve,
+    fontWeight: '600',
+    fontSize: '15px',
+  },
+  '.cm-completionMatchedText': {
+    textDecoration: 'none',
+    color: c.blue,
+  },
+  '.cm-completionDetail': {
+    fontStyle: 'normal',
+    fontSize: '12.5px',
+    color: c.subtext0,
+    whiteSpace: 'normal',
+    overflow: 'visible',
+    textOverflow: 'clip',
+  },
+};

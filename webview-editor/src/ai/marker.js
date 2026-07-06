@@ -1,4 +1,4 @@
-import { post } from './bridge.js';
+import { post } from '../bridge.js';
 
 // --- /ask + /pair markers ---------------------------------------------------
 // An ask/pair block is persisted as a multi-line HTML comment so the raw text

@@ -9,7 +9,7 @@ import {
 import { syntaxHighlighting } from '@codemirror/language';
 import { autocompletion, startCompletion } from '@codemirror/autocomplete';
 
-import { theme, highlight } from './theme.js';
+import { theme, highlight } from './theme/index.js';
 import { post } from './bridge.js';
 import {
   previewField,
@@ -27,23 +27,24 @@ import {
   clearCodeLive,
   cachePreview,
 } from './state.js';
-import { broadcastPreview } from './answerView.js';
-import { wholeDocDeco } from './viewPlugin.js';
-import { cardField, previewFetcher } from './cards.js';
-import { livePreview } from './livePreview.js';
-import { listIndent } from './listIndent.js';
-import { codeBlocks, codeLanguages } from './codeBlocks.js';
-import { blockquotes } from './blockquotes.js';
-import { openLinks } from './links.js';
-import { WikiLink } from './wikilinks.js';
+import { broadcastPreview } from './ai/answerView.js';
+import { wholeDocDeco } from './markdown/viewPlugin.js';
+import { cardField, previewFetcher } from './ai/cardField.js';
+import { livePreview } from './markdown/livePreview.js';
+import { listIndent } from './markdown/listIndent.js';
+import { codeBlocks, codeLanguages } from './markdown/codeBlocks.js';
+import { blockquotes } from './markdown/blockquotes.js';
+import { openLinks } from './markdown/links.js';
+import { WikiLink } from './markdown/wikilinks.js';
 import {
   slashCommandSource,
   codeProjectSource,
   setCodeProjects,
   aiCommandOnEnter,
-} from './commands.js';
-import { lineStartReplace } from './lineStartReplace.js';
-import { encodeAiMarker, findAiLine, mergeAiDone, eachAiLine } from './aiMarker.js';
+} from './ai/commands.js';
+import { lineStartReplace } from './markdown/lineStartReplace.js';
+import { encodeAiMarker, findAiLine, mergeAiDone, eachAiLine } from './ai/marker.js';
+import { refreshOpenOverlay, closeOverlay } from './ai/overlay.js';
 
 /**
  * The CodeMirror 6 markdown editor that runs inside the React Native WebView.
@@ -147,6 +148,10 @@ const extensions = [
   EditorView.lineWrapping,
   EditorView.updateListener.of(u => {
     if (u.docChanged) post({ type: 'change', text: u.state.doc.toString() });
+    // Keep an open full-page card view in sync with the live fields it mirrors
+    // (streamed output/transcript arrive as non-doc transactions), and let it
+    // close itself if its card was deleted.
+    refreshOpenOverlay(u.view);
   }),
 ];
 
@@ -165,6 +170,9 @@ const INFLIGHT_STATUS = new Set(['streaming', 'pending', 'running']);
 // ask RN to reattach each to its live run (repaint + resume), so swiping back to
 // a note whose /ask or /code was still running picks the stream back up.
 window.__setDoc = function (text) {
+  // A different note is being seeded — any enlarged card view belongs to the old
+  // note, so drop it before the swap (its card id won't exist in the new doc).
+  closeOverlay();
   view.dispatch({
     changes: { from: 0, to: view.state.doc.length, insert: text ?? '' },
   });

@@ -11,7 +11,7 @@ import { dirname } from 'node:path';
  */
 
 const result = await build({
-  entryPoints: ['src/editor.js'],
+  entryPoints: ['src/index.js'],
   bundle: true,
   format: 'iife',
   minify: true,

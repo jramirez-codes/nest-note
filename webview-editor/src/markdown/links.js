@@ -1,5 +1,5 @@
 import { EditorView } from '@codemirror/view';
-import { post } from './bridge.js';
+import { post } from '../bridge.js';
 
 // A tap on a rendered link hands the URL to RN (which opens the system browser);
 // the WebView must not navigate itself, and we swallow the tap so the caret

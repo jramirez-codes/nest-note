@@ -16,12 +16,12 @@ import {
   appendCodeEvent,
   setCodeStatus,
   clearCodeLive,
-} from './state.js';
-import { LinkCardWidget, ImageWidget } from './widgets.js';
-import { AiCardWidget } from './aiCard.js';
-import { eachAiLine } from './aiMarker.js';
-import { eachCardUrl, eachBlockImage } from './urls.js';
-import { post } from './bridge.js';
+} from '../state.js';
+import { LinkCardWidget, ImageWidget } from '../markdown/widgets/index.js';
+import { AiCardWidget } from './cards/AiCardWidget.js';
+import { eachAiLine } from './marker.js';
+import { eachCardUrl, eachBlockImage } from '../markdown/urls.js';
+import { post } from '../bridge.js';
 
 // Block widgets must come from a StateField (the editor computes vertical layout
 // before running view plugins), so the cards live here rather than in a plugin.

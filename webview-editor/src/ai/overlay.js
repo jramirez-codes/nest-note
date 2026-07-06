@@ -1,0 +1,316 @@
+// The full-page ("enlarged") view for a /run or /code card. Tapping the Expand
+// corner in a card opens it; it fills the editor with just that one card's live
+// terminal log or agent transcript, and stays live by re-reading the SAME live
+// fields the card does on every editor update (refreshOpenOverlay is called from
+// the main updateListener). Deletion lives on the card itself (a long-press
+// there) — the page only views and drives the run.
+//
+// It mounts inside the editor DOM (view.dom), so every .cm-* component style
+// applies unchanged — only the fixed-page chrome (.cm-ov*) is new. The badge,
+// transcript rows, composer footer and streaming-append logic are the very same
+// helpers the cards use (ai/shared/*), so a card and its expanded view can never
+// visually drift.
+
+import { c } from '../theme/palette.js';
+import { BACK, INTERRUPT, STOP, SEND } from '../ui/icons.js';
+import { guardTaps, blockSelection } from '../ui/events.js';
+import { post } from '../bridge.js';
+import { findAiLine } from './marker.js';
+import { runLiveField, codeLiveField } from '../state.js';
+import { mountAnswerView, unmountAnswerView } from './answerView.js';
+import { renderCodeItem } from './shared/transcript.js';
+import { applyRunBadge } from './shared/badge.js';
+import { makeComposer } from './shared/composer.js';
+import { growPre, growMdView, scrollBottomSoon } from './shared/streamLog.js';
+
+// The one overlay that can be open at a time. Null when nothing is enlarged.
+let active = null;
+
+// Current status + payload for a card by id, from its live field while it runs,
+// falling back to the persisted marker once finished. Null once the card is gone
+// (deleted) — the caller closes the overlay when that happens.
+function readCard(view, id, kind) {
+  if (kind === 'run') {
+    const live = view.state.field(runLiveField)[id];
+    if (live) return { status: live.status, out: live.out, code: live.code };
+    const found = findAiLine(view.state, id);
+    if (found && found.obj.kind === 'run') {
+      return { status: found.obj.status || 'done', out: found.obj.out || '', code: found.obj.code };
+    }
+    return null;
+  }
+  const live = view.state.field(codeLiveField)[id];
+  if (live) return { status: live.status, items: live.items };
+  const found = findAiLine(view.state, id);
+  if (found && found.obj.kind === 'code') {
+    return { status: found.obj.status || 'done', items: found.obj.items || [] };
+  }
+  return null;
+}
+
+// Live footer for a /run page: stdin box, interrupt (⌃C), Stop (kill).
+function runFoot(id) {
+  return makeComposer({
+    footClass: 'cm-ask-foot cm-run-foot cm-ov-foot',
+    inputClass: 'cm-ask-followup cm-run-stdin',
+    placeholder: 'stdin — Enter to send…',
+    onSubmit: input => {
+      const text = input.value;
+      input.value = '';
+      post({ type: 'runStdin', id, data: text + '\n' });
+    },
+    buttons: [
+      { className: 'cm-run-btn cm-run-intr', icon: INTERRUPT, label: 'Interrupt', onTap: () => post({ type: 'runSignal', id }) },
+      { className: 'cm-run-btn cm-run-stop', icon: STOP, label: 'Stop', onTap: () => post({ type: 'runStop', id }) },
+    ],
+  });
+}
+
+// Live footer for a /code page: a prompt box (Enter sends the next turn), Send,
+// and Stop (kill the session).
+function codeFoot(id) {
+  return makeComposer({
+    footClass: 'cm-ask-foot cm-run-foot cm-ov-foot',
+    inputClass: 'cm-ask-followup cm-code-prompt',
+    placeholder: 'Message the agent — Enter to send…',
+    onSubmit: input => {
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = '';
+      post({ type: 'codePrompt', id, text });
+    },
+    buttons: [
+      { className: 'cm-run-btn cm-code-send', icon: SEND, label: 'Send', submit: true },
+      { className: 'cm-run-btn cm-run-stop', icon: STOP, label: 'Stop session', onTap: () => post({ type: 'codeStop', id }) },
+    ],
+  });
+}
+
+// Tear down the nested markdown views (only /code mounts any).
+function teardownMd() {
+  if (!active) return;
+  for (const v of active.mdViews) unmountAnswerView(v);
+  active.mdViews = [];
+  active.lastMd = null;
+}
+
+// Grow / append the /run log to match the current output (mirrors updateRun).
+function renderRun(data) {
+  if (!active.log) {
+    const log = document.createElement('pre');
+    log.className = 'cm-run-log cm-ov-log';
+    active.body.appendChild(log);
+    active.log = log;
+    log.textContent = data.out;
+    scrollBottomSoon(log);
+    return;
+  }
+  if (growPre(active.log, data.out)) scrollBottomSoon(active.log);
+}
+
+// Render the /code transcript. Fast-path the hot case (the last assistant block
+// growing token-by-token) by appending the delta into its mounted markdown view;
+// any structural change (a new block, running→done) rebuilds the whole log.
+function renderCode(data, running) {
+  const items = data.items || [];
+  const structural = !active.log || items.length !== active.count || (active.wasRunning && !running);
+
+  if (!structural && active.lastMd) {
+    const last = items[items.length - 1];
+    if (last && last.type === 'text') {
+      if (growMdView(active.lastMd, last.text || '')) scrollBottomSoon(active.log);
+      return;
+    }
+  }
+
+  teardownMd();
+  let log = active.log;
+  if (!log) {
+    log = document.createElement('div');
+    log.className = 'cm-code-log cm-ov-log';
+    active.body.appendChild(log);
+    active.log = log;
+  } else {
+    log.textContent = '';
+  }
+  items.forEach((item, idx) => {
+    if (item.type === 'text') {
+      const box = document.createElement('div');
+      box.className = 'cm-code-text';
+      log.appendChild(box);
+      const streaming = running && idx === items.length - 1;
+      const mv = mountAnswerView(box, item.text || '', { trim: !streaming });
+      active.mdViews.push(mv);
+      if (streaming) active.lastMd = mv;
+    } else {
+      log.appendChild(renderCodeItem(item));
+    }
+  });
+  if (!items.length && running) {
+    const hint = document.createElement('div');
+    hint.className = 'cm-code-hint';
+    hint.textContent = 'Session ready — send a message below.';
+    log.appendChild(hint);
+  }
+  active.count = items.length;
+  scrollBottomSoon(log);
+}
+
+// Add/remove the live footer as the run transitions between running and finished.
+function syncFoot(running) {
+  if (running && !active.foot) {
+    active.foot = active.kind === 'run' ? runFoot(active.id) : codeFoot(active.id);
+    active.body.appendChild(active.foot);
+  } else if (!running && active.foot) {
+    active.foot.remove();
+    active.foot = null;
+  }
+}
+
+// Re-read the current data and reconcile the page. Closes the overlay if the card
+// it mirrors is gone (deleted, or a different note was seeded).
+function render(view) {
+  if (!active) return;
+  const data = readCard(view, active.id, active.kind);
+  if (!data) {
+    closeOverlay();
+    return;
+  }
+  const running = data.status === 'running';
+  applyRunBadge(active.badge, { kind: active.kind, status: data.status, code: data.code });
+  if (active.kind === 'run') renderRun(data);
+  else renderCode(data, running);
+  syncFoot(running);
+  active.wasRunning = running;
+}
+
+// Open the enlarged view for a card payload (must be a /run or /code marker obj).
+export function openCardOverlay(view, obj) {
+  if (!obj || (obj.kind !== 'run' && obj.kind !== 'code')) return;
+  closeOverlay();
+  const { id, kind } = obj;
+  if (!readCard(view, id, kind)) return;
+
+  const root = document.createElement('div');
+  root.className = 'cm-ov';
+  blockSelection(root);
+
+  const head = document.createElement('div');
+  head.className = 'cm-ov-head';
+
+  const back = document.createElement('span');
+  back.className = 'cm-ov-back';
+  back.innerHTML = BACK;
+  back.setAttribute('aria-label', 'Back');
+  guardTaps(back, closeOverlay);
+  head.appendChild(back);
+
+  const title = document.createElement('code');
+  title.className = 'cm-ov-title' + (kind === 'code' ? ' cm-ov-title-code' : '');
+  title.textContent = kind === 'code' ? '✦ ' + (obj.project || '') : obj.cmd || '';
+  head.appendChild(title);
+
+  const badge = document.createElement('span');
+  head.appendChild(badge);
+
+  root.appendChild(head);
+
+  const body = document.createElement('div');
+  body.className = 'cm-ov-body';
+  root.appendChild(body);
+
+  view.dom.appendChild(root);
+
+  active = {
+    id,
+    kind,
+    root,
+    body,
+    badge,
+    log: null,
+    foot: null,
+    mdViews: [],
+    lastMd: null,
+    count: -1,
+    wasRunning: false,
+  };
+  render(view);
+}
+
+// Called from the editor's updateListener on every transaction so the page tracks
+// streamed output/transcript growth (and closes if its card was deleted).
+export function refreshOpenOverlay(view) {
+  if (active) render(view);
+}
+
+// Close the enlarged view and return to the note (also called when the card is
+// deleted or the note is swapped).
+export function closeOverlay() {
+  if (!active) return;
+  teardownMd();
+  active.foot = null;
+  if (active.root) active.root.remove();
+  active = null;
+}
+
+export const styles = {
+  '.cm-ov': {
+    position: 'fixed',
+    inset: '0',
+    zIndex: '30',
+    display: 'flex',
+    flexDirection: 'column',
+    backgroundColor: c.base,
+  },
+  '.cm-ov-head': {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    padding: '10px 12px',
+    borderBottom: `1px solid ${c.surface0}`,
+    backgroundColor: c.mantle,
+  },
+  '.cm-ov-back': {
+    flexShrink: '0',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '34px',
+    height: '34px',
+    border: `1px solid ${c.surface1}`,
+    borderRadius: '9px',
+    backgroundColor: c.surface0,
+    color: c.text,
+    cursor: 'pointer',
+    userSelect: 'none',
+  },
+  '.cm-ov-back svg': { display: 'block', width: '18px', height: '18px' },
+  '.cm-ov-title': {
+    flex: '1',
+    minWidth: '0',
+    color: c.teal,
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+    fontSize: '14px',
+    fontWeight: '600',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  },
+  '.cm-ov-title-code': { color: c.mauve },
+  '.cm-ov-body': {
+    flex: '1',
+    minHeight: '0',
+    display: 'flex',
+    flexDirection: 'column',
+    padding: '12px',
+    overflow: 'hidden',
+  },
+  // The card's capped log/transcript grows to fill the whole page here.
+  '.cm-ov .cm-run-log, .cm-ov .cm-code-log': {
+    maxHeight: 'none',
+    flex: '1 1 auto',
+    minHeight: '0',
+    margin: '0',
+  },
+  '.cm-ov-foot': { flexShrink: '0' },
+};

@@ -1,8 +1,9 @@
 import { Decoration } from '@codemirror/view';
 import { syntaxTree } from '@codemirror/language';
 import { decoPlugin, decoRanges } from './viewPlugin.js';
-import { ImageWidget, CheckboxWidget, BulletWidget } from './widgets.js';
+import { ImageWidget, CheckboxWidget, BulletWidget } from './widgets/index.js';
 import { imageAlt } from './urls.js';
+import { c } from '../theme/palette.js';
 
 const HIDE = Decoration.replace({});
 // Marks a run of text as a tappable link; the URL rides along as a data attr so
@@ -246,3 +247,32 @@ function buildLivePreview(view) {
 }
 
 export const livePreview = decoPlugin(buildLivePreview, { selection: true });
+
+// The inline marks this layer paints: tappable links, internal wikilinks, and
+// inline `code`. All use a descendant `span` override so their colour survives
+// even when a surrounding list/quote's block highlight (t.list / t.quote) wraps
+// an inner span — the descendant selector out-specifies the single-class
+// highlighter rules.
+export const styles = {
+  '.cm-link': {
+    color: c.blue,
+    textDecoration: 'underline',
+    cursor: 'pointer',
+  },
+  '.cm-link span': {
+    color: c.blue,
+  },
+  // Wikilinks (`[[…]]`) are internal navigation, not web URLs — mauve to set them
+  // apart from blue external links and match the theme's accent.
+  '.cm-wikilink, .cm-wikilink span': {
+    color: c.mauve,
+  },
+  '.cm-inline-code': {
+    color: c.green,
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+    fontSize: '0.9em',
+  },
+  '.cm-inline-code span': {
+    color: c.green,
+  },
+};

@@ -7,7 +7,8 @@ import { python } from '@codemirror/lang-python';
 import { go } from '@codemirror/lang-go';
 import { shell } from '@codemirror/legacy-modes/mode/shell';
 import { decoPlugin, decoRanges } from './viewPlugin.js';
-import { CopyButtonWidget } from './widgets.js';
+import { CopyButtonWidget } from './widgets/copyButton.js';
+import { c } from '../theme/palette.js';
 
 /**
  * Fenced code "cards": a Catppuccin background spanning every line of a
@@ -66,3 +67,38 @@ export function codeLanguages(info) {
   if (['sh', 'bash', 'shell', 'zsh'].includes(lang)) return StreamLanguage.define(shell);
   return null;
 }
+
+// The fenced code card: a Catppuccin well spanning every `cm-code-line`, rounded
+// on the first/last line, with the copy button (from ui/buttons) centred on the
+// fence row. (Distinct from the /code AGENT card's `.cm-code-log` transcript.)
+export const styles = {
+  '.cm-code-line': {
+    backgroundColor: c.mantle,
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+    fontSize: '14px',
+    padding: '0 16px',
+  },
+  '.cm-code-first': {
+    position: 'relative',
+    // Symmetric padding turns the fence line into a toolbar row: with equal
+    // top/bottom the line's vertical centre matches the box centre, so the
+    // copy button (centred below) lines up with the ``` text.
+    paddingTop: '0.7em',
+    paddingBottom: '0.7em',
+    borderTopLeftRadius: '10px',
+    borderTopRightRadius: '10px',
+    borderTop: `1px solid ${c.surface0}`,
+  },
+  // The code card's copy button is centred on the fence line (the link card's
+  // stays pinned to its top-right corner via the base rule in ui/buttons).
+  '.cm-code-first .cm-copy-btn': {
+    top: '50%',
+    transform: 'translateY(-50%)',
+  },
+  '.cm-code-last': {
+    paddingBottom: '0.7em',
+    borderBottomLeftRadius: '10px',
+    borderBottomRightRadius: '10px',
+    borderBottom: `1px solid ${c.surface0}`,
+  },
+};

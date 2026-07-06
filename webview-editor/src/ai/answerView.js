@@ -2,7 +2,7 @@ import { EditorView } from '@codemirror/view';
 import { EditorState, Annotation } from '@codemirror/state';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { syntaxHighlighting } from '@codemirror/language';
-import { highlight, answerTheme } from './theme.js';
+import { highlight, answerTheme } from '../theme/index.js';
 import {
   previewField,
   askLiveField,
@@ -10,14 +10,14 @@ import {
   runLiveField,
   codeLiveField,
   setPreviewEffect,
-} from './state.js';
-import { cardField, previewFetcher } from './cards.js';
-import { codeBlocks, codeLanguages } from './codeBlocks.js';
-import { livePreview } from './livePreview.js';
-import { listIndent } from './listIndent.js';
-import { blockquotes } from './blockquotes.js';
-import { openLinks } from './links.js';
-import { wholeDocDeco } from './viewPlugin.js';
+} from '../state.js';
+import { cardField, previewFetcher } from './cardField.js';
+import { codeBlocks, codeLanguages } from '../markdown/codeBlocks.js';
+import { livePreview } from '../markdown/livePreview.js';
+import { listIndent } from '../markdown/listIndent.js';
+import { blockquotes } from '../markdown/blockquotes.js';
+import { openLinks } from '../markdown/links.js';
+import { wholeDocDeco } from '../markdown/viewPlugin.js';
 
 // Every mounted answer view, so fetched link previews can be pushed into them.
 const answerViews = new Set();

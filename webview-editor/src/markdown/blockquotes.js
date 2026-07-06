@@ -1,6 +1,7 @@
 import { Decoration } from '@codemirror/view';
 import { syntaxTree } from '@codemirror/language';
 import { decoPlugin, decoRanges } from './viewPlugin.js';
+import { c } from '../theme/palette.js';
 
 /**
  * Obsidian-style blockquotes: a continuous accent bar down the left edge of
@@ -34,3 +35,22 @@ function buildBlockquotes(view) {
 }
 
 export const blockquotes = decoPlugin(buildBlockquotes);
+
+// A continuous accent bar down the left, muted text, and a faint surface tint.
+// The raw `>` markers are hidden in live preview (see SYNTAX_MARKS).
+export const styles = {
+  '.cm-blockquote': {
+    backgroundColor: c.mantle,
+    borderLeft: `3px solid ${c.mauve}`,
+    color: c.subtext0,
+    paddingLeft: '16px',
+  },
+  '.cm-blockquote-first': {
+    paddingTop: '3px',
+    borderTopRightRadius: '8px',
+  },
+  '.cm-blockquote-last': {
+    paddingBottom: '3px',
+    borderBottomRightRadius: '8px',
+  },
+};
