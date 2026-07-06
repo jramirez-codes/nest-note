@@ -92,9 +92,11 @@ export function makeCardActionButton({ copyValue, onDelete, holdTarget, inline }
 // A top-right corner control that shows `icon` (Export / Expand) and morphs into
 // Delete after a long-press anywhere on `holdTarget`, reverting after 3s if not
 // tapped. Tapping runs `onActivate` in the default state or `onDelete` when
-// armed. Shared by the finished /record card (Export) and the /run + /code cards
-// (Expand) — the same hold-to-delete gesture the /ask card uses.
-export function makeCornerButton({ icon, label, holdTarget, onActivate, onDelete }) {
+// armed. Optional `onArm` fires the moment it morphs into Delete (used by /run to
+// copy the command to the clipboard). Shared by the finished /record card
+// (Export) and the /run + /code cards (Expand) — the same hold-to-delete gesture
+// the /ask card uses.
+export function makeCornerButton({ icon, label, holdTarget, onActivate, onDelete, onArm }) {
   const corner = document.createElement('span');
   corner.className = 'cm-rec-corner cm-rec-export';
   let mode = 'default';
@@ -106,12 +108,15 @@ export function makeCornerButton({ icon, label, holdTarget, onActivate, onDelete
     corner.setAttribute('aria-label', label);
   };
   const toDelete = () => {
+    const wasArmed = mode === 'delete';
     mode = 'delete';
     corner.innerHTML = TRASH;
     corner.classList.add('cm-rec-corner-del');
     corner.setAttribute('aria-label', 'Delete');
     if (revert) clearTimeout(revert);
     revert = setTimeout(toDefault, 3000);
+    // Only on the transition into Delete, not on a re-hold while already armed.
+    if (!wasArmed && onArm) onArm();
   };
   toDefault();
   guardTaps(corner, () => {

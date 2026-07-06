@@ -1,6 +1,7 @@
 import { c } from '../../theme/palette.js';
 import { EXPAND, INTERRUPT, STOP } from '../../ui/icons.js';
 import { makeCornerButton } from '../../ui/buttons.js';
+import { copyText } from '../../ui/clipboard.js';
 import { blockSelection } from '../../ui/events.js';
 import { post } from '../../bridge.js';
 import { updateAiMarker, deleteCardLine } from '../marker.js';
@@ -60,13 +61,16 @@ export function renderRun(view, widget) {
   head.appendChild(badge);
 
   // Corner Expand — opens the full-page log view; a long-press morphs it into
-  // Delete (stops the run before removing).
+  // Delete (stops the run before removing). Arming Delete also copies the
+  // original `/run …` invocation to the clipboard so it's easy to re-run/tweak.
   head.appendChild(
     makeCornerButton({
       icon: EXPAND,
       label: 'Expand',
       holdTarget: card,
       onActivate: () => openCardOverlay(view, obj),
+      onArm: () =>
+        copyText('/run ' + (obj.dir ? obj.dir + ' ' : '') + (obj.cmd || '')),
       onDelete: () => {
         if (running) post({ type: 'runStop', id });
         deleteCardLine(view, card);
