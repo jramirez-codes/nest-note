@@ -8,6 +8,12 @@ export const chrome = {
     lineHeight: '1.5',
     padding: '8px 24px 120px',
     caretColor: c.mauve,
+    // .cm-content is a flex child of .cm-scroller; its default min-width:auto
+    // refuses to shrink below its widest child, so a nowrap card header (the
+    // /ask title, /run command, etc.) would push the whole content — and every
+    // card — wider than the screen instead of truncating. min-width:0 lets it
+    // collapse to the viewport so the cards' own text-overflow:ellipsis engages.
+    minWidth: '0',
   },
   '.cm-cursor, .cm-dropCursor': { borderLeftColor: c.mauve },
   '&.cm-focused .cm-selectionBackground, .cm-selectionBackground': {

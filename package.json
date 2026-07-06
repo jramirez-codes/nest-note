@@ -17,8 +17,8 @@
     "lint": "eslint .",
     "postinstall": "patch-package",
     "server:build": "cd server && go build -o ainotepad-server .",
-    "server:start": "cd server && go run . -root /home/user/Documents/ai-notes-data/  -allow-exec -allow-code",
-    "server:remote": "cd server && go run . -root /home/user/Documents/ai-notes-data/ -advertise-host \"$(tailscale ip -4 | head -n1)\"  -allow-exec -allow-code",
+    "server:start": "cd server && go run . -root /home/user/Documents/ai-notes-data/  -allow-exec -allow-code -allow-view",
+    "server:remote": "cd server && go run . -root /home/user/Documents/ai-notes-data/ -advertise-host \"$(tailscale ip -4 | head -n1)\"  -allow-exec -allow-code -allow-view",
     "start": "react-native start",
     "test": "jest"
   },

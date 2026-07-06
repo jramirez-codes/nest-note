@@ -51,7 +51,7 @@ const LEGACY_RE = /^<!--ai ([A-Za-z0-9+/=]+)-->$/;
 const BOOL_KEYS = new Set(['open']);
 // `seq` is the last server frame sequence the persisted partial reflects, so a
 // cold start can resume a durable session from just past it (see runRegistry).
-const NUM_KEYS = new Set(['v', 'ms', 'startedAt', 'code', 'seq']);
+const NUM_KEYS = new Set(['v', 'ms', 'startedAt', 'code', 'seq', 'port']);
 
 // Statuses where the card is still in-flight and the async server callbacks
 // (__aiStream / __aiDone) need to find it by id. Once a card reaches a terminal
@@ -105,8 +105,14 @@ export function encodeAiMarker(obj) {
   // Chat cards keep their handle even when done: the id is how a later reply
   // (fired from the card's follow-up box) threads back into the same run. Record
   // cards keep it too — Record/Stop/Export all address the card by id.
+  // View cards keep their id for good: the iframe's transient (token-bearing)
+  // proxy URL is never persisted, so the card must re-fetch it by id on every
+  // mount (page swap, reopen, cold start) — see the viewFetcher plugin.
   const keepId =
-    INFLIGHT.has(obj.status) || obj.kind === 'chat' || obj.kind === 'record';
+    INFLIGHT.has(obj.status) ||
+    obj.kind === 'chat' ||
+    obj.kind === 'record' ||
+    obj.kind === 'view';
   const lines = [OPEN_LINE];
   for (const [k, val] of Object.entries(meta)) {
     if (val == null) continue;

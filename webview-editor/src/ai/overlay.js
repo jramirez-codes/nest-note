@@ -16,7 +16,7 @@ import { BACK, INTERRUPT, STOP, SEND } from '../ui/icons.js';
 import { guardTaps, blockSelection } from '../ui/events.js';
 import { post } from '../bridge.js';
 import { findAiLine } from './marker.js';
-import { runLiveField, codeLiveField } from '../state.js';
+import { runLiveField, codeLiveField, viewLiveField } from '../state.js';
 import { mountAnswerView, unmountAnswerView } from './answerView.js';
 import { renderCodeItem } from './shared/transcript.js';
 import { applyRunBadge } from './shared/badge.js';
@@ -38,6 +38,19 @@ function readCard(view, id, kind) {
       return { status: found.obj.status || 'done', out: found.obj.out || '', code: found.obj.code };
     }
     return null;
+  }
+  if (kind === 'view') {
+    // A view card's URL is transient (never persisted), so read it from the live
+    // field; the marker only tells us the port and whether the card still exists.
+    const found = findAiLine(view.state, id);
+    if (!found || found.obj.kind !== 'view') return null;
+    const live = view.state.field(viewLiveField)[id];
+    return {
+      status: live ? live.status : 'loading',
+      url: live ? live.url : '',
+      error: live ? live.error : '',
+      port: found.obj.port,
+    };
   }
   const live = view.state.field(codeLiveField)[id];
   if (live) return { status: live.status, items: live.items };
@@ -92,6 +105,42 @@ function teardownMd() {
   for (const v of active.mdViews) unmountAnswerView(v);
   active.mdViews = [];
   active.lastMd = null;
+}
+
+// Fill the page with the view card's live iframe. Swaps the src only when the URL
+// changes, and shows the fetch error instead of a frame when one is set.
+function renderViewOverlay(data) {
+  if (data.error) {
+    if (active.frame) {
+      active.frame.remove();
+      active.frame = null;
+      active.viewUrl = null;
+    }
+    if (!active.errBox) {
+      const box = document.createElement('div');
+      box.className = 'cm-view-error cm-ov-view-error';
+      active.body.appendChild(box);
+      active.errBox = box;
+    }
+    active.errBox.textContent = data.error;
+    return;
+  }
+  if (active.errBox) {
+    active.errBox.remove();
+    active.errBox = null;
+  }
+  if (!data.url) return; // still loading — leave the page blank until RN answers
+  if (!active.frame) {
+    const f = document.createElement('iframe');
+    f.className = 'cm-ov-view-frame';
+    f.setAttribute('sandbox', 'allow-scripts allow-forms allow-same-origin allow-popups');
+    active.body.appendChild(f);
+    active.frame = f;
+  }
+  if (active.viewUrl !== data.url) {
+    active.frame.src = data.url;
+    active.viewUrl = data.url;
+  }
 }
 
 // Grow / append the /run log to match the current output (mirrors updateRun).
@@ -177,6 +226,13 @@ function render(view) {
     return;
   }
   const running = data.status === 'running';
+  if (active.kind === 'view') {
+    active.badge.className = 'cm-view-badge cm-view-badge-' + (data.status || 'loading');
+    active.badge.textContent =
+      data.status === 'ready' ? 'live' : data.status === 'error' ? 'error' : 'loading…';
+    renderViewOverlay(data);
+    return;
+  }
   applyRunBadge(active.badge, { kind: active.kind, status: data.status, code: data.code });
   if (active.kind === 'run') renderRun(data);
   else renderCode(data, running);
@@ -186,13 +242,15 @@ function render(view) {
 
 // Open the enlarged view for a card payload (must be a /run or /code marker obj).
 export function openCardOverlay(view, obj) {
-  if (!obj || (obj.kind !== 'run' && obj.kind !== 'code')) return;
+  if (!obj || (obj.kind !== 'run' && obj.kind !== 'code' && obj.kind !== 'view')) return;
   closeOverlay();
   const { id, kind } = obj;
   if (!readCard(view, id, kind)) return;
 
   const root = document.createElement('div');
-  root.className = 'cm-ov';
+  // The view page is full-bleed (its iframe fills the body edge-to-edge); run/code
+  // keep the padded chrome.
+  root.className = 'cm-ov' + (kind === 'view' ? ' cm-ov-view' : '');
   blockSelection(root);
 
   const head = document.createElement('div');
@@ -216,6 +274,11 @@ export function openCardOverlay(view, obj) {
     const spacer = document.createElement('span');
     spacer.className = 'cm-code-spacer';
     head.appendChild(spacer);
+  } else if (kind === 'view') {
+    const title = document.createElement('code');
+    title.className = 'cm-ov-title';
+    title.textContent = 'localhost:' + (obj.port || '');
+    head.appendChild(title);
   } else {
     const title = document.createElement('code');
     title.className = 'cm-ov-title';
@@ -248,6 +311,11 @@ export function openCardOverlay(view, obj) {
     lastMd: null,
     count: -1,
     wasRunning: false,
+    // View-overlay only: the live iframe and the URL it's currently showing, plus
+    // an error box swapped in when the fetch fails.
+    frame: null,
+    viewUrl: null,
+    errBox: null,
   };
   render(view);
 }
@@ -329,4 +397,14 @@ export const styles = {
     margin: '0',
   },
   '.cm-ov-foot': { flexShrink: '0' },
+  // The view page drops the body padding so its iframe fills edge-to-edge.
+  '.cm-ov-view .cm-ov-body': { padding: '0' },
+  '.cm-ov-view-frame': {
+    flex: '1 1 auto',
+    width: '100%',
+    minHeight: '0',
+    border: 'none',
+    backgroundColor: '#ffffff',
+  },
+  '.cm-ov-view-error': { padding: '16px' },
 };

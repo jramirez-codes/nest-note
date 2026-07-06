@@ -9,6 +9,7 @@ import {
 import { EDITOR_HTML } from '../webview/editorHtml';
 import { pairFromPayload } from '../server/aiController';
 import { fetchProjects } from '../server/agentController';
+import { fetchViewUrl } from '../server/viewController';
 import {
   startAsk,
   startClean,
@@ -150,6 +151,7 @@ export default function NoteEditorWebView({
         dir?: string;
         data?: string;
         project?: string;
+        port?: number;
       };
       try {
         msg = JSON.parse(e.nativeEvent.data);
@@ -372,6 +374,23 @@ export default function NoteEditorWebView({
         stopRun(id);
         attachedIds.current.delete(id);
         inject(`window.__codeExit(${JSON.stringify(id)});`);
+      } else if (msg.type === 'view' && typeof msg.id === 'string' && typeof msg.port === 'number') {
+        // Build the plaintext preview URL for a localhost dev server on the paired
+        // laptop and hand it to the card's iframe; on failure the card shows the
+        // reason instead. Transient (token-bearing) URL — never persisted to the
+        // note, refetched by the editor on every mount (see viewFetcher).
+        const id = msg.id;
+        fetchViewUrl(msg.port).then(res => {
+          if (res.url) {
+            inject(`window.__viewUrl(${JSON.stringify(id)}, ${JSON.stringify(res.url)});`);
+          } else {
+            inject(
+              `window.__viewError(${JSON.stringify(id)}, ${JSON.stringify(
+                res.error ?? 'Could not load the page.',
+              )});`,
+            );
+          }
+        });
       }
     },
     [initialContent, hasTitle, onChangeContent, onOpenPage, readOnly, notebookId, pageId, sink],
@@ -447,6 +466,10 @@ export default function NoteEditorWebView({
         source={{ html: EDITOR_HTML }}
         originWhitelist={['*']}
         onMessage={handleMessage}
+        // A /view card embeds a localhost dev server from the paired laptop over
+        // plaintext HTTP (the LAN preview proxy); allow that mixed content so the
+        // iframe can load. Everything else the editor loads is inline/self-hosted.
+        mixedContentMode="always"
         // Let a tap raise the keyboard directly, and drop the iOS input bar.
         keyboardDisplayRequiresUserAction={false}
         hideKeyboardAccessoryView

@@ -6,6 +6,7 @@ import {
   recPlayField,
   runLiveField,
   codeLiveField,
+  viewLiveField,
   setPreviewEffect,
   setAskLive,
   clearAskLive,
@@ -16,6 +17,8 @@ import {
   appendCodeEvent,
   setCodeStatus,
   clearCodeLive,
+  setViewUrl,
+  clearViewLive,
 } from '../state.js';
 import { LinkCardWidget, ImageWidget } from '../markdown/widgets/index.js';
 import { AiCardWidget } from './cards/AiCardWidget.js';
@@ -31,6 +34,7 @@ function buildCards(state) {
   const recPlay = state.field(recPlayField);
   const runLive = state.field(runLiveField);
   const codeLive = state.field(codeLiveField);
+  const viewLive = state.field(viewLiveField);
   // Lines touched by a selection stay raw so the URL can be edited. Read-only
   // views (the /ask answer preview) never reveal — cards always render.
   const activeLines = new Set();
@@ -72,7 +76,9 @@ function buildCards(state) {
         ? runLive[obj.id]
         : obj.kind === 'code'
           ? codeLive[obj.id]
-          : askLive[obj.id];
+          : obj.kind === 'view'
+            ? viewLive[obj.id]
+            : askLive[obj.id];
     marks.push(
       Decoration.replace({
         widget: new AiCardWidget(obj, live, !!recPlay[obj.id]),
@@ -102,7 +108,9 @@ export const cardField = StateField.define({
           e.is(clearRunLog) ||
           e.is(appendCodeEvent) ||
           e.is(setCodeStatus) ||
-          e.is(clearCodeLive),
+          e.is(clearCodeLive) ||
+          e.is(setViewUrl) ||
+          e.is(clearViewLive),
       )
     ) {
       return buildCards(tr.state);
@@ -129,6 +137,31 @@ export const previewFetcher = ViewPlugin.fromClass(
         if (!previews[url] && !requested.has(url)) {
           requested.add(url);
           post({ type: 'fetchPreview', url });
+        }
+      });
+    }
+  },
+);
+
+// Asks RN for each /view card's iframe URL once per session (the URL carries the
+// bearer token, so it's transient and never persisted — see viewLiveField). Runs
+// on seed and on edits, so a card that arrives with the document (cold start,
+// page swap) auto-loads. Deduped by id; refreshing an already-loaded card reloads
+// the iframe in place (cards/view.js) rather than re-fetching.
+const viewRequested = new Set();
+export const viewFetcher = ViewPlugin.fromClass(
+  class {
+    constructor(view) {
+      this.scan(view.state);
+    }
+    update(u) {
+      if (u.docChanged) this.scan(u.state);
+    }
+    scan(state) {
+      eachAiLine(state, obj => {
+        if (obj.kind === 'view' && obj.id && !viewRequested.has(obj.id)) {
+          viewRequested.add(obj.id);
+          post({ type: 'view', id: obj.id, port: Number(obj.port) });
         }
       });
     }

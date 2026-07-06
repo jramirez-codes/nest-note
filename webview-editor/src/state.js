@@ -174,6 +174,39 @@ function capText(s) {
   return s.length > CODE_TEXT_CAP ? s.slice(s.length - CODE_TEXT_CAP) : s;
 }
 
+// Live iframe URL for /view cards, keyed by view id: { url, error, status }.
+// The URL carries the bearer token (as a bootstrap query the proxy turns into a
+// cookie), so it must never touch the document — it lives here only, refilled by
+// RN via window.__viewUrl on every mount (see the viewFetcher plugin). status is
+// 'loading' until RN answers, then 'ready' (url set) or 'error' (message set).
+export const setViewUrl = StateEffect.define();
+export const clearViewLive = StateEffect.define();
+export const viewLiveField = StateField.define({
+  create: () => Object.create(null),
+  update(value, tr) {
+    let next = value;
+    for (const e of tr.effects) {
+      if (e.is(setViewUrl)) {
+        const { id, url, error } = e.value;
+        next = {
+          ...next,
+          [id]: {
+            url: url || '',
+            error: error || '',
+            status: error ? 'error' : url ? 'ready' : 'loading',
+          },
+        };
+      } else if (e.is(clearViewLive)) {
+        if (next[e.value] !== undefined) {
+          next = { ...next };
+          delete next[e.value];
+        }
+      }
+    }
+    return next;
+  },
+});
+
 // Which /record card (by id) is currently playing back, so its button shows
 // Pause. Ephemeral like askLive — playback state never touches the document.
 // RN drives it via window.__recPlay (set true on play, false on pause/end).

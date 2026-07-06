@@ -9,6 +9,7 @@ import { renderIngest } from './ingest.js';
 import { renderRecord } from './record.js';
 import { renderRun, updateRun } from './run.js';
 import { renderCode, updateCode } from './code.js';
+import { renderView } from './view.js';
 
 // A stable token for a /code card's live transcript: block count, the length of
 // the last (only growing) block, and status. Any streamed event changes one of
@@ -86,6 +87,13 @@ export class AiCardWidget extends WidgetType {
       o.project,
       o.items ? o.items.length : '',
       o.kind === 'code' && this.live ? codeLiveToken(this.live) : '',
+      // View-card fields: the target port, and a live token (fetch status + the
+      // token-bearing url) so the card flips from loading to the mounted iframe
+      // — or to an error — as soon as RN answers window.__viewUrl.
+      o.port,
+      o.kind === 'view' && this.live
+        ? (this.live.status || '') + ':' + (this.live.url || '') + ':' + (this.live.error || '')
+        : '',
     ].join('');
   }
   eq(other) {
@@ -107,6 +115,8 @@ export class AiCardWidget extends WidgetType {
         return renderRun(view, this);
       case 'code':
         return renderCode(view, this);
+      case 'view':
+        return renderView(view, this);
       default:
         return renderAsk(view, this);
     }
@@ -180,6 +190,12 @@ export const styles = {
     fontSize: '15px',
     fontWeight: '600',
     lineHeight: '1.4',
+    // Keep the title to one line — a long question truncates with an ellipsis
+    // instead of wrapping or pushing the card wider than the screen (matches the
+    // /run, /view and /code header chips).
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
   },
   '.cm-ask-badge': {
     flexShrink: '0',

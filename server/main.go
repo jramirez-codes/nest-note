@@ -28,6 +28,7 @@ func main() {
 		pairTTL    = flag.Duration("pair-ttl", 10*time.Minute, "how long the pairing code stays valid")
 		allowExec  = flag.Bool("allow-exec", false, "enable /exec: the direct \"/run <cmd>\" shell channel. OFF by default — it runs arbitrary commands as this user, gated only by the pinned tunnel + token")
 		allowCode  = flag.Bool("allow-code", false, "enable /code: a persistent Claude Code agent session in projects/<name> with every tool auto-accepted (bypassPermissions). OFF by default — full code execution as this user, gated only by the pinned tunnel + token")
+		allowView  = flag.Bool("allow-view", false, "enable /view: on-demand plaintext LAN reverse-proxies that mirror your localhost dev servers to the phone's note editor. OFF by default — serves each previewed dev server over cleartext HTTP to anyone on the LAN")
 	)
 	flag.Parse()
 
@@ -120,6 +121,11 @@ func main() {
 	mux.HandleFunc("/projects", projectsHandler(token, codeBase, *allowCode))
 	// Read-only dashboard state + the optional merge-approval action. Both only
 	// touch the scaffold's data files, so they need no Claude run.
+	// On-demand page-preview proxies for /view: an authed /viewstart spins up (or
+	// reuses) a dedicated plaintext LAN listener per dev-server port and tells the
+	// phone which port to point its iframe at. See server/view.go.
+	viewMgr := newViewManager(bindIP)
+	mux.HandleFunc("/viewstart", viewStartHandler(token, *allowView, viewMgr))
 	mux.HandleFunc("/state", stateHandler(token, *root))
 	mux.HandleFunc("/notebook", notebookHandler(token, *root))
 	mux.HandleFunc("/page", pageHandler(token, *root))
@@ -176,6 +182,9 @@ func main() {
 	}
 	if *allowCode {
 		fmt.Printf("  code       ENABLED at wss://%s/code  (/code <name> runs a Claude agent in projects/<name>, tools auto-accepted)\n", listenAddr)
+	}
+	if *allowView {
+		fmt.Printf("  view       ENABLED  (/view PORT opens an on-demand PLAINTEXT LAN preview of localhost:PORT — reachable by anyone on the LAN)\n")
 	}
 	fmt.Printf("  spki pin   %s\n", pin)
 	fmt.Printf("  pair code  %s  (valid %s, single use)\n", pr.code, *pairTTL)

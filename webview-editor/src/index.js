@@ -25,11 +25,13 @@ import {
   codeLiveField,
   appendCodeEvent,
   clearCodeLive,
+  viewLiveField,
+  setViewUrl,
   cachePreview,
 } from './state.js';
 import { broadcastPreview } from './ai/answerView.js';
 import { wholeDocDeco } from './markdown/viewPlugin.js';
-import { cardField, previewFetcher } from './ai/cardField.js';
+import { cardField, previewFetcher, viewFetcher } from './ai/cardField.js';
 import { livePreview } from './markdown/livePreview.js';
 import { listIndent } from './markdown/listIndent.js';
 import { codeBlocks, codeLanguages } from './markdown/codeBlocks.js';
@@ -140,8 +142,10 @@ const extensions = [
   recPlayField,
   runLiveField,
   codeLiveField,
+  viewLiveField,
   cardField,
   previewFetcher,
+  viewFetcher,
   codeBlocks,
   blockquotes,
   livePreview,
@@ -319,6 +323,20 @@ window.__setProjects = function (names) {
   if (/^\/ ?code\s/.test(line.text.slice(0, sel.head - line.from))) {
     startCompletion(view);
   }
+};
+
+// RN answers a /view card's URL request here (no document change): `url` is the
+// laptop's plaintext preview-proxy address for the card's port, carrying the
+// bearer token as a bootstrap query. The card mounts its iframe on it. Kept in a
+// live field only — the token must never be written into the note.
+window.__viewUrl = function (id, url) {
+  view.dispatch({ effects: setViewUrl.of({ id, url: String(url || '') }) });
+};
+
+// RN reports a /view card's URL fetch failing here (not paired, preview disabled
+// on the laptop, server unreachable): the card shows the message instead of a frame.
+window.__viewError = function (id, error) {
+  view.dispatch({ effects: setViewUrl.of({ id, error: String(error || 'Could not load the page.') }) });
 };
 
 // RN toggles a /record card's playback state here (no document change): true when

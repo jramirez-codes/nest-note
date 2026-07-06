@@ -34,6 +34,11 @@ const SLASH_COMMANDS = [
     apply: '/code ',
   },
   {
+    label: '/view',
+    detail: 'Preview a web page from a localhost dev server on the paired laptop — /view PORT loads http://localhost:PORT live in a card',
+    apply: '/view ',
+  },
+  {
     label: '/pair',
     detail: 'Pair a device by QR code or payload',
     apply: '/pair ',
@@ -274,6 +279,34 @@ export function aiCommandOnEnter(view) {
       selection: { anchor: line.from + marker.length + 1 },
     });
     post({ type: 'code', id, project: codeCmd[1] });
+    return true;
+  }
+
+  // `/view PORT`: mirror a web page served by a localhost dev server on the
+  // paired laptop into an iframe card. The marker persists only the port; the
+  // card fetches its (token-bearing, transient) proxy URL from RN on every mount
+  // — see the viewFetcher plugin — so nothing secret is written into the note.
+  const viewCmd = /^\/view\s+(\d{1,5})\s*$/.exec(text);
+  if (viewCmd) {
+    const id = genId();
+    const port = Number(viewCmd[1]);
+    const marker = encodeAiMarker({
+      v: 1,
+      kind: 'view',
+      id,
+      port,
+      status: 'loading',
+      open: true,
+    });
+    // Trailing blank line under the card's closing `-->` so there's always a
+    // clickable, typeable spot directly beneath the widget (the card decoration
+    // otherwise butts straight up against whatever follows it).
+    const insert = marker + '\n\n';
+    view.dispatch({
+      changes: { from: line.from, to: line.to, insert },
+      selection: { anchor: line.from + marker.length + 1 },
+    });
+    post({ type: 'view', id, port });
     return true;
   }
 
