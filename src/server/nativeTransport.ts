@@ -82,7 +82,20 @@ export function createNativeTransport(): Transport {
           handlers.close.forEach(cb => cb({ code: e.code, reason: e.reason }));
           sub.remove();
         } else if (e.type === 'error') {
-          handlers.error.forEach(cb => cb(new Error(e.message)));
+          // The native side emits EXACTLY ONE terminal event per socket — a
+          // `close` OR an `error`, never both (Kotlin's `terminated` guard). A
+          // mid-session failure (e.g. the network dropping while the app is
+          // backgrounded → OkHttp's onFailure) surfaces here as `error`, not
+          // `close`. But the SecureSocket contract says onClose fires whenever the
+          // socket closes "normally or otherwise", and every consumer drives its
+          // reconnect/teardown off onClose (onError is a no-op — "surfaced via
+          // onClose"). So an error must ALSO fire the close handlers, or a failed
+          // socket strands the session: no reconnect, and the dead socket silently
+          // drops later sends (the /code follow-up that "does nothing" after a
+          // background/foreground round-trip).
+          const err = new Error(e.message);
+          handlers.error.forEach(cb => cb(err));
+          handlers.close.forEach(cb => cb({ code: -1, reason: e.message }));
           sub.remove();
         }
       });
