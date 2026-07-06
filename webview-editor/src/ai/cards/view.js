@@ -3,7 +3,6 @@ import { EXPAND } from '../../ui/icons.js';
 import { makeCornerButton } from '../../ui/buttons.js';
 import { copyText } from '../../ui/clipboard.js';
 import { blockSelection } from '../../ui/events.js';
-import { post } from '../../bridge.js';
 import { updateAiMarker, deleteCardLine } from '../marker.js';
 import { openCardOverlay } from '../overlay.js';
 
@@ -48,24 +47,8 @@ export function renderView(view, widget) {
   badge.textContent = status === 'ready' ? 'live' : status === 'error' ? 'error' : 'loading…';
   head.appendChild(badge);
 
-  // Reload the embedded page in place. Cheaper than a token re-fetch (the URL is
-  // stable for the session); if the frame isn't up yet, re-ask RN for the URL.
-  const refresh = document.createElement('span');
-  refresh.className = 'cm-view-refresh';
-  refresh.textContent = '⟳';
-  refresh.title = 'Reload';
-  refresh.addEventListener('mousedown', e => {
-    e.preventDefault();
-    e.stopPropagation();
-  });
-  refresh.addEventListener('click', e => {
-    e.preventDefault();
-    e.stopPropagation();
-    const f = card._iframe;
-    if (f) f.src = f.src;
-    else post({ type: 'view', id, port });
-  });
-  head.appendChild(refresh);
+  // Reload lives on the expanded (full-page) view, not here — see overlay.js. The
+  // collapsed/inline card just shows the port and status; tap it to enlarge.
 
   // Corner Expand — opens the full-page view (the same enlarged chrome as /run and
   // /code, with the page filling the screen); a long-press morphs it into Delete.
@@ -150,15 +133,6 @@ export const styles = {
   },
   '.cm-view-badge-ready': { color: c.green },
   '.cm-view-badge-error': { color: c.red },
-  '.cm-view-refresh': {
-    flexShrink: '0',
-    color: c.subtext0,
-    fontSize: '16px',
-    lineHeight: '1',
-    padding: '0 4px',
-    cursor: 'pointer',
-    userSelect: 'none',
-  },
   '.cm-view-body': { padding: '10px 12px 12px 12px' },
   '.cm-view-frame': {
     width: '100%',

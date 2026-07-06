@@ -291,6 +291,21 @@ export function openCardOverlay(view, obj) {
   const badge = document.createElement('span');
   head.appendChild(badge);
 
+  // The view page fills the screen with the live iframe, so its reload lives up
+  // here next to the status — tap to swap the frame's src in place, or re-ask RN
+  // for the URL if the frame isn't up yet (still loading, or the fetch errored).
+  if (kind === 'view') {
+    const refresh = document.createElement('span');
+    refresh.className = 'cm-ov-refresh';
+    refresh.textContent = '⟳';
+    refresh.title = 'Reload';
+    guardTaps(refresh, () => {
+      if (active && active.frame) active.frame.src = active.frame.src;
+      else post({ type: 'view', id, port: obj.port });
+    });
+    head.appendChild(refresh);
+  }
+
   root.appendChild(head);
 
   const body = document.createElement('div');
@@ -381,6 +396,17 @@ export const styles = {
   },
   // The project pill sits in taller overlay chrome, so scale it up a touch.
   '.cm-ov-proj': { maxWidth: '75%', padding: '4px 12px', fontSize: '13px' },
+  // Reload for the /view page — sits beside the status badge in the header, sized
+  // up to match the taller overlay chrome (cf. the card's inline reload).
+  '.cm-ov-refresh': {
+    flexShrink: '0',
+    color: c.subtext0,
+    fontSize: '20px',
+    lineHeight: '1',
+    padding: '0 6px',
+    cursor: 'pointer',
+    userSelect: 'none',
+  },
   '.cm-ov-body': {
     flex: '1',
     minHeight: '0',
