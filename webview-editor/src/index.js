@@ -39,6 +39,7 @@ import { WikiLink } from './markdown/wikilinks.js';
 import {
   slashCommandSource,
   codeProjectSource,
+  runProjectSource,
   setCodeProjects,
   aiCommandOnEnter,
 } from './ai/commands.js';
@@ -121,13 +122,14 @@ const extensions = [
   keymap.of([...defaultKeymap, ...historyKeymap]),
   lineStartReplace,
   autocompletion({
-    override: [slashCommandSource, codeProjectSource],
+    override: [slashCommandSource, codeProjectSource, runProjectSource],
     icons: false,
     activateOnTyping: true,
-    // Picking `/code` from the slash menu lands the caret on `/code ` — re-open
-    // completion straight away so the project list (codeProjectSource) shows
-    // without waiting for the first keystroke. Other commands close as usual.
-    activateOnCompletion: c => c.label === '/code',
+    // Picking `/code` or `/run` from the slash menu lands the caret on `/code `/
+    // `/run ` — both take a project first, so re-open completion straight away and
+    // the project list (code/runProjectSource) shows without waiting for a
+    // keystroke. Other commands close as usual.
+    activateOnCompletion: c => c.label === '/code' || c.label === '/run',
     aboveCursor: false,
   }),
   openLinks,

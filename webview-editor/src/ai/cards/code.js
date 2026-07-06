@@ -41,10 +41,18 @@ export function renderCode(view, widget) {
   chev.textContent = '▶';
   head.appendChild(chev);
 
-  const proj = document.createElement('code');
-  proj.className = 'cm-run-cmd cm-code-proj';
+  // The project name is shown as a stylized pill (mirrors the /run card's folder
+  // chip), with a flex spacer after it so the status badge + corner button stay
+  // right-aligned where /run's filling command chip would otherwise hold them.
+  const proj = document.createElement('span');
+  proj.className = 'cm-code-proj';
   proj.textContent = '✦ ' + (obj.project || '');
+  proj.title = 'Project: ' + (obj.project || '');
   head.appendChild(proj);
+
+  const spacer = document.createElement('span');
+  spacer.className = 'cm-code-spacer';
+  head.appendChild(spacer);
 
   const badge = document.createElement('span');
   applyRunBadge(badge, { kind: 'code', status });
@@ -189,7 +197,23 @@ export function updateCode(dom, view, widget) {
 export const styles = {
   // Reuses the run card's head/badge/footer classes (.cm-run-*); the body is a
   // scrolling transcript of typed blocks rather than a single terminal log.
-  '.cm-code-proj': { color: c.mauve },
+  '.cm-code-proj': {
+    flexShrink: '0',
+    maxWidth: '70%',
+    padding: '2px 9px',
+    borderRadius: '7px',
+    backgroundColor: c.surface0,
+    border: `1px solid ${c.surface1}`,
+    color: c.mauve,
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+    fontSize: '12px',
+    fontWeight: '600',
+    lineHeight: '1.5',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  },
+  '.cm-code-spacer': { flex: '1', minWidth: '0' },
   '.cm-code-log': {
     margin: '10px 0 0 0',
     padding: '4px 2px',

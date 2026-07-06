@@ -25,7 +25,7 @@ const SLASH_COMMANDS = [
   },
   {
     label: '/run',
-    detail: 'Run a shell command on the paired laptop — output streams live into a terminal card',
+    detail: 'Run a shell command inside a project on the paired laptop — /run PROJECT <cmd>; output streams live into a terminal card',
     apply: '/run ',
   },
   {
@@ -79,41 +79,52 @@ export function slashCommandSource(context) {
   return { from: line.from, to: context.pos, options, filter: false };
 }
 
-// --- `/code <name>` project autocomplete -------------------------------------
-// The project directories the paired laptop reported, kept in sync by RN pushing
+// --- project autocomplete for `/code <name>` and `/run <name>` ---------------
+// Both commands take a project folder as their first argument (see aiCommandOnEnter),
+// so they share one directory listing and one completion source. The list is the
+// project dirs the paired laptop reported, kept in sync by RN pushing
 // window.__setProjects (see editor.js) with the reply to each listProjects post.
-// Starts empty; the first `/code ` keystroke asks for the list and the menu
-// repopulates as soon as it lands.
+// Starts empty; the first `/code `/`/run ` keystroke asks for the list and the
+// menu repopulates as soon as it lands.
 let codeProjects = [];
 export function setCodeProjects(names) {
   codeProjects = Array.isArray(names) ? names.filter(n => typeof n === 'string') : [];
 }
 
-// Autocomplete the project name after `/code `. Reads the laptop's directory
-// listing (setCodeProjects) and offers it prefix-filtered by what's typed so far;
-// picking one inserts `<name> `, ready for the first prompt. Distinct from
-// slashCommandSource, which only fires before the command's trailing space —
-// once that space is typed this source takes over the same line.
-export function codeProjectSource(context) {
-  const line = context.state.doc.lineAt(context.pos);
-  const before = line.text.slice(0, context.pos - line.from);
-  // `/code ` (space-tolerant slash, per slashCommandSource) then the partial name
-  // the caret sits at the end of. The name may not contain whitespace, so a
-  // second word (the prompt starting) stops matching and closes the menu.
-  const m = /^\/ ?code\s+(\S*)$/.exec(before);
-  if (!m) return null;
-  // Ask RN to (re)send the current listing; the reply refreshes codeProjects and
-  // re-opens the menu (see window.__setProjects). Fire-and-forget — serve cache now.
-  post({ type: 'listProjects' });
-  const word = m[1].toLowerCase();
-  const options = codeProjects
-    .filter(name => name.toLowerCase().startsWith(word))
-    .map(name => ({ label: name, type: 'text', apply: name + ' ' }));
-  if (!options.length) return null;
-  // Replace just the partial name (from the caret back over m[1]), leaving the
-  // `/code ` prefix intact; CM's own filter is off since we prefix-matched already.
-  return { from: context.pos - m[1].length, to: context.pos, options, filter: false };
+// Build a completion source that autocompletes the project name right after
+// `/<cmd> ` (space-tolerant slash, per slashCommandSource). Reads the laptop's
+// directory listing (setCodeProjects) and offers it prefix-filtered by what's
+// typed so far; picking one inserts `<name> `, ready for the first prompt (/code)
+// or the command (/run). Distinct from slashCommandSource, which only fires
+// before the command's trailing space — once that space is typed this source
+// takes over the same line, and a second word (the prompt/command starting) stops
+// matching and closes the menu.
+function makeProjectSource(cmd) {
+  const re = new RegExp('^\\/ ?' + cmd + '\\s+(\\S*)$');
+  return function projectSource(context) {
+    const line = context.state.doc.lineAt(context.pos);
+    const before = line.text.slice(0, context.pos - line.from);
+    const m = re.exec(before);
+    if (!m) return null;
+    // Ask RN to (re)send the current listing; the reply refreshes codeProjects and
+    // re-opens the menu (see window.__setProjects). Fire-and-forget — serve cache now.
+    post({ type: 'listProjects' });
+    const word = m[1].toLowerCase();
+    const options = codeProjects
+      .filter(name => name.toLowerCase().startsWith(word))
+      .map(name => ({ label: name, type: 'text', apply: name + ' ' }));
+    if (!options.length) return null;
+    // Replace just the partial name (from the caret back over m[1]), leaving the
+    // `/<cmd> ` prefix intact; CM's own filter is off since we prefix-matched already.
+    return { from: context.pos - m[1].length, to: context.pos, options, filter: false };
+  };
 }
+
+// `/code <name>` and `/run <name>` both pick a project folder the same way — in
+// the -root deployment where both are enabled the exec base and the projects base
+// are the same folder, so a listed name is a real dir either command can target.
+export const codeProjectSource = makeProjectSource('code');
+export const runProjectSource = makeProjectSource('run');
 
 // Enter on a `/ask <question>` or `/pair <payload>` line turns that line into a
 // card and hands the work to RN. Returns true to swallow the newline when it
@@ -143,10 +154,13 @@ export function aiCommandOnEnter(view) {
       open: true,
       status: 'streaming',
     });
-    const insert = marker + '\n';
+    // Trailing blank line under the card's closing `-->` so there's always a
+    // clickable, typeable spot directly beneath the widget (the card decoration
+    // otherwise butts straight up against whatever follows it).
+    const insert = marker + '\n\n';
     view.dispatch({
       changes: { from: line.from, to: line.to, insert },
-      selection: { anchor: line.from + insert.length },
+      selection: { anchor: line.from + marker.length + 1 },
     });
     post({ type: 'ask', id, question: ask[1] });
     return true;
@@ -166,10 +180,13 @@ export function aiCommandOnEnter(view) {
       open: true,
       status: 'streaming',
     });
-    const insert = marker + '\n';
+    // Trailing blank line under the card's closing `-->` so there's always a
+    // clickable, typeable spot directly beneath the widget (the card decoration
+    // otherwise butts straight up against whatever follows it).
+    const insert = marker + '\n\n';
     view.dispatch({
       changes: { from: line.from, to: line.to, insert },
-      selection: { anchor: line.from + insert.length },
+      selection: { anchor: line.from + marker.length + 1 },
     });
     // The first turn has no prior context; runs on the same /ask stream path.
     post({ type: 'ask', id, question: chat[1] });
@@ -189,34 +206,46 @@ export function aiCommandOnEnter(view) {
       status: 'idle',
       label: record[1].trim() || undefined,
     });
-    const insert = marker + '\n';
+    // Trailing blank line under the card's closing `-->` so there's always a
+    // clickable, typeable spot directly beneath the widget (the card decoration
+    // otherwise butts straight up against whatever follows it).
+    const insert = marker + '\n\n';
     view.dispatch({
       changes: { from: line.from, to: line.to, insert },
-      selection: { anchor: line.from + insert.length },
+      selection: { anchor: line.from + marker.length + 1 },
     });
     return true;
   }
 
-  // `/run <cmd>`: drop a live terminal card and stream a shell command from the
-  // paired laptop into it. The pinned /exec socket lives on the RN side; this only
-  // creates the card and posts the intent by id. The card starts open and running.
-  const runCmd = /^\/run\s+(.+\S)\s*$/.exec(text);
+  // `/run PROJECT <cmd>`: drop a live terminal card and stream a shell command
+  // from the paired laptop into it, started inside project folder PROJECT (mirrors
+  // `/code`'s project-first shape — the server confines it to a relative subpath
+  // of the workdir). The first whitespace-delimited token is the project; the rest
+  // is the command. The pinned /exec socket lives on the RN side; this only creates
+  // the card and posts the intent by id. The card starts open and running.
+  const runCmd = /^\/run\s+(\S+)\s+(.+\S)\s*$/.exec(text);
   if (runCmd) {
     const id = genId();
+    const dir = runCmd[1];
+    const cmd = runCmd[2];
     const marker = encodeAiMarker({
       v: 1,
       kind: 'run',
       id,
-      cmd: runCmd[1],
+      cmd,
+      dir,
       status: 'running',
       open: true,
     });
-    const insert = marker + '\n';
+    // Trailing blank line under the card's closing `-->` so there's always a
+    // clickable, typeable spot directly beneath the widget (the card decoration
+    // otherwise butts straight up against whatever follows it).
+    const insert = marker + '\n\n';
     view.dispatch({
       changes: { from: line.from, to: line.to, insert },
-      selection: { anchor: line.from + insert.length },
+      selection: { anchor: line.from + marker.length + 1 },
     });
-    post({ type: 'run', id, cmd: runCmd[1] });
+    post({ type: 'run', id, cmd, dir });
     return true;
   }
 
@@ -236,10 +265,13 @@ export function aiCommandOnEnter(view) {
       status: 'running',
       open: true,
     });
-    const insert = marker + '\n';
+    // Trailing blank line under the card's closing `-->` so there's always a
+    // clickable, typeable spot directly beneath the widget (the card decoration
+    // otherwise butts straight up against whatever follows it).
+    const insert = marker + '\n\n';
     view.dispatch({
       changes: { from: line.from, to: line.to, insert },
-      selection: { anchor: line.from + insert.length },
+      selection: { anchor: line.from + marker.length + 1 },
     });
     post({ type: 'code', id, project: codeCmd[1] });
     return true;
@@ -255,10 +287,13 @@ export function aiCommandOnEnter(view) {
       status: 'pending',
       msg: 'Pairing…',
     });
-    const insert = marker + '\n';
+    // Trailing blank line under the card's closing `-->` so there's always a
+    // clickable, typeable spot directly beneath the widget (the card decoration
+    // otherwise butts straight up against whatever follows it).
+    const insert = marker + '\n\n';
     view.dispatch({
       changes: { from: line.from, to: line.to, insert },
-      selection: { anchor: line.from + insert.length },
+      selection: { anchor: line.from + marker.length + 1 },
     });
     post({ type: 'pair', id, payload: pair[1] });
     return true;
@@ -274,10 +309,13 @@ export function aiCommandOnEnter(view) {
       status: 'pending',
       msg: 'Opening camera…',
     });
-    const insert = marker + '\n';
+    // Trailing blank line under the card's closing `-->` so there's always a
+    // clickable, typeable spot directly beneath the widget (the card decoration
+    // otherwise butts straight up against whatever follows it).
+    const insert = marker + '\n\n';
     view.dispatch({
       changes: { from: line.from, to: line.to, insert },
-      selection: { anchor: line.from + insert.length },
+      selection: { anchor: line.from + marker.length + 1 },
     });
     post({ type: 'pairScan', id });
     return true;
@@ -303,10 +341,13 @@ export function aiCommandOnEnter(view) {
       status: 'streaming',
       msg: guidance ? `Cleaning up as “${guidance}”…` : 'Cleaning up your notes…',
     });
-    const insert = marker + '\n';
+    // Trailing blank line under the card's closing `-->` so there's always a
+    // clickable, typeable spot directly beneath the widget (the card decoration
+    // otherwise butts straight up against whatever follows it).
+    const insert = marker + '\n\n';
     view.dispatch({
       changes: { from: line.from, to: line.to, insert },
-      selection: { anchor: line.from + insert.length },
+      selection: { anchor: line.from + marker.length + 1 },
     });
     post({ type: 'clean', id, pageText, guidance });
     return true;
@@ -331,10 +372,13 @@ export function aiCommandOnEnter(view) {
       status: 'streaming',
       msg: 'Sorting into your dashboard…',
     });
-    const insert = marker + '\n';
+    // Trailing blank line under the card's closing `-->` so there's always a
+    // clickable, typeable spot directly beneath the widget (the card decoration
+    // otherwise butts straight up against whatever follows it).
+    const insert = marker + '\n\n';
     view.dispatch({
       changes: { from: line.from, to: line.to, insert },
-      selection: { anchor: line.from + insert.length },
+      selection: { anchor: line.from + marker.length + 1 },
     });
     post({ type: 'ingest', id, pageText });
     return true;

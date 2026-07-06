@@ -147,6 +147,7 @@ export default function NoteEditorWebView({
         slug?: string;
         title?: string;
         cmd?: string;
+        dir?: string;
         data?: string;
         project?: string;
       };
@@ -322,8 +323,9 @@ export default function NoteEditorWebView({
         // Stream a shell command from the paired laptop into the terminal card.
         // Registry-owned so it survives page swaps; stdout+stderr merged, ANSI
         // stripped (handled in the registry); the card finalizes on exit/error.
+        // `dir` (the project from `/run PROJECT <cmd>`) starts it in that subdir.
         attachedIds.current.add(msg.id);
-        startRun(msg.id, msg.cmd, sink);
+        startRun(msg.id, msg.cmd, sink, typeof msg.dir === 'string' ? msg.dir : undefined);
       } else if (
         msg.type === 'runStdin' &&
         typeof msg.id === 'string' &&

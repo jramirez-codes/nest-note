@@ -40,6 +40,16 @@ export function renderRun(view, widget) {
   chev.textContent = '▶';
   head.appendChild(chev);
 
+  // `/run PROJECT <cmd>` ran the command inside a project folder — show it as a
+  // small chip so the card records where the output came from.
+  if (obj.dir) {
+    const dir = document.createElement('span');
+    dir.className = 'cm-run-dir';
+    dir.textContent = obj.dir;
+    dir.title = 'Project folder: ' + obj.dir;
+    head.appendChild(dir);
+  }
+
   const cmd = document.createElement('code');
   cmd.className = 'cm-run-cmd';
   cmd.textContent = obj.cmd || '';
@@ -163,6 +173,22 @@ export const styles = {
   // monospace chip and a status badge (badge.js), the body is a scrolling
   // terminal log, and while live a footer holds the stdin box + interrupt/stop.
   '.cm-run-head': { gap: '8px' },
+  '.cm-run-dir': {
+    flexShrink: '0',
+    maxWidth: '38%',
+    padding: '1px 7px',
+    borderRadius: '6px',
+    backgroundColor: c.surface0,
+    border: `1px solid ${c.surface1}`,
+    color: c.subtext0,
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+    fontSize: '11px',
+    fontWeight: '600',
+    lineHeight: '1.5',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  },
   '.cm-run-cmd': {
     flex: '1',
     minWidth: '0',

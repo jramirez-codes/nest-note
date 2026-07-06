@@ -324,11 +324,21 @@ export function startIngest(id: string, pageText: string, sink: RunSink, resumeO
   put(id, base('ingest', handle, sink));
 }
 
-/** Start a /run terminal session, streaming stdout/stderr into the card. */
-export function startRun(id: string, cmd: string, sink: RunSink, resumeOnly = false): void {
+/**
+ * Start a /run terminal session, streaming stdout/stderr into the card. `dir` is
+ * the project subdir (from `/run PROJECT <cmd>`) the command starts in; omitted on
+ * a resume, where the server already holds the session's directory.
+ */
+export function startRun(
+  id: string,
+  cmd: string,
+  sink: RunSink,
+  dir?: string,
+  resumeOnly = false,
+): void {
   const handle = runCommand(
     cmd,
-    undefined,
+    dir,
     {
       onLog: (_stream, chunk) => {
         const e = runs.get(id);
@@ -452,7 +462,7 @@ export function detach(id: string, sink: RunSink): void {
 export function resume(id: string, kind: string, sink: RunSink): void {
   switch (kind) {
     case 'run':
-      startRun(id, '', sink, true);
+      startRun(id, '', sink, undefined, true);
       break;
     case 'code':
       startCodeRun(id, '', sink, true);

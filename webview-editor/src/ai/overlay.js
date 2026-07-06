@@ -205,10 +205,25 @@ export function openCardOverlay(view, obj) {
   guardTaps(back, closeOverlay);
   head.appendChild(back);
 
-  const title = document.createElement('code');
-  title.className = 'cm-ov-title' + (kind === 'code' ? ' cm-ov-title-code' : '');
-  title.textContent = kind === 'code' ? '✦ ' + (obj.project || '') : obj.cmd || '';
-  head.appendChild(title);
+  if (kind === 'code') {
+    // Same stylized project pill as the card (.cm-code-proj), with a flex spacer
+    // so the badge stays right-aligned — the enlarged view can't visually drift.
+    const title = document.createElement('span');
+    title.className = 'cm-code-proj cm-ov-proj';
+    title.textContent = '✦ ' + (obj.project || '');
+    title.title = 'Project: ' + (obj.project || '');
+    head.appendChild(title);
+    const spacer = document.createElement('span');
+    spacer.className = 'cm-code-spacer';
+    head.appendChild(spacer);
+  } else {
+    const title = document.createElement('code');
+    title.className = 'cm-ov-title';
+    // A `/run PROJECT <cmd>` command carries its folder into the title (PROJECT ❯ cmd)
+    // so the enlarged view says where it ran, matching the card's folder chip.
+    title.textContent = obj.dir ? obj.dir + ' ❯ ' + (obj.cmd || '') : obj.cmd || '';
+    head.appendChild(title);
+  }
 
   const badge = document.createElement('span');
   head.appendChild(badge);
@@ -296,7 +311,8 @@ export const styles = {
     overflow: 'hidden',
     textOverflow: 'ellipsis',
   },
-  '.cm-ov-title-code': { color: c.mauve },
+  // The project pill sits in taller overlay chrome, so scale it up a touch.
+  '.cm-ov-proj': { maxWidth: '75%', padding: '4px 12px', fontSize: '13px' },
   '.cm-ov-body': {
     flex: '1',
     minHeight: '0',
