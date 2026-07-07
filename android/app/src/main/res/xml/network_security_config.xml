@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The /view feature embeds the paired laptop's dev server in an <iframe> via a
+  plaintext LAN reverse-proxy (see src/server/viewController.ts + server/view.go).
+  That proxy is unauthenticated cleartext HTTP on the laptop's LAN IP, which is
+  dynamic (learned at pairing) so it can't be pinned to a fixed host here, and
+  Android network-security-config has no CIDR/wildcard support to scope it to the
+  private ranges. So cleartext is permitted app-wide.
+
+  This does NOT downgrade any HTTPS connection — the control channel to the laptop
+  is still pinned TLS/WSS (aiController). It only lets an explicitly-cleartext URL
+  (the /view proxy, Metro in debug) load. We use this config instead of
+  android:usesCleartextTraffic because the RN Gradle plugin's ${usesCleartextTraffic}
+  placeholder resolves to false in release builds, which broke /view with
+  ERR_CLEARTEXT_NOT_PERMITTED.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
