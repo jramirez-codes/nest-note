@@ -17,12 +17,12 @@ import (
 
 func main() {
 	var (
-		port    = flag.Int("port", 8443, "TLS port to listen on")
-		addr    = flag.String("addr", "", "bind address (default: auto-detected LAN IP)")
-		advHost = flag.String("advertise-host", "", "host to put in the pairing QR (e.g. a Tailscale IP or DDNS name for off-LAN access); default: bind address")
-		dir     = flag.String("dir", defaultStateDir(), "directory for cert/key/token")
-		workdir = flag.String("workdir", mustCwd(), "directory Claude runs in (ignored when -root is set)")
-		root      = flag.String("root", "", "scaffold projects/, mcp/, orchestrator/ under this dir and enable MCP; Claude runs in <root>/projects. Empty = disabled")
+		port       = flag.Int("port", 8443, "TLS port to listen on")
+		addr       = flag.String("addr", "", "bind address (default: auto-detected LAN IP)")
+		advHost    = flag.String("advertise-host", "", "host to put in the pairing QR (e.g. a Tailscale IP or DDNS name for off-LAN access); default: bind address")
+		dir        = flag.String("dir", defaultStateDir(), "directory for cert/key/token")
+		workdir    = flag.String("workdir", mustCwd(), "directory Claude runs in (ignored when -root is set)")
+		root       = flag.String("root", "", "scaffold projects/, mcp/, orchestrator/ under this dir and enable MCP; Claude runs in <root>/projects. Empty = disabled")
 		threshold  = flag.Int("subject-threshold", 4, "mentions before the orchestrator proposes a dedicated server for a subject (with -root)")
 		runTimeout = flag.Duration("run-timeout", 2*time.Minute, "max time for a single Claude run before it is killed and reported as failed")
 		pairTTL    = flag.Duration("pair-ttl", 10*time.Minute, "how long the pairing code stays valid")
