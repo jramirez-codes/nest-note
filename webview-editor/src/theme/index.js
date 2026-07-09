@@ -22,6 +22,7 @@ import { styles as recordStyles } from '../ai/cards/record.js';
 import { styles as badgeStyles } from '../ai/shared/badge.js';
 import { styles as runStyles } from '../ai/cards/run.js';
 import { styles as transcriptStyles } from '../ai/shared/transcript.js';
+import { styles as codeViewStyles } from '../ai/shared/codeView.js';
 import { styles as codeStyles } from '../ai/cards/code.js';
 import { styles as viewStyles } from '../ai/cards/view.js';
 import { styles as overlayStyles } from '../ai/overlay.js';
@@ -47,6 +48,7 @@ const components = {
   ...badgeStyles,
   ...runStyles,
   ...transcriptStyles,
+  ...codeViewStyles,
   ...codeStyles,
   ...viewStyles,
   ...overlayStyles,

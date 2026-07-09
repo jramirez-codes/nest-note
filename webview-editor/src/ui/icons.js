@@ -45,6 +45,22 @@ export const EXPAND =
 // Back chevron for the full-page overlay header.
 export const BACK = STROKE + '<polyline points="15 18 9 12 15 6"/></svg>';
 
+// File-tool glyphs for the /code transcript's editor panes: a plain document
+// (Write/new file), a document with a pencil (Edit), and an eye (Read/view).
+const FILE_BODY =
+  '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>' +
+  '<polyline points="14 2 14 8 20 8"/>';
+export const FILE = STROKE + FILE_BODY + '</svg>';
+export const FILE_EDIT =
+  STROKE +
+  '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h6"/>' +
+  '<polyline points="14 2 14 8 20 8"/>' +
+  '<path d="M21.5 13.5 16 19l-2.5.5.5-2.5 5.5-5.5a1.4 1.4 0 0 1 2 2z"/></svg>';
+export const EYE =
+  STROKE +
+  '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/>' +
+  '<circle cx="12" cy="12" r="3"/></svg>';
+
 // Filled glyphs (mic / stop / play / pause) — the /record card's whole UI is the
 // mic↔stop and play↔pause swaps on a single round button.
 export const MIC =

@@ -106,7 +106,7 @@ export function renderCode(view, widget) {
         card._mdViews.push(mv);
         if (streaming) card._mdView = mv;
       } else {
-        log.appendChild(renderCodeItem(item));
+        log.appendChild(renderCodeItem(item, items[idx - 1]));
       }
     });
     if (!items.length && running) {
