@@ -9,6 +9,7 @@ import {
   recPlayField,
   runLiveField,
   codeLiveField,
+  viewLiveField,
   setPreviewEffect,
 } from '../state.js';
 import { cardField, previewFetcher } from './cardField.js';
@@ -50,17 +51,17 @@ export function mountAnswerView(parent, text, { trim = true } = {}) {
         openLinks,
         previewField,
         askLiveField,
-        // cardField's buildCards() reads recPlayField, runLiveField and
-        // codeLiveField unconditionally, so the nested answer view must register
-        // every one of them too — otherwise state.field() throws "Field is not
-        // present in this state" the moment a card renders here, which aborts the
-        // streaming/finalizing dispatch on the main view and leaves the /ask card
-        // stuck on "Thinking…". (runLive/codeLive were added to buildCards with
-        // the /run and /code cards but not mirrored here — the regression this
-        // fixes.)
+        // cardField's buildCards() reads recPlayField, runLiveField,
+        // codeLiveField and viewLiveField unconditionally, so the nested answer
+        // view must register every one of them too — otherwise state.field()
+        // throws "Field is not present in this state" the moment a card renders
+        // here, which aborts mountAnswerView so NO answer prose renders at all
+        // (in /ask, /chat AND /code). Each new live-card kind must be mirrored
+        // here; viewLiveField (the /view card) was the latest to be missed.
         recPlayField,
         runLiveField,
         codeLiveField,
+        viewLiveField,
         cardField,
         previewFetcher,
         livePreview,

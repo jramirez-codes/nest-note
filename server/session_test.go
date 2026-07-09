@@ -105,6 +105,38 @@ func TestFindOrCreateAndGet(t *testing.T) {
 	}
 }
 
+func TestFindOrCreateForRunReplacesFinishedSession(t *testing.T) {
+	reg := &sessionRegistry{m: map[string]*session{}} // no reaper goroutine in test
+
+	// A running session must be reused (a duplicate/racing connect attaches to the
+	// live run rather than starting a second process).
+	running, created := reg.findOrCreateForRun("a", "run")
+	if !created {
+		t.Fatalf("first findOrCreateForRun: created=false, want true")
+	}
+	again, created := reg.findOrCreateForRun("a", "run")
+	if created || again != running {
+		t.Fatalf("running session was not reused: created=%v same=%v", created, again == running)
+	}
+
+	// Once it finishes (lingering only for a resume replay), a fresh non-resume run
+	// reusing the id — the /chat follow-up case — must get a NEW session so it runs
+	// the new prompt instead of replaying the finished one's buffered output.
+	running.mu.Lock()
+	running.done = true
+	running.mu.Unlock()
+	fresh, created := reg.findOrCreateForRun("a", "run")
+	if !created {
+		t.Fatalf("finished session was reused; want a fresh session for the new run")
+	}
+	if fresh == running {
+		t.Fatalf("findOrCreateForRun returned the finished session, want a replacement")
+	}
+	if reg.get("a") != fresh {
+		t.Fatalf("registry did not hold the replacement session")
+	}
+}
+
 func TestSweepReapsOrphanAndKills(t *testing.T) {
 	reg := &sessionRegistry{m: map[string]*session{}}
 	killed := false

@@ -9,6 +9,8 @@ interface ConfirmDialogProps {
   cancelLabel?: string;
   /** When true, the confirm button reads as a destructive action. */
   destructive?: boolean;
+  /** Hide the cancel button, turning the dialog into a single-button notice. */
+  hideCancel?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -25,6 +27,7 @@ function ConfirmDialog({
   confirmLabel = 'Confirm',
   cancelLabel = 'Cancel',
   destructive = false,
+  hideCancel = false,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -46,15 +49,17 @@ function ConfirmDialog({
           <Text className="mt-2 text-sm leading-5 text-muted">{message}</Text>
 
           <View className="mt-6 flex-row justify-end gap-3">
-            <Pressable
-              onPress={onCancel}
-              accessibilityRole="button"
-              accessibilityLabel={cancelLabel}
-              className="rounded-xl px-4 py-2.5 active:opacity-70">
-              <Text className="text-sm font-semibold text-muted">
-                {cancelLabel}
-              </Text>
-            </Pressable>
+            {!hideCancel && (
+              <Pressable
+                onPress={onCancel}
+                accessibilityRole="button"
+                accessibilityLabel={cancelLabel}
+                className="rounded-xl px-4 py-2.5 active:opacity-70">
+                <Text className="text-sm font-semibold text-muted">
+                  {cancelLabel}
+                </Text>
+              </Pressable>
+            )}
             <Pressable
               onPress={onConfirm}
               accessibilityRole="button"

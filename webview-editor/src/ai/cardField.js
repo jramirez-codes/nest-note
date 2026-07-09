@@ -19,6 +19,10 @@ import {
   clearCodeLive,
   setViewUrl,
   clearViewLive,
+  payloadField,
+  setPayload,
+  setPayloads,
+  clearPayload,
 } from '../state.js';
 import { LinkCardWidget, ImageWidget } from '../markdown/widgets/index.js';
 import { AiCardWidget } from './cards/AiCardWidget.js';
@@ -35,6 +39,12 @@ function buildCards(state) {
   const runLive = state.field(runLiveField);
   const codeLive = state.field(codeLiveField);
   const viewLive = state.field(viewLiveField);
+  // eachAiLine has already merged each externalized body onto obj; this is only so
+  // the widget's version token (payloadField[id].v) flips when a persisted body
+  // changes, forcing a re-render even if obj's shape looks the same. Optional
+  // (require=false) so the nested /ask answer view — which doesn't register this
+  // field — never throws here.
+  const payloads = state.field(payloadField, false) || {};
   // Lines touched by a selection stay raw so the URL can be edited. Read-only
   // views (the /ask answer preview) never reveal — cards always render.
   const activeLines = new Set();
@@ -79,9 +89,10 @@ function buildCards(state) {
           : obj.kind === 'view'
             ? viewLive[obj.id]
             : askLive[obj.id];
+    const entry = payloads[obj.id];
     marks.push(
       Decoration.replace({
-        widget: new AiCardWidget(obj, live, !!recPlay[obj.id]),
+        widget: new AiCardWidget(obj, live, !!recPlay[obj.id], entry ? entry.v : 0),
         block: true,
       }).range(line.from, line.to),
     );
@@ -110,7 +121,10 @@ export const cardField = StateField.define({
           e.is(setCodeStatus) ||
           e.is(clearCodeLive) ||
           e.is(setViewUrl) ||
-          e.is(clearViewLive),
+          e.is(clearViewLive) ||
+          e.is(setPayload) ||
+          e.is(setPayloads) ||
+          e.is(clearPayload),
       )
     ) {
       return buildCards(tr.state);

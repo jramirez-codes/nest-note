@@ -1,4 +1,5 @@
 import { post } from '../bridge.js';
+import { payloadField, setPayload, clearPayload } from '../state.js';
 
 // --- /ask + /pair markers ---------------------------------------------------
 // An ask/pair block is persisted as a multi-line HTML comment so the raw text
@@ -53,6 +54,57 @@ const BOOL_KEYS = new Set(['open']);
 // cold start can resume a durable session from just past it (see runRegistry).
 const NUM_KEYS = new Set(['v', 'ms', 'startedAt', 'code', 'seq', 'port']);
 
+// The card kinds whose bulky body is stored OUT of the document — in payloadField
+// (in memory) and SQLite (on disk), keyed by the marker id — rather than inline.
+// These are the big, machine-ish payloads: a /code transcript, /run output, and
+// the /clean backup (a whole-page copy). Light markers for these keep only header
+// lines; eachAiLine merges the body back onto the parsed object so every renderer/
+// overlay reads obj.items/out/backup exactly as before. See state.js payloadField.
+//
+// /ask + /chat deliberately stay INLINE: their bodies are model prose (the
+// reviewable user↔agent exchange this file is built around), the question is card
+// identity that must ride in the marker, and they're rarely large enough to be the
+// bridge/parse problem that /code is.
+export const EXTERNAL_KINDS = new Set(['clean', 'run', 'code']);
+
+// obj -> the { field: value } object that carries an externalized kind's body
+// (what gets merged back onto a marker), or null for kinds with no stored body.
+export function bodyFromObj(kind, obj) {
+  switch (kind) {
+    case 'code':
+      return { items: obj.items || [] };
+    case 'run':
+      return { out: obj.out || '' };
+    case 'clean':
+      return { backup: obj.backup || '' };
+    default:
+      return null;
+  }
+}
+
+// obj -> the string persisted to SQLite for `kind` (JSON for the /code transcript
+// array, raw text otherwise).
+export function encodePayload(kind, obj) {
+  if (kind === 'code') return JSON.stringify(obj.items || []);
+  if (kind === 'run') return obj.out || '';
+  if (kind === 'clean') return obj.backup || '';
+  return '';
+}
+
+// Stored string -> the body object merged onto a marker (inverse of encodePayload).
+export function decodePayload(kind, payload) {
+  if (kind === 'code') {
+    try {
+      return { items: JSON.parse(payload) };
+    } catch {
+      return { items: [] };
+    }
+  }
+  if (kind === 'run') return { out: payload };
+  if (kind === 'clean') return { backup: payload };
+  return {};
+}
+
 // Statuses where the card is still in-flight and the async server callbacks
 // (__aiStream / __aiDone) need to find it by id. Once a card reaches a terminal
 // status nothing looks it up again, so the id is dropped to keep finished notes
@@ -97,19 +149,18 @@ function coerce(key, val) {
   return val;
 }
 
-// Encode a payload object into a multi-line marker block. Everything except the
-// question/answer becomes a header line, in object-key order (so the readable
-// order is v, kind, id, open, status, …).
-export function encodeAiMarker(obj) {
+// Emit the header lines (everything except the body sections), in object-key
+// order (so the readable order is v, kind, id, open, status, …). Shared by the
+// light and full encoders below.
+function emitHeaders(obj) {
   const { q, a, backup, turns, out, items, ...meta } = obj;
-  // Chat cards keep their handle even when done: the id is how a later reply
-  // (fired from the card's follow-up box) threads back into the same run. Record
-  // cards keep it too — Record/Stop/Export all address the card by id.
-  // View cards keep their id for good: the iframe's transient (token-bearing)
-  // proxy URL is never persisted, so the card must re-fetch it by id on every
-  // mount (page swap, reopen, cold start) — see the viewFetcher plugin.
+  // Externalized cards keep their handle for good: the id is the key their body
+  // is stored under (payloadField + SQLite). Chat threads a follow-up by id;
+  // record addresses its clip by id; view re-fetches its transient (token-bearing)
+  // proxy URL by id on every mount (see viewFetcher).
   const keepId =
     INFLIGHT.has(obj.status) ||
+    EXTERNAL_KINDS.has(obj.kind) ||
     obj.kind === 'chat' ||
     obj.kind === 'record' ||
     obj.kind === 'view';
@@ -119,6 +170,35 @@ export function encodeAiMarker(obj) {
     if (k === 'id' && !keepId) continue; // finished cards don't need the handle
     lines.push(k + ': ' + escLine(val));
   }
+  return lines;
+}
+
+// Header-only marker: no body sections. Used for the externalized kinds, whose
+// body lives in payloadField + SQLite — that's what keeps `pages.content` small so
+// a large /code transcript can't bloat the note text serialized over the bridge on
+// every keystroke.
+function encodeLight(obj) {
+  const lines = emitHeaders(obj);
+  lines.push(CLOSE_LINE);
+  return lines.join('\n');
+}
+
+// The marker written to the DOCUMENT. Externalized kinds (code/run/clean) get the
+// light, header-only form; every other kind (ask/chat/pair/ingest/record/view)
+// stays fully inline exactly as before — /ask + /chat keep their question and prose
+// in the marker so the raw note stays human/AI-reviewable. Every existing caller
+// (commands.js, the commit paths) gets the right form for free.
+export function encodeAiMarker(obj) {
+  return EXTERNAL_KINDS.has(obj.kind) ? encodeLight(obj) : encodeAiMarkerFull(obj);
+}
+
+// The FULLY-INLINED marker: headers PLUS the body sections. Used only to
+// reconstruct the whole page in the clear (serializeFull → /ingest, /clean) and by
+// the migration path — never written back to the live document. This is the
+// mirror of parseBlockBody, and the pre-externalization encodeAiMarker.
+export function encodeAiMarkerFull(obj) {
+  const { q, a, backup, turns, out, items } = obj;
+  const lines = emitHeaders(obj);
   if (obj.kind === 'ask') {
     lines.push(SEC_USER);
     lines.push(escLine(q || ''));
@@ -234,6 +314,16 @@ export function genId() {
 // that knows the block layout; the helpers below build on it.
 export function eachAiLine(state, fn) {
   const doc = state.doc;
+  // Merge each card's externalized body (payloadField) back onto the parsed
+  // marker object, so downstream readers see obj.items/out/a/turns/backup exactly
+  // as when the body lived inline. `false` = don't throw where the field is absent
+  // (nested answer-view editors, tests). The stored body overrides any inline body
+  // still present mid-migration (they're the same data).
+  const payloads = state.field(payloadField, false) || null;
+  const merge = obj => {
+    if (payloads && obj.id && payloads[obj.id]) Object.assign(obj, payloads[obj.id].body);
+    return obj;
+  };
   let i = 1;
   while (i <= doc.lines) {
     const line = doc.line(i);
@@ -242,7 +332,7 @@ export function eachAiLine(state, fn) {
     const legacy = LEGACY_RE.exec(t);
     if (legacy) {
       const obj = parseLegacy(legacy[1]);
-      if (obj) fn(obj, { from: line.from, to: line.to });
+      if (obj) fn(merge(obj), { from: line.from, to: line.to });
       i++;
       continue;
     }
@@ -257,7 +347,7 @@ export function eachAiLine(state, fn) {
         for (let k = i + 1; k < j; k++) bodyLines.push(doc.line(k).text);
         const obj = parseBlockBody(bodyLines);
         if (obj) {
-          fn(obj, { from: line.from, to: doc.line(j).to });
+          fn(merge(obj), { from: line.from, to: doc.line(j).to });
           i = j + 1;
           continue;
         }
@@ -268,6 +358,64 @@ export function eachAiLine(state, fn) {
     }
     i++;
   }
+}
+
+// Reconstruct the whole page markdown with every externalized card body inlined
+// again — the "hydrated" form. Consumers that need the complete page in the clear
+// (/ingest → orchestrator, /clean → Claude) use this instead of doc.toString(),
+// which now yields only light markers. eachAiLine has already merged each body
+// onto obj, so encodeAiMarkerFull re-emits it.
+// `skip` (optional { from, to }) omits one doc range — the `/ingest` or `/clean`
+// command line that triggered the call — from the emitted text, matching the old
+// "whole page minus this command line" behaviour.
+export function serializeFull(state, skip) {
+  const doc = state.doc;
+  const parts = [];
+  let pos = 0;
+  const pushText = (from, to) => {
+    if (skip && skip.from >= from && skip.to <= to) {
+      parts.push(doc.sliceString(from, skip.from));
+      parts.push(doc.sliceString(skip.to, to));
+    } else {
+      parts.push(doc.sliceString(from, to));
+    }
+  };
+  eachAiLine(state, (obj, range) => {
+    pushText(pos, range.from);
+    parts.push(encodeAiMarkerFull(obj));
+    pos = range.to;
+  });
+  pushText(pos, doc.length);
+  return parts.join('');
+}
+
+// An externalized block still carries its body inline if it has one of their body
+// section labels, or is a legacy single-line base64 marker.
+const SECTION_LABEL_RE = /\n\[(backup|output|transcript)\]/;
+
+// One-time, self-healing migration, run right after a document is seeded (and
+// after /clean inserts its cleaned text). Any externalized card still holding its
+// body INLINE — an old note, or freshly-inserted cleaned text — is moved into
+// payloadField + SQLite and its marker rewritten to the light form, shrinking the
+// note text so a large /code transcript no longer rides the bridge on every
+// keystroke. Already-light markers are left untouched (idempotent).
+export function migrateInlineMarkers(view) {
+  const state = view.state;
+  const doc = state.doc;
+  const changes = [];
+  const effects = [];
+  const posts = [];
+  eachAiLine(state, (obj, range) => {
+    if (!EXTERNAL_KINDS.has(obj.kind) || !obj.id) return;
+    const raw = doc.sliceString(range.from, range.to);
+    if (!SECTION_LABEL_RE.test(raw) && !LEGACY_RE.test(raw.trim())) return; // already light
+    const kind = obj.kind;
+    effects.push(setPayload.of({ id: obj.id, kind, body: bodyFromObj(kind, obj) }));
+    posts.push({ type: 'cardPayload', id: obj.id, kind, payload: encodePayload(kind, obj) });
+    changes.push({ from: range.from, to: range.to, insert: encodeAiMarker(obj) });
+  });
+  if (changes.length) view.dispatch({ changes, effects });
+  for (const p of posts) post(p);
 }
 
 // Locate the marker block for a given id (used by the RN → web update bridge).
@@ -304,12 +452,18 @@ export function updateAiMarker(view, el, patch) {
   });
 }
 
-// Remove the whole block a card widget sits on (plus its trailing newline).
+// Remove the whole block a card widget sits on (plus its trailing newline), and
+// drop its externalized body from state + SQLite so no orphan row is left behind.
 export function deleteCardLine(view, el) {
   const block = aiBlockOf(view, el);
   if (!block) return;
   const to = Math.min(block.to + 1, view.state.doc.length);
-  view.dispatch({ changes: { from: block.from, to } });
+  const id = block.obj.id;
+  view.dispatch({
+    changes: { from: block.from, to },
+    ...(id ? { effects: clearPayload.of(id) } : {}),
+  });
+  if (id && EXTERNAL_KINDS.has(block.obj.kind)) post({ type: 'cardDelete', id });
 }
 
 // Reject a /clean review: swap the whole document back to the stored backup
@@ -319,6 +473,8 @@ export function restoreCleanBackup(view, el) {
   if (!block) return;
   const backup = block.obj.backup || '';
   view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: backup } });
+  // The clean card is gone with the swap; drop its (now orphan) backup row.
+  if (block.obj.id) post({ type: 'cardDelete', id: block.obj.id });
 }
 
 // Append a new turn to the chat block `el` sits on and kick off its run in
@@ -328,13 +484,45 @@ export function restoreCleanBackup(view, el) {
 export function appendChatTurn(view, el, question) {
   const block = aiBlockOf(view, el);
   if (!block || block.obj.kind !== 'chat') return null;
-  const priorTurns = (block.obj.turns || []).map(t => ({ q: t.q, a: t.a }));
+  return appendChatTurnById(view, block.obj.id, question);
+}
+
+// Same as appendChatTurn but addressed by chat id (not DOM), so the full-page
+// overlay — which has no marker-line DOM to resolve — can drive the thread too.
+// Returns the chat id, or null if no chat card carries it.
+export function appendChatTurnById(view, id, question) {
+  const found = findAiLine(view.state, id);
+  if (!found || found.obj.kind !== 'chat') return null;
+  const priorTurns = (found.obj.turns || []).map(t => ({ q: t.q, a: t.a }));
   const turns = priorTurns.concat([{ q: question, a: '' }]);
-  const marker = encodeAiMarker({ ...block.obj, turns, open: true, status: 'streaming' });
-  view.dispatch({ changes: { from: block.from, to: block.to, insert: marker } });
+  const marker = encodeAiMarker({ ...found.obj, turns, open: true, status: 'streaming' });
+  view.dispatch({ changes: { from: found.from, to: found.to, insert: marker } });
   // Reuse the /ask stream path (RN correlates by id); context carries history.
-  post({ type: 'ask', id: block.obj.id, question, context: { turns: priorTurns } });
-  return block.obj.id;
+  post({ type: 'ask', id, question, context: { turns: priorTurns } });
+  return id;
+}
+
+// Re-run a finished /run card in place: reset it to running, wipe the previous
+// run's captured output (the doc payloadField AND its SQLite row), and re-post the
+// same command by id — RN starts a fresh process and streams into the SAME card.
+// Reusing the id is safe end-to-end: the RN registry replaces the stale entry and
+// the server drops the finished-and-lingering session for a fresh one. Addressed by
+// id (not DOM) so the full-page overlay can drive it too. Returns the id, or null
+// if no run card carries it.
+export function rerunRunById(view, id) {
+  const found = findAiLine(view.state, id);
+  if (!found || found.obj.kind !== 'run') return null;
+  const { cmd, dir } = found.obj;
+  const marker = encodeAiMarker({ ...found.obj, status: 'running', open: true });
+  view.dispatch({
+    changes: { from: found.from, to: found.to, insert: marker },
+    effects: clearPayload.of(id),
+  });
+  // Overwrite the last run's output on disk too, so a reload before the fresh run
+  // finishes doesn't show the old logs.
+  post({ type: 'cardPayload', id, kind: 'run', payload: '' });
+  post({ type: 'run', id, cmd, dir });
+  return id;
 }
 
 // Merge a completed run's patch into a marker payload before re-encoding. For

@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -54,5 +56,60 @@ func TestProjectsHandler(t *testing.T) {
 	// No token: unauthorized.
 	if code, _ := get(projectsHandler(token, base, true), false); code != http.StatusUnauthorized {
 		t.Fatalf("unauthorized: want 401, got %d", code)
+	}
+}
+
+// TestDeleteProjectHandler covers the destructive /projects/delete: it removes
+// the slugged folder when enabled, refuses without the token (401) or with /code
+// off (403), 404s an unknown project, and never touches anything outside the
+// projects base — a traversal-y name just slugs down to a sibling folder.
+func TestDeleteProjectHandler(t *testing.T) {
+	const token = "secret"
+	post := func(base, name string, enabled, auth bool) int {
+		req := httptest.NewRequest(http.MethodPost, "/projects/delete",
+			strings.NewReader(`{"project":`+strconv.Quote(name)+`}`))
+		if auth {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		rec := httptest.NewRecorder()
+		deleteProjectHandler(token, base, enabled).ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	// Happy path: an existing project folder is actually removed from disk.
+	base := t.TempDir()
+	dir := filepath.Join(base, "alpha")
+	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if code := post(base, "Alpha", true, true); code != http.StatusOK {
+		t.Fatalf("delete: want 200, got %d", code)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("delete: folder still present (err=%v)", err)
+	}
+
+	// Unknown project: 404, not a silent success.
+	if code := post(base, "ghost", true, true); code != http.StatusNotFound {
+		t.Fatalf("missing: want 404, got %d", code)
+	}
+
+	// /code disabled: 403 even with a valid token, and the folder survives.
+	if err := os.MkdirAll(filepath.Join(base, "beta"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if code := post(base, "beta", false, true); code != http.StatusForbidden {
+		t.Fatalf("disabled: want 403, got %d", code)
+	}
+	if _, err := os.Stat(filepath.Join(base, "beta")); err != nil {
+		t.Fatalf("disabled: folder should survive, got %v", err)
+	}
+
+	// No token: unauthorized, and the folder survives.
+	if code := post(base, "beta", true, false); code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized: want 401, got %d", code)
+	}
+	if _, err := os.Stat(filepath.Join(base, "beta")); err != nil {
+		t.Fatalf("unauthorized: folder should survive, got %v", err)
 	}
 }

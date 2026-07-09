@@ -1,10 +1,13 @@
 import { c } from '../../theme/palette.js';
-import { SEND } from '../../ui/icons.js';
+import { SEND, EXPAND } from '../../ui/icons.js';
 import { makeCardActionButton } from '../../ui/buttons.js';
+import { guardTaps } from '../../ui/events.js';
 import { updateAiMarker, deleteCardLine, appendChatTurn } from '../marker.js';
+import { openCardOverlay } from '../overlay.js';
 import { mountAnswerView } from '../answerView.js';
 import { thinkingDots } from '../shared/thinking.js';
 import { makeComposer } from '../shared/composer.js';
+import { scrollBottomSoon } from '../shared/streamLog.js';
 
 /**
  * The /chat card: a threaded conversation in one block. The header shows the
@@ -51,6 +54,16 @@ export function renderChat(view, widget) {
     }),
   );
 
+  // A plain Expand control (tap → full-page thread); it owns its own taps so the
+  // header's collapse toggle doesn't also fire. Delete stays on the copy button's
+  // long-press above, so there's no competing hold-to-delete gesture on the card.
+  const expand = document.createElement('span');
+  expand.className = 'cm-rec-corner cm-rec-export cm-chat-expand';
+  expand.innerHTML = EXPAND;
+  expand.setAttribute('aria-label', 'Expand');
+  guardTaps(expand, () => openCardOverlay(view, obj));
+  head.appendChild(expand);
+
   head.addEventListener('mousedown', e => {
     e.preventDefault();
     e.stopPropagation();
@@ -69,6 +82,14 @@ export function renderChat(view, widget) {
     // can tear every one down (not just the last streaming one).
     card._mdViews = [];
 
+    // The transcript scrolls inside a capped box (same max height as the /run
+    // log), so a long thread doesn't push the card taller than the screen. The
+    // follow-up composer sits OUTSIDE it, staying pinned below while the turns
+    // scroll — exactly like the /run stdin footer under its log.
+    const log = document.createElement('div');
+    log.className = 'cm-chat-log';
+    card._chatScroll = log;
+
     turns.forEach((t, idx) => {
       const isLast = idx === turns.length - 1;
       // The opening question already sits in the header; later turns show theirs
@@ -77,12 +98,12 @@ export function renderChat(view, widget) {
         const uq = document.createElement('div');
         uq.className = 'cm-chat-q';
         uq.textContent = t.q || '';
-        body.appendChild(uq);
+        log.appendChild(uq);
       }
       const answer = isLast ? widget.answer : t.a || '';
       const turnBox = document.createElement('div');
       turnBox.className = 'cm-chat-a';
-      body.appendChild(turnBox);
+      log.appendChild(turnBox);
 
       if (isLast && status === 'error') {
         if (answer) card._mdViews.push(mountAnswerView(turnBox, answer));
@@ -100,6 +121,9 @@ export function renderChat(view, widget) {
         if (streaming) card._mdView = mv;
       }
     });
+
+    body.appendChild(log);
+    scrollBottomSoon(log); // open pinned to the newest turn
 
     // The follow-up composer threads the whole transcript, so a reply genuinely
     // continues the convo. Shown only when the thread is idle, never mid-stream.
@@ -129,6 +153,18 @@ function followupFoot(view, card) {
 }
 
 export const styles = {
+  // The Expand control sits inline in the flex header (centered, not pinned to the
+  // top like its /run + /code corner-button cousins).
+  '.cm-chat-expand': { alignSelf: 'center' },
+  // The inline transcript scroller: capped at the same height as the /run log so a
+  // long thread scrolls in place instead of stretching the card past the screen.
+  // The overlay's own `.cm-ov .cm-chat-log` rule lifts this cap for the full page.
+  '.cm-chat-log': {
+    maxHeight: '340px',
+    overflow: 'auto',
+    paddingBottom: '20px',
+    WebkitOverflowScrolling: 'touch',
+  },
   // Each follow-up turn shows its question as a small prompt bubble above the
   // answer, so a multi-turn thread reads as a back-and-forth.
   '.cm-chat-q': {

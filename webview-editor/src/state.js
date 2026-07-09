@@ -207,6 +207,48 @@ export const viewLiveField = StateField.define({
   },
 });
 
+// Externalized card bodies, keyed by card id: { kind, body, v }. The heavy body
+// of an /ask, /chat, /clean, /run or /code card (its answer, transcript, output
+// or backup) lives HERE and in SQLite on the RN side — NOT inline in the note
+// markdown — so a large transcript can't bloat the document that is serialized
+// over the bridge on every keystroke (the /code crash). eachAiLine merges `body`
+// back onto the parsed marker object, so every renderer keeps reading obj.items/
+// out/a/turns/backup unchanged. `v` bumps on each write so a card re-renders when
+// its persisted body changes. RN seeds this on load (window.__setPayloads) and
+// the commit paths (index.js) write to it as cards stream/finish.
+//
+// `body` is the shape merged onto the marker object, per kind:
+//   code  -> { items }   chat -> { turns }   run -> { out }
+//   ask   -> { a }       clean -> { backup }
+export const setPayload = StateEffect.define(); // { id, kind, body }
+export const setPayloads = StateEffect.define(); // { [id]: { kind, body } } (merge)
+export const clearPayload = StateEffect.define(); // id
+export const payloadField = StateField.define({
+  create: () => Object.create(null),
+  update(value, tr) {
+    let next = value;
+    for (const e of tr.effects) {
+      if (e.is(setPayload)) {
+        const { id, kind, body } = e.value;
+        const prev = next[id];
+        next = { ...next, [id]: { kind, body, v: (prev ? prev.v : 0) + 1 } };
+      } else if (e.is(setPayloads)) {
+        next = { ...next };
+        for (const id in e.value) {
+          const prev = next[id];
+          next[id] = { ...e.value[id], v: (prev ? prev.v : 0) + 1 };
+        }
+      } else if (e.is(clearPayload)) {
+        if (next[e.value] !== undefined) {
+          next = { ...next };
+          delete next[e.value];
+        }
+      }
+    }
+    return next;
+  },
+});
+
 // Which /record card (by id) is currently playing back, so its button shows
 // Pause. Ephemeral like askLive — playback state never touches the document.
 // RN drives it via window.__recPlay (set true on play, false on pause/end).

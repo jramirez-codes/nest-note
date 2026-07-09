@@ -239,6 +239,32 @@ func (reg *sessionRegistry) findOrCreate(id, kind string) (s *session, created b
 	return s, true
 }
 
+// findOrCreateForRun is findOrCreate for a non-resume connect that carries a fresh
+// prompt (a new one-shot run). It differs in one case: an existing session that has
+// already FINISHED (kept around only so a resume can replay its result during the
+// linger window) is replaced with a fresh one instead of being reused. A new prompt
+// reusing an id is a genuinely new run — notably a /chat follow-up threads replies
+// through the same card id — and must not be answered with the previous run's
+// replayed output. A still-running session is returned as-is (created=false) so a
+// duplicate/racing connect attaches rather than starting a second process.
+func (reg *sessionRegistry) findOrCreateForRun(id, kind string) (s *session, created bool) {
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if existing := reg.m[id]; existing != nil {
+		existing.mu.Lock()
+		done := existing.done
+		existing.mu.Unlock()
+		if !done {
+			return existing, false
+		}
+		// Finished session lingering for resume — drop it so the new prompt runs.
+		delete(reg.m, id)
+	}
+	s = &session{id: id, kind: kind}
+	reg.m[id] = s
+	return s, true
+}
+
 func (reg *sessionRegistry) remove(id string) {
 	reg.mu.Lock()
 	delete(reg.m, id)

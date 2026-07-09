@@ -94,6 +94,7 @@ export function renderCode(view, widget) {
     // /ask card); user prompts, tool calls and results stay compact rows
     // (renderCodeItem). Track every mounted view so destroy() can tear them down.
     card._mdViews = [];
+    card._mdView = null;
     items.forEach((item, idx) => {
       if (item.type === 'text') {
         const box = document.createElement('div');
@@ -155,42 +156,83 @@ function codeFoot(id) {
   });
 }
 
-// Fast-path the hot case — the same open, still-running session whose last
-// (assistant) block is growing token-by-token — by appending only the new tail
-// to that block. Any structural change (a new block, open toggle, running→done/
-// error) returns false so CM rebuilds via toDOM (swapping the footer for the
-// exit badge).
+// Update a live, open, still-running /code card in place instead of letting CM
+// rebuild the whole card via toDOM. This matters for interaction, not just speed:
+// a full rebuild replaces the footer's prompt <input> (dropping its focus AND any
+// half-typed follow-up) and swaps out the header mid-tap — so while the agent
+// streams tool calls/results, the user couldn't reliably send a follow-up and the
+// header's collapse tap got eaten. We keep the header + footer DOM untouched and
+// only touch the transcript log: extend the growing last block (Case A) or append
+// the newly-streamed blocks (Case B). Any id/open/status transition — including
+// running→done, which must swap the footer for the exit badge — returns false so
+// CM does rebuild via toDOM.
 export function updateCode(dom, view, widget) {
   const obj = widget.obj;
   const prev = dom._codeSig;
   const log = dom._codeLog;
-  const md = dom._mdView;
   const live = widget.live;
   const status = live ? live.status : obj.status || 'done';
   const items = live ? live.items : [];
   if (
     !prev ||
     !log ||
-    !md ||
     prev.id !== obj.id ||
     !prev.open ||
     obj.open === false ||
     prev.status !== 'running' ||
     status !== 'running' ||
-    items.length !== prev.count
+    items.length < prev.count // a shrink/reset is structural — rebuild.
   ) {
     return false;
   }
-  // Same block count: only the last (open text) block can have grown in place.
-  const last = items[items.length - 1];
-  if (!last || last.type !== 'text') return false;
   const scroller = view.scrollDOM;
   const stick = nearBottom(scroller);
-  if (growMdView(md, last.text || '')) {
-    log.scrollTop = log.scrollHeight;
-    if (stick) scrollBottomSoon(scroller);
+
+  // Case A — same block count: only the last (open assistant) block can have
+  // grown token-by-token; extend its mounted markdown view in place.
+  if (items.length === prev.count) {
+    const md = dom._mdView;
+    const last = items[items.length - 1];
+    if (!md || !last || last.type !== 'text') return false;
+    if (growMdView(md, last.text || '')) {
+      log.scrollTop = log.scrollHeight;
+      if (stick) scrollBottomSoon(scroller);
+    }
+    dom._codeSig = { id: obj.id, open: true, status: 'running', count: items.length };
+    return true;
+  }
+
+  // Case B — new block(s) appended (a tool call/result, or a fresh prose block).
+  // The transcript only ever appends, so we mount just the new items onto the
+  // existing log; the composer and header DOM survive intact.
+  const prevLast = items[prev.count - 1];
+  if (dom._mdView && prevLast && prevLast.type === 'text') {
+    // The previously-streaming block is now closed — settle it on its final text.
+    growMdView(dom._mdView, prevLast.text || '');
+  }
+  dom._mdView = null;
+  if (prev.count === 0) {
+    const hint = log.querySelector('.cm-code-hint');
+    if (hint) hint.remove();
+  }
+  if (!dom._mdViews) dom._mdViews = [];
+  for (let idx = prev.count; idx < items.length; idx++) {
+    const item = items[idx];
+    if (item.type === 'text') {
+      const box = document.createElement('div');
+      box.className = 'cm-code-text';
+      log.appendChild(box);
+      const streaming = idx === items.length - 1; // running is guaranteed here
+      const mv = mountAnswerView(box, item.text || '', { trim: !streaming });
+      dom._mdViews.push(mv);
+      if (streaming) dom._mdView = mv;
+    } else {
+      log.appendChild(renderCodeItem(item, items[idx - 1]));
+    }
   }
   dom._codeSig = { id: obj.id, open: true, status: 'running', count: items.length };
+  log.scrollTop = log.scrollHeight;
+  if (stick) scrollBottomSoon(scroller);
   return true;
 }
 
@@ -224,6 +266,11 @@ export const styles = {
     gap: '8px',
     WebkitOverflowScrolling: 'touch',
   },
+  // Each transcript block keeps its natural height. Without this the flex column
+  // shrinks its children (default flex-shrink:1), and because a file pane wraps an
+  // overflow:auto body its min-height resolves to 0 — so the panes collapse to a
+  // scrunched sliver. flex-shrink:0 makes the log the sole scroller instead.
+  '.cm-code-log > *': { flexShrink: '0' },
   '.cm-code-hint': {
     color: c.overlay1,
     fontSize: '13px',

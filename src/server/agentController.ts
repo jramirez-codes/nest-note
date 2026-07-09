@@ -8,7 +8,7 @@
  * lifting (pinned socket, multi-turn stream-json framing) lives in ./agentClient.
  */
 
-import { openAgent, listProjects, type AgentHandle } from './agentClient';
+import { openAgent, listProjects, deleteProject, type AgentHandle } from './agentClient';
 import { getTransport, currentServer, NO_MODULE } from './aiController';
 import { setServerStatus } from './status';
 import type { StreamEvent } from './protocol';
@@ -113,4 +113,19 @@ export async function fetchProjects(): Promise<string[]> {
   const server = await currentServer();
   if (!server) return [];
   return listProjects(t, server, server.token);
+}
+
+/**
+ * Delete the project folder `name` on the paired server, after the UI has
+ * confirmed the destructive action. Reuses the shared transport/server
+ * singletons (like fetchProjects) and folds "nothing paired / no transport" into
+ * the same `{ ok: false, error }` shape deleteProject returns, so the caller has
+ * a single error path to show.
+ */
+export async function removeProject(name: string): Promise<{ ok: boolean; error?: string }> {
+  const t = getTransport();
+  if (!t) return { ok: false, error: 'Not connected. Pair first with “/pair <payload>”.' };
+  const server = await currentServer();
+  if (!server) return { ok: false, error: 'Not connected. Pair first with “/pair <payload>”.' };
+  return deleteProject(t, server, server.token, name);
 }

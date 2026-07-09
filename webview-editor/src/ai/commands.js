@@ -1,4 +1,4 @@
-import { encodeAiMarker, genId } from './marker.js';
+import { encodeAiMarker, genId, serializeFull } from './marker.js';
 import { post } from '../bridge.js';
 import { c } from '../theme/palette.js';
 
@@ -37,6 +37,11 @@ const SLASH_COMMANDS = [
     label: '/view',
     detail: 'Preview a web page from a localhost dev server on the paired laptop — /view PORT loads http://localhost:PORT live in a card',
     apply: '/view ',
+  },
+  {
+    label: '/delete',
+    detail: 'Delete a project folder on the paired laptop — /delete PROJECT asks to confirm, then removes it',
+    apply: '/delete ',
   },
   {
     label: '/pair',
@@ -128,8 +133,10 @@ function makeProjectSource(cmd) {
 // `/code <name>` and `/run <name>` both pick a project folder the same way — in
 // the -root deployment where both are enabled the exec base and the projects base
 // are the same folder, so a listed name is a real dir either command can target.
+// `/delete <name>` targets the very same project namespace, so it reuses it too.
 export const codeProjectSource = makeProjectSource('code');
 export const runProjectSource = makeProjectSource('run');
+export const deleteProjectSource = makeProjectSource('delete');
 
 // Enter on a `/ask <question>` or `/pair <payload>` line turns that line into a
 // card and hands the work to RN. Returns true to swallow the newline when it
@@ -282,6 +289,20 @@ export function aiCommandOnEnter(view) {
     return true;
   }
 
+  // `/delete <name>`: remove a project folder on the paired laptop. This is
+  // destructive, so no card is dropped and nothing is deleted here — we just
+  // clear the command line and hand the intent to RN, which pops a native
+  // confirmation dialog and only removes the folder once the user says yes.
+  const deleteCmd = /^\/delete\s+(.+\S)\s*$/.exec(text);
+  if (deleteCmd) {
+    view.dispatch({
+      changes: { from: line.from, to: line.to, insert: '' },
+      selection: { anchor: line.from },
+    });
+    post({ type: 'deleteProject', project: deleteCmd[1] });
+    return true;
+  }
+
   // `/view PORT`: mirror a web page served by a localhost dev server on the
   // paired laptop into an iframe card. The marker persists only the port; the
   // card fetches its (token-bearing, transient) proxy URL from RN on every mount
@@ -360,10 +381,14 @@ export function aiCommandOnEnter(view) {
   const clean = /^\/clean\b\s*(.*)$/.exec(text);
   if (clean) {
     const guidance = clean[1].trim();
-    // The page text to clean is the document with this command line removed.
-    const before = state.doc.sliceString(0, line.from);
-    const after = state.doc.sliceString(line.to);
-    const pageText = (before + after).replace(/^\n+|\n+$/g, '');
+    // The page text to clean is the document with this command line removed, and
+    // FULLY HYDRATED — card bodies live out-of-document now, so serializeFull
+    // re-inlines each transcript/output/answer so Claude reorganizes the real page,
+    // not one full of empty light markers.
+    const pageText = serializeFull(state, { from: line.from, to: line.to }).replace(
+      /^\n+|\n+$/g,
+      '',
+    );
     if (!pageText.trim()) return false; // nothing to clean — let Enter be normal
 
     const id = genId();
@@ -392,9 +417,12 @@ export function aiCommandOnEnter(view) {
   // dashboard — so this card vanishes with it; on failure the page is left intact.
   const ingest = /^\/ingest\b\s*(.*)$/.exec(text);
   if (ingest) {
-    const before = state.doc.sliceString(0, line.from);
-    const after = state.doc.sliceString(line.to);
-    const pageText = (before + after).replace(/^\n+|\n+$/g, '');
+    // Fully hydrate the page (card bodies are stored out-of-document) so the
+    // orchestrator files the real transcripts/output, not empty light markers.
+    const pageText = serializeFull(state, { from: line.from, to: line.to }).replace(
+      /^\n+|\n+$/g,
+      '',
+    );
     if (!pageText.trim()) return false; // nothing to ingest — let Enter be normal
 
     const id = genId();

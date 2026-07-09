@@ -119,7 +119,12 @@ export function updateAskStream(dom, view, widget) {
     // tokens stay visible and the answer visibly streams down.
     const scroller = view.scrollDOM;
     const stick = nearBottom(scroller);
-    if (growMdView(md, widget.answer) && stick) scrollBottomSoon(scroller);
+    if (growMdView(md, widget.answer)) {
+      // A /chat card streams inside its own capped transcript box — keep that
+      // pinned to the newest tokens; /ask has no inner scroller (undefined).
+      if (dom._chatScroll) dom._chatScroll.scrollTop = dom._chatScroll.scrollHeight;
+      if (stick) scrollBottomSoon(scroller);
+    }
     dom._askSig = { id: obj.id, open: true, status: 'streaming', turns: prev.turns };
     return true;
   }

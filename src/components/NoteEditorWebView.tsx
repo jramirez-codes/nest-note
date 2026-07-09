@@ -7,9 +7,15 @@ import {
   type WebViewProps,
 } from 'react-native-webview';
 import { EDITOR_HTML } from '../webview/editorHtml';
+import {
+  getPayloadsForPage,
+  upsertPayload,
+  deletePayload,
+} from '../storage';
 import { pairFromPayload } from '../server/aiController';
-import { fetchProjects } from '../server/agentController';
+import { fetchProjects, removeProject } from '../server/agentController';
 import { fetchViewUrl } from '../server/viewController';
+import ConfirmDialog from './ConfirmDialog';
 import {
   startAsk,
   startClean,
@@ -113,6 +119,12 @@ export default function NoteEditorWebView({
   const playingId = useRef<string | null>(null);
   // Set when a bare `/pair` asks to scan a QR; carries the card id to update.
   const [pairScan, setPairScan] = useState<{ id: string } | null>(null);
+  // Drives the `/delete PROJECT` flow's dialog: a `confirm` step asking before
+  // the destructive delete, then an `error` notice if the server call fails.
+  // Both render through ConfirmDialog, matching the page-delete confirmation.
+  const [projectDelete, setProjectDelete] = useState<
+    { mode: 'confirm'; project: string } | { mode: 'error'; message: string } | null
+  >(null);
 
   // Page-coupled callbacks the registry may fire long after this render (a run
   // that finishes while detached, then re-attaches). Held in a ref so the stable
@@ -171,6 +183,32 @@ export default function NoteEditorWebView({
             `window.__setDoc(${JSON.stringify(initialContent)});` +
             ' true;',
         );
+        // Bundle every externalized card body for this page back into the editor in
+        // one batch, right after seeding — so /code transcripts, /run output and
+        // /ask answers render without any per-card round trip. Skipped for read-only
+        // server pages (their markdown arrives with bodies still inline). The seed
+        // above runs the inline→store migration for old notes; this additive merge
+        // never clobbers what that just produced.
+        if (!readOnly) {
+          getPayloadsForPage(pageId)
+            .then(payloads => {
+              inject(`window.__setPayloads(${JSON.stringify(payloads)});`);
+            })
+            .catch(() => {});
+        }
+      } else if (
+        msg.type === 'cardPayload' &&
+        typeof msg.id === 'string' &&
+        typeof msg.kind === 'string' &&
+        typeof msg.payload === 'string'
+      ) {
+        // A card streamed/finished (or an old note migrated): persist its body out
+        // of the note markdown, keyed by card id. Fire-and-forget — the editor
+        // already holds it in payloadField, this is the durable copy.
+        upsertPayload(msg.id, pageId, msg.kind, msg.payload).catch(() => {});
+      } else if (msg.type === 'cardDelete' && typeof msg.id === 'string') {
+        // A card was deleted (or a /clean review resolved): drop its body row.
+        deletePayload(msg.id).catch(() => {});
       } else if (msg.type === 'reattach' && typeof msg.id === 'string') {
         // The editor found an in-flight AI marker after seeding. If the registry
         // still has the live run (same app session, socket kept alive across the
@@ -367,6 +405,12 @@ export default function NoteEditorWebView({
         fetchProjects().then(names => {
           inject(`window.__setProjects(${JSON.stringify(names)});`);
         });
+      } else if (msg.type === 'deleteProject' && typeof msg.project === 'string') {
+        // The editor cleared its `/delete PROJECT` line and asked us to remove
+        // the folder. This is destructive, so raise the same ConfirmDialog the
+        // page-delete flow uses; the folder is only removed once the user taps
+        // Delete (see the projectDelete dialog in the render below).
+        setProjectDelete({ mode: 'confirm', project: msg.project });
       } else if (msg.type === 'codeStop' && typeof msg.id === 'string') {
         // Stop kills the session and closes the socket; finalize the card here
         // since no clean exit frame will arrive.
@@ -489,6 +533,40 @@ export default function NoteEditorWebView({
             );
           }}
           onClose={() => finishPairScan(pairScan.id, 'error', 'Pairing cancelled')}
+        />
+      )}
+      {projectDelete?.mode === 'confirm' && (
+        <ConfirmDialog
+          visible
+          title="Delete project"
+          message={`Are you sure you want to delete the project “${projectDelete.project}”? This removes its folder on the paired laptop and cannot be undone.`}
+          confirmLabel="Delete"
+          cancelLabel="Cancel"
+          destructive
+          onConfirm={() => {
+            const project = projectDelete.project;
+            setProjectDelete(null);
+            removeProject(project).then(res => {
+              if (!res.ok) {
+                setProjectDelete({
+                  mode: 'error',
+                  message: res.error ?? 'Something went wrong deleting the project.',
+                });
+              }
+            });
+          }}
+          onCancel={() => setProjectDelete(null)}
+        />
+      )}
+      {projectDelete?.mode === 'error' && (
+        <ConfirmDialog
+          visible
+          title="Could not delete project"
+          message={projectDelete.message}
+          confirmLabel="OK"
+          hideCancel
+          onConfirm={() => setProjectDelete(null)}
+          onCancel={() => setProjectDelete(null)}
         />
       )}
     </View>

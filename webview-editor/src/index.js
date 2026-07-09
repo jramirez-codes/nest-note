@@ -28,6 +28,9 @@ import {
   viewLiveField,
   setViewUrl,
   cachePreview,
+  payloadField,
+  setPayload,
+  setPayloads,
 } from './state.js';
 import { broadcastPreview } from './ai/answerView.js';
 import { wholeDocDeco } from './markdown/viewPlugin.js';
@@ -42,11 +45,22 @@ import {
   slashCommandSource,
   codeProjectSource,
   runProjectSource,
+  deleteProjectSource,
   setCodeProjects,
   aiCommandOnEnter,
 } from './ai/commands.js';
 import { lineStartReplace } from './markdown/lineStartReplace.js';
-import { encodeAiMarker, findAiLine, mergeAiDone, eachAiLine } from './ai/marker.js';
+import {
+  encodeAiMarker,
+  findAiLine,
+  mergeAiDone,
+  eachAiLine,
+  migrateInlineMarkers,
+  decodePayload,
+  bodyFromObj,
+  encodePayload,
+  EXTERNAL_KINDS,
+} from './ai/marker.js';
 import { refreshOpenOverlay, closeOverlay } from './ai/overlay.js';
 
 /**
@@ -124,14 +138,15 @@ const extensions = [
   keymap.of([...defaultKeymap, ...historyKeymap]),
   lineStartReplace,
   autocompletion({
-    override: [slashCommandSource, codeProjectSource, runProjectSource],
+    override: [slashCommandSource, codeProjectSource, runProjectSource, deleteProjectSource],
     icons: false,
     activateOnTyping: true,
-    // Picking `/code` or `/run` from the slash menu lands the caret on `/code `/
-    // `/run ` — both take a project first, so re-open completion straight away and
-    // the project list (code/runProjectSource) shows without waiting for a
-    // keystroke. Other commands close as usual.
-    activateOnCompletion: c => c.label === '/code' || c.label === '/run',
+    // Picking `/code`, `/run` or `/delete` from the slash menu lands the caret on
+    // `/code `/`/run `/`/delete ` — all take a project first, so re-open completion
+    // straight away and the project list (code/run/deleteProjectSource) shows
+    // without waiting for a keystroke. Other commands close as usual.
+    activateOnCompletion: c =>
+      c.label === '/code' || c.label === '/run' || c.label === '/delete',
     aboveCursor: false,
   }),
   openLinks,
@@ -143,6 +158,7 @@ const extensions = [
   runLiveField,
   codeLiveField,
   viewLiveField,
+  payloadField,
   cardField,
   previewFetcher,
   viewFetcher,
@@ -182,11 +198,29 @@ window.__setDoc = function (text) {
   view.dispatch({
     changes: { from: 0, to: view.state.doc.length, insert: text ?? '' },
   });
+  // Old notes stored card bodies inline; move them into payloadField + SQLite and
+  // shrink the markers to the light form, so a large /code transcript no longer
+  // bloats the note text serialized over the bridge on every keystroke. A no-op
+  // for notes already migrated (their markers are already light).
+  migrateInlineMarkers(view);
   eachAiLine(view.state, obj => {
     if (obj.id && INFLIGHT_STATUS.has(obj.status)) {
       post({ type: 'reattach', id: obj.id, kind: obj.kind });
     }
   });
+};
+
+// RN calls this on load with every externalized card body for the page (one
+// bundled batch, keyed by id — see NoteEditorWebView), decoded into payloadField
+// so cards render their transcript/output/answer without any per-card round trip.
+// Additive merge, so it never clobbers a body just migrated in from an old note.
+window.__setPayloads = function (map) {
+  const entries = Object.create(null);
+  for (const id in map) {
+    const { kind, payload } = map[id];
+    entries[id] = { kind, body: decodePayload(kind, payload) };
+  }
+  view.dispatch({ effects: setPayloads.of(entries) });
 };
 
 // --- Throttled interim persistence ------------------------------------------
@@ -235,9 +269,29 @@ function commitPartial(id) {
     }
   }
   if (!patch) return;
+  const merged = { ...obj, ...patch };
+  const kind = obj.kind;
+  if (!EXTERNAL_KINDS.has(kind)) {
+    // ask/chat stay inline — fold the partial straight into the marker as before.
+    view.dispatch({
+      changes: { from: found.from, to: found.to, insert: encodeAiMarker(merged) },
+    });
+    return;
+  }
+  // run/code: the light marker's text is usually unchanged (its status is still
+  // in-flight), so persist the growing body to state + SQLite out of band and only
+  // rewrite the doc if the light marker actually differs. This is what turns the
+  // old "rewrite the whole transcript into the doc every 1.5s" into a cheap
+  // out-of-band write that no longer bloats the note text on every partial.
+  const marker = encodeAiMarker(merged);
+  const current = view.state.doc.sliceString(found.from, found.to);
   view.dispatch({
-    changes: { from: found.from, to: found.to, insert: encodeAiMarker({ ...obj, ...patch }) },
+    ...(current === marker
+      ? {}
+      : { changes: { from: found.from, to: found.to, insert: marker } }),
+    effects: setPayload.of({ id, kind, body: bodyFromObj(kind, merged) }),
   });
+  post({ type: 'cardPayload', id, kind, payload: encodePayload(kind, merged) });
 }
 
 // Throttle: schedule at most one partial commit per window while updates keep
@@ -362,12 +416,10 @@ window.__aiDone = function (id, patch) {
     view.dispatch({ effects });
     return;
   }
+  // ask/chat/pair/record all stay inline (none are externalized), so the marker
+  // carries the whole story exactly as before.
   view.dispatch({
-    changes: {
-      from: found.from,
-      to: found.to,
-      insert: encodeAiMarker(mergeAiDone(found.obj, patch)),
-    },
+    changes: { from: found.from, to: found.to, insert: encodeAiMarker(mergeAiDone(found.obj, patch)) },
     effects,
   });
 };
@@ -397,14 +449,12 @@ function commitRun(id, patch) {
     view.dispatch({ effects });
     return;
   }
+  effects.push(setPayload.of({ id, kind: 'run', body: { out } }));
   view.dispatch({
-    changes: {
-      from: found.from,
-      to: found.to,
-      insert: encodeAiMarker({ ...found.obj, ...patch, out }),
-    },
+    changes: { from: found.from, to: found.to, insert: encodeAiMarker({ ...found.obj, ...patch }) },
     effects,
   });
+  post({ type: 'cardPayload', id, kind: 'run', payload: out });
 }
 
 // RN calls this once a /run command exits (code >= 0), was signalled/killed
@@ -448,14 +498,12 @@ function commitCode(id, patch) {
     view.dispatch({ effects });
     return;
   }
+  effects.push(setPayload.of({ id, kind: 'code', body: { items } }));
   view.dispatch({
-    changes: {
-      from: found.from,
-      to: found.to,
-      insert: encodeAiMarker({ ...found.obj, ...patch, items }),
-    },
+    changes: { from: found.from, to: found.to, insert: encodeAiMarker({ ...found.obj, ...patch }) },
     effects,
   });
+  post({ type: 'cardPayload', id, kind: 'code', payload: JSON.stringify(items) });
 }
 
 // RN calls this when the agent session exits (Claude finished / was stopped).
@@ -480,10 +528,17 @@ window.__cleanApply = function (id, cleaned) {
   const before = view.state.doc.sliceString(0, found.from);
   const after = view.state.doc.sliceString(found.to);
   const backup = (before + after).replace(/^\n+|\n+$/g, '');
-  const marker = encodeAiMarker({ v: 1, kind: 'clean', id, status: 'review', backup });
+  // The backup (a whole page copy) is the clean card's externalized body — it must
+  // not go inline. Light marker in the doc; backup to state + SQLite.
+  const marker = encodeAiMarker({ v: 1, kind: 'clean', id, status: 'review' });
   view.dispatch({
     changes: { from: 0, to: view.state.doc.length, insert: marker + '\n' + cleaned },
+    effects: setPayload.of({ id, kind: 'clean', body: { backup } }),
   });
+  post({ type: 'cardPayload', id, kind: 'clean', payload: backup });
+  // The cleaned text arrived from Claude with card bodies inlined (it was handed the
+  // hydrated page); pull any such bodies back out into the store + light markers.
+  migrateInlineMarkers(view);
 };
 
 post({ type: 'ready' });

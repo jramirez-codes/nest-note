@@ -88,6 +88,37 @@ export async function listProjects(
   }
 }
 
+/**
+ * Delete the project folder `project` on the paired server — the destructive
+ * counterpart to listProjects. POSTs the human name to /projects/delete over the
+ * pinned tunnel; the server slugs it the same way it slugs a `/code` target, so
+ * whatever the user picked from the autocomplete maps to the right folder.
+ * Resolves to `{ ok: true }` on a 200, otherwise `{ ok: false, error }` with a
+ * human-readable reason (disabled /code, unknown project, unreachable server) —
+ * never throws, so the caller can surface the reason in a dialog.
+ */
+export async function deleteProject(
+  t: Transport,
+  a: ServerAddress,
+  token: string,
+  project: string,
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await t.postPinned(`https://${a.host}:${a.port}/projects/delete`, a.pin, {
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project }),
+    });
+    if (res.status === 200) return { ok: true };
+    if (res.status === 404) return { ok: false, error: 'That project no longer exists.' };
+    if (res.status === 403) {
+      return { ok: false, error: 'Deleting projects is disabled on the paired laptop.' };
+    }
+    return { ok: false, error: `Could not delete the project (HTTP ${res.status}).` };
+  } catch {
+    return { ok: false, error: 'Could not reach the paired laptop.' };
+  }
+}
+
 function parseAgentFrame(text: string): AgentFrame | null {
   try {
     return JSON.parse(text) as AgentFrame;

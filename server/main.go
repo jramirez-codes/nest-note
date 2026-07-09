@@ -119,6 +119,9 @@ func main() {
 	// Read-only listing of projects/<name> dirs so the phone can autocomplete
 	// `/code <name>`. Same base and enable flag as /code; empty list when off.
 	mux.HandleFunc("/projects", projectsHandler(token, codeBase, *allowCode))
+	// Destructive counterpart to /projects: POST a project name to remove its
+	// folder. Same base and enable flag; the phone confirms before calling it.
+	mux.HandleFunc("/projects/delete", deleteProjectHandler(token, codeBase, *allowCode))
 	// Read-only dashboard state + the optional merge-approval action. Both only
 	// touch the scaffold's data files, so they need no Claude run.
 	// On-demand page-preview proxies for /view: an authed /viewstart spins up (or

@@ -325,7 +325,67 @@ func projectsHandler(token, projectsBase string, enabled bool) http.HandlerFunc 
 	}
 }
 
+// deleteProjectRequest is the JSON body of POST /projects/delete: the human
+// project name to remove. Slugged the same way resolveProjectDir slugs it, so
+// the phone can send whatever the user typed and the same folder is targeted.
+type deleteProjectRequest struct {
+	Project string `json:"project"`
+}
+
+// deleteProjectHandler removes projects/<slug> under projectsBase — the
+// destructive counterpart to projectsHandler's read-only listing. Gated behind
+// the same -allow-code flag: with /code off there are no phone-managed projects
+// to delete, so it 403s just like the agent socket. The slug is reduced to
+// [a-z0-9-] before it is joined onto the base (see slugFor), so a client name can
+// never traverse out of the projects dir. A missing folder is reported as a 404
+// rather than silently succeeding, so the phone can tell "already gone" from
+// "removed".
+func deleteProjectHandler(token, projectsBase string, enabled bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !authOK(r, token) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if !enabled {
+			http.Error(w, "code disabled (start the server with -allow-code)", http.StatusForbidden)
+			return
+		}
+		var req deleteProjectRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		slug := slugFor(req.Project)
+		if slug == "" {
+			http.Error(w, "empty project name", http.StatusBadRequest)
+			return
+		}
+		dir := filepath.Join(projectsBase, slug)
+		info, err := os.Stat(dir)
+		if err != nil || !info.IsDir() {
+			http.Error(w, "no such project", http.StatusNotFound)
+			return
+		}
+		if err := os.RemoveAll(dir); err != nil {
+			http.Error(w, "delete failed", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(struct {
+			OK   bool   `json:"ok"`
+			Slug string `json:"slug"`
+		}{OK: true, Slug: slug})
+	}
+}
+
 var slugRe = regexp.MustCompile(`[^a-z0-9]+`)
+
+// slugFor reduces a human project name to the [a-z0-9-] folder slug shared by
+// resolveProjectDir (project creation) and deleteProjectHandler (removal), so a
+// name always maps to the same folder both ways. Empty means "no valid slug".
+func slugFor(name string) string {
+	return strings.Trim(slugRe.ReplaceAllString(strings.ToLower(name), "-"), "-")
+}
 
 // resolveProjectDir turns a human project name into projects/<slug> under the
 // base dir, creating it if absent, and returns the absolute dir plus the slug.
@@ -334,7 +394,7 @@ var slugRe = regexp.MustCompile(`[^a-z0-9]+`)
 // namespace the phone's /code <name> selects; it is not a sandbox (the agent can
 // still reach anywhere the server's user can).
 func resolveProjectDir(base, name string) (dir, slug string, err error) {
-	slug = strings.Trim(slugRe.ReplaceAllString(strings.ToLower(name), "-"), "-")
+	slug = slugFor(name)
 	if slug == "" {
 		return "", "", errors.New("empty project name")
 	}

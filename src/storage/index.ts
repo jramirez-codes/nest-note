@@ -20,6 +20,12 @@ export {
 } from './pages';
 export { getValue, setValue, deleteValue } from './kv';
 export {
+  getPayloadsForPage,
+  upsertPayload,
+  deletePayload,
+  type CardPayload,
+} from './cardPayloads';
+export {
   listNotebooks,
   createNotebook,
   renameNotebook,

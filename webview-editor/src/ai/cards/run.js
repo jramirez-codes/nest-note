@@ -207,7 +207,9 @@ export const styles = {
   },
   '.cm-run-log': {
     margin: '10px 0 0 0',
-    padding: '10px',
+    // Extra bottom padding is scroll room so the last line lifts clear of the
+    // stdin footer below instead of butting right against it.
+    padding: '10px 10px 28px 10px',
     maxHeight: '340px',
     overflow: 'auto',
     backgroundColor: c.crust,

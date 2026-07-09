@@ -34,12 +34,15 @@ function codeLiveToken(live) {
  * the card as `live` so it can grow without rewriting the document.
  */
 export class AiCardWidget extends WidgetType {
-  constructor(obj, live, playing) {
+  constructor(obj, live, playing, payloadV) {
     super();
     this.obj = obj;
     this.live = live || null;
     // Only meaningful for a /record card: is its clip playing back right now.
     this.playing = !!playing;
+    // Version of this card's externalized body (payloadField[id].v); folded into
+    // sig so a persisted-body change re-renders even when obj's shape is unchanged.
+    this.payloadV = payloadV || 0;
   }
   // The live answer applies to the turn currently streaming — the sole turn for
   // /ask, the last turn for a /chat transcript.
@@ -94,6 +97,9 @@ export class AiCardWidget extends WidgetType {
       o.kind === 'view' && this.live
         ? (this.live.status || '') + ':' + (this.live.url || '') + ':' + (this.live.error || '')
         : '',
+      // Externalized-body version: flips when a persisted transcript/output/answer
+      // changes (streaming commit, migration, seed) so the card re-renders.
+      this.payloadV,
     ].join('');
   }
   eq(other) {

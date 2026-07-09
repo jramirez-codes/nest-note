@@ -78,7 +78,7 @@ func runHandler(token, staticWorkdir, root string, threshold int, runTimeout tim
 		if ephemeral {
 			id = randomSessionID()
 		}
-		sess, created := reg.findOrCreate(id, "run")
+		sess, created := reg.findOrCreateForRun(id, "run")
 		if !created {
 			serveRunSocket(c, sess, reg)
 			return

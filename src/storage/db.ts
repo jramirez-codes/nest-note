@@ -142,6 +142,24 @@ const SCHEMA_V1 = [
     key   TEXT PRIMARY KEY NOT NULL,
     value TEXT NOT NULL
   )`,
+
+  // Bulky AI-card bodies (the /code transcript, /run output, /clean backup, and
+  // /ask + /chat prose) live here instead of inline in the page markdown, keyed
+  // by the card's marker id. Keeping them out of `pages.content` is what stops a
+  // large /code transcript from bloating the note text that is serialized over
+  // the WebView bridge on every keystroke (which crashed the editor). The FK
+  // cascade means deleting a page (or a notebook, which cascades to its pages)
+  // reclaims its card bodies with no extra bookkeeping. See `storage/cardPayloads.ts`.
+  `CREATE TABLE IF NOT EXISTS card_payloads (
+    card_id    TEXT PRIMARY KEY NOT NULL,
+    page_id    TEXT NOT NULL,
+    kind       TEXT NOT NULL,
+    payload    TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE
+  )`,
+
+  `CREATE INDEX IF NOT EXISTS idx_card_payloads_page ON card_payloads(page_id)`,
 ];
 
 /** Close and forget the connection. Test-only — production keeps it open. */
