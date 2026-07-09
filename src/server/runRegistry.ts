@@ -18,7 +18,7 @@
  * to completion. Only an explicit user Stop/× (or a terminal result) ends a run.
  */
 
-import { runAsk, runClean, runIngest, type AskContext } from './aiController';
+import { runAsk, runClean, runIngest, runNotesChat, type AskContext } from './aiController';
 import { runCommand } from './codeController';
 import { startCode } from './agentController';
 import type { StreamEvent } from './protocol';
@@ -279,6 +279,47 @@ export function startAsk(
   put(id, base('ask', handle, sink));
 }
 
+/**
+ * Start (or restart) a /talk turn — the subject-pinned sibling of /chat. Mirrors
+ * startAsk exactly (same streaming/commit wiring, same 'ask' buffer shape) except
+ * the run itself keeps the orchestrator's ingest_topic tool pointed at `subject`
+ * the whole thread, so the notebook stays current turn by turn.
+ */
+export function startNotesChat(
+  id: string,
+  subject: string,
+  question: string,
+  sink: RunSink,
+  context?: AskContext,
+  resumeOnly = false,
+): void {
+  const handle = runNotesChat(
+    subject,
+    question,
+    {
+      onDelta: answer => {
+        const e = runs.get(id);
+        if (!e) return;
+        e.askAnswer = answer;
+        emit(e, `window.__aiStream(${j(id)}, ${j(answer)});`);
+      },
+      onDone: answer =>
+        settle(id, s =>
+          s.inject(`window.__aiDone(${j(id)}, ${j({ a: answer, status: 'done' })});`),
+        ),
+      onError: (msg, partial) =>
+        settle(id, s =>
+          s.inject(
+            `window.__aiDone(${j(id)}, ${j({ a: partial, status: 'error', msg })});`,
+          ),
+        ),
+    },
+    makeSession(id, 'ask', resumeOnly),
+    context,
+  );
+  put(id, base('ask', handle, sink)); // reuse the 'ask' Entry.kind — buffer/repaint mechanics are identical
+}
+
 /** Start a /clean rewrite. On success swaps in the cleaned text behind Accept/Reject. */
 export function startClean(
   id: string,
@@ -472,6 +513,9 @@ export function resume(id: string, kind: string, sink: RunSink): void {
       break;
     case 'ingest':
       startIngest(id, '', sink, true);
+      break;
+    case 'notes-chat':
+      startNotesChat(id, '', '', sink, undefined, true);
       break;
     case 'pair':
       // Pairing is a one-shot request, not a durable session; a pending pair card

@@ -15,7 +15,7 @@ import { c } from '../theme/palette.js';
 import { BACK, INTERRUPT, STOP, SEND, PLAY } from '../ui/icons.js';
 import { guardTaps, blockSelection } from '../ui/events.js';
 import { post } from '../bridge.js';
-import { findAiLine, rerunRunById, appendChatTurnById } from './marker.js';
+import { findAiLine, rerunRunById, appendChatTurnById, isChatKind } from './marker.js';
 import { runLiveField, codeLiveField, viewLiveField, askLiveField } from '../state.js';
 import { mountAnswerView, unmountAnswerView } from './answerView.js';
 import { renderCodeItem } from './shared/transcript.js';
@@ -53,11 +53,11 @@ function readCard(view, id, kind) {
       port: found.obj.port,
     };
   }
-  if (kind === 'chat') {
+  if (isChatKind(kind)) {
     // Mirror the card: the persisted turns come from the marker, while the live
     // streaming answer + status for the last turn ride in askLive (keyed by id).
     const found = findAiLine(view.state, id);
-    if (!found || found.obj.kind !== 'chat') return null;
+    if (!found || !isChatKind(found.obj.kind)) return null;
     const live = view.state.field(askLiveField)[id];
     const turns = found.obj.turns || [];
     const answer =
@@ -342,7 +342,7 @@ function render(view) {
     renderViewOverlay(data);
     return;
   }
-  if (active.kind === 'chat') {
+  if (isChatKind(active.kind)) {
     const streaming = data.status === 'streaming';
     active.badge.className = 'cm-ask-badge';
     active.badge.textContent = streaming ? '···' : '';
@@ -366,7 +366,7 @@ function render(view) {
 
 // Open the enlarged view for a card payload (must be a /run or /code marker obj).
 export function openCardOverlay(view, obj) {
-  if (!obj || (obj.kind !== 'run' && obj.kind !== 'code' && obj.kind !== 'view' && obj.kind !== 'chat')) return;
+  if (!obj || (obj.kind !== 'run' && obj.kind !== 'code' && obj.kind !== 'view' && !isChatKind(obj.kind))) return;
   closeOverlay();
   const { id, kind } = obj;
   if (!readCard(view, id, kind)) return;
@@ -403,7 +403,7 @@ export function openCardOverlay(view, obj) {
     title.className = 'cm-ov-title';
     title.textContent = 'localhost:' + (obj.port || '');
     head.appendChild(title);
-  } else if (kind === 'chat') {
+  } else if (isChatKind(kind)) {
     // The opening question titles the page (the body shows every later turn's
     // question inline). Prose, not monospace — so it drops the code-title styling.
     const title = document.createElement('div');

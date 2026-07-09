@@ -46,7 +46,9 @@ import {
   codeProjectSource,
   runProjectSource,
   deleteProjectSource,
+  talkSubjectSource,
   setCodeProjects,
+  setTalkSubjects,
   aiCommandOnEnter,
 } from './ai/commands.js';
 import { lineStartReplace } from './markdown/lineStartReplace.js';
@@ -60,6 +62,7 @@ import {
   bodyFromObj,
   encodePayload,
   EXTERNAL_KINDS,
+  isChatKind,
 } from './ai/marker.js';
 import { refreshOpenOverlay, closeOverlay } from './ai/overlay.js';
 
@@ -138,15 +141,21 @@ const extensions = [
   keymap.of([...defaultKeymap, ...historyKeymap]),
   lineStartReplace,
   autocompletion({
-    override: [slashCommandSource, codeProjectSource, runProjectSource, deleteProjectSource],
+    override: [
+      slashCommandSource,
+      codeProjectSource,
+      runProjectSource,
+      deleteProjectSource,
+      talkSubjectSource,
+    ],
     icons: false,
     activateOnTyping: true,
-    // Picking `/code`, `/run` or `/delete` from the slash menu lands the caret on
-    // `/code `/`/run `/`/delete ` — all take a project first, so re-open completion
-    // straight away and the project list (code/run/deleteProjectSource) shows
-    // without waiting for a keystroke. Other commands close as usual.
+    // Picking `/code`, `/run`, `/delete` or `/talk` from the slash menu lands the
+    // caret on `/code `/`/run `/`/delete `/`/talk ` — all take a project or subject
+    // first, so re-open completion straight away and that list shows without
+    // waiting for a keystroke. Other commands close as usual.
     activateOnCompletion: c =>
-      c.label === '/code' || c.label === '/run' || c.label === '/delete',
+      c.label === '/code' || c.label === '/run' || c.label === '/delete' || c.label === '/talk',
     aboveCursor: false,
   }),
   openLinks,
@@ -244,7 +253,7 @@ function commitPartial(id) {
   if (obj.kind === 'ask') {
     const live = view.state.field(askLiveField)[id];
     if (live) patch = { a: live.a };
-  } else if (obj.kind === 'chat') {
+  } else if (isChatKind(obj.kind)) {
     const live = view.state.field(askLiveField)[id];
     const turns = obj.turns || [];
     if (live && turns.length) {
@@ -375,6 +384,22 @@ window.__setProjects = function (names) {
   if (!sel.empty) return;
   const line = view.state.doc.lineAt(sel.head);
   if (/^\/ ?code\s/.test(line.text.slice(0, sel.head - line.from))) {
+    startCompletion(view);
+  }
+};
+
+// RN answers a listSubjects request here with the orchestrator's existing MCP
+// notebook slugs, caching them for the `/talk <subject>` autocomplete. If the
+// caret is sitting on a `/talk ` line right now, re-open completion so a list
+// that arrived after the menu first showed (the fetch is a round-trip) still
+// populates it live.
+window.__setTalkSubjects = function (names) {
+  setTalkSubjects(names);
+  if (!view.hasFocus) return;
+  const sel = view.state.selection.main;
+  if (!sel.empty) return;
+  const line = view.state.doc.lineAt(sel.head);
+  if (/^\/ ?talk\s/.test(line.text.slice(0, sel.head - line.from))) {
     startCompletion(view);
   }
 };

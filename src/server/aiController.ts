@@ -7,7 +7,7 @@
  *
  *   - ./connection    — shared pinned transport + paired-server singletons,
  *                       pairing, and the reachability probe.
- *   - ./assistantRuns — the streaming /ask, /clean and /ingest runs.
+ *   - ./assistantRuns — the streaming /ask, /clean, /ingest and /talk runs.
  *   - ./dashboardApi  — the dashboard/notebook HTTP read+write API and its types.
  *
  * Sibling controllers (./codeController, ./agentController, ./viewController) and
@@ -29,6 +29,7 @@ export {
   runAsk,
   runClean,
   runIngest,
+  runNotesChat,
   type AskCallbacks,
   type AskHandle,
   type AskContext,

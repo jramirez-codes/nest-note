@@ -17,12 +17,13 @@ import { Linking } from 'react-native';
 import type { WebViewMessageEvent } from 'react-native-webview';
 import { fetchLinkPreview } from '../utils/linkPreview';
 import { getPayloadsForPage, upsertPayload, deletePayload } from '../storage';
-import { pairFromPayload } from '../server/aiController';
+import { pairFromPayload, fetchDashboardState } from '../server/aiController';
 import { fetchProjects } from '../server/agentController';
 import { fetchViewUrl } from '../server/viewController';
 import { updateServer, waitForServerBack } from '../server/updateController';
 import {
   startAsk,
+  startNotesChat,
   startClean,
   startIngest,
   startRun,
@@ -55,6 +56,7 @@ export interface EditorMessage {
   id?: string;
   kind?: string;
   question?: string;
+  subject?: string;
   context?: { q?: string; a?: string; turns?: { q?: string; a?: string }[] };
   payload?: string;
   pageText?: string;
@@ -199,6 +201,17 @@ export function handleEditorMessage(ctx: BridgeContext, e: WebViewMessageEvent):
     // survives page swaps); the final text (or error) commits to the document.
     attachedIds.current.add(msg.id);
     startAsk(msg.id, msg.question, sink, msg.context);
+  } else if (
+    msg.type === 'notesChat' &&
+    typeof msg.id === 'string' &&
+    typeof msg.subject === 'string' &&
+    typeof msg.question === 'string'
+  ) {
+    // /talk: like /ask, but the run keeps the orchestrator's ingest_topic tool
+    // pointed at msg.subject so the subject's notebook stays current as the
+    // conversation goes (registry-owned so it survives page swaps).
+    attachedIds.current.add(msg.id);
+    startNotesChat(msg.id, msg.subject, msg.question, sink, msg.context);
   } else if (msg.type === 'pair' && typeof msg.id === 'string' && typeof msg.payload === 'string') {
     const id = msg.id;
     pairFromPayload(msg.payload).then(res => {
@@ -325,6 +338,18 @@ export function handleEditorMessage(ctx: BridgeContext, e: WebViewMessageEvent):
     fetchProjects().then(names => {
       inject(`window.__setProjects(${JSON.stringify(names)});`);
     });
+  } else if (msg.type === 'listSubjects') {
+    // The editor is autocompleting `/talk <subject>`: fetch the orchestrator's
+    // existing notebook slugs off the paired laptop and push them back so the
+    // menu can offer them. Fire-and-forget — an empty list (nothing paired,
+    // server started without -root, or no notebooks yet) just yields no
+    // suggestions; typing a fresh subject still works to start a new one.
+    fetchDashboardState()
+      .then(state => state.servers.map(s => s.name))
+      .catch(() => [])
+      .then(names => {
+        inject(`window.__setTalkSubjects(${JSON.stringify(names)});`);
+      });
   } else if (msg.type === 'deleteProject' && typeof msg.project === 'string') {
     // The editor cleared its `/delete PROJECT` line and asked us to remove
     // the folder. This is destructive, so raise the same ConfirmDialog the

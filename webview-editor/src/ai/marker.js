@@ -143,6 +143,13 @@ function unescBody(val) {
   return val.replace(/&#91;/g, '[').replace(/--&gt;/g, '-->');
 }
 
+// /talk cards (kind:'notes-chat') share /chat's multi-turn marker shape and
+// follow-up mechanics — this is the one place that says so, so every kind-shape
+// check below only has to grow this list, not itself.
+export function isChatKind(kind) {
+  return kind === 'chat' || kind === 'notes-chat';
+}
+
 function coerce(key, val) {
   if (BOOL_KEYS.has(key)) return val === 'true';
   if (NUM_KEYS.has(key)) return Number(val);
@@ -161,7 +168,7 @@ function emitHeaders(obj) {
   const keepId =
     INFLIGHT.has(obj.status) ||
     EXTERNAL_KINDS.has(obj.kind) ||
-    obj.kind === 'chat' ||
+    isChatKind(obj.kind) ||
     obj.kind === 'record' ||
     obj.kind === 'view';
   const lines = [OPEN_LINE];
@@ -204,7 +211,7 @@ export function encodeAiMarkerFull(obj) {
     lines.push(escLine(q || ''));
     lines.push(SEC_AGENT);
     if (a) lines.push(escBody(a));
-  } else if (obj.kind === 'chat') {
+  } else if (isChatKind(obj.kind)) {
     // One `[user]`/`[agent]` pair per turn, in order; the last turn's answer may
     // be empty while it's still streaming.
     for (const t of turns || []) {
@@ -249,8 +256,8 @@ function parseBlockBody(bodyLines) {
     const m = HEADER_RE.exec(t);
     if (m) obj[m[1]] = coerce(m[1], unescLine(m[2]));
   }
-  // Chat blocks stack many turns; walk each `[user]`/`[agent]` pair in order.
-  if (obj.kind === 'chat') {
+  // Chat-shaped blocks stack many turns; walk each `[user]`/`[agent]` pair in order.
+  if (isChatKind(obj.kind)) {
     const turns = [];
     while (i < bodyLines.length) {
       if (bodyLines[i] !== SEC_USER) {
@@ -485,22 +492,27 @@ export function restoreCleanBackup(view, el) {
 // Returns the chat id, or null if `el` isn't a chat card.
 export function appendChatTurn(view, el, question) {
   const block = aiBlockOf(view, el);
-  if (!block || block.obj.kind !== 'chat') return null;
+  if (!block || !isChatKind(block.obj.kind)) return null;
   return appendChatTurnById(view, block.obj.id, question);
 }
 
 // Same as appendChatTurn but addressed by chat id (not DOM), so the full-page
 // overlay — which has no marker-line DOM to resolve — can drive the thread too.
-// Returns the chat id, or null if no chat card carries it.
+// Returns the chat id, or null if no chat-shaped card carries it.
 export function appendChatTurnById(view, id, question) {
   const found = findAiLine(view.state, id);
-  if (!found || found.obj.kind !== 'chat') return null;
+  if (!found || !isChatKind(found.obj.kind)) return null;
   const priorTurns = (found.obj.turns || []).map(t => ({ q: t.q, a: t.a }));
   const turns = priorTurns.concat([{ q: question, a: '' }]);
   const marker = encodeAiMarker({ ...found.obj, turns, open: true, status: 'streaming' });
   view.dispatch({ changes: { from: found.from, to: found.to, insert: marker } });
-  // Reuse the /ask stream path (RN correlates by id); context carries history.
-  post({ type: 'ask', id, question, context: { turns: priorTurns } });
+  // /talk threads carry a fixed subject and run through the orchestrator-aware
+  // prompt; plain /chat reuses the /ask stream path. Both correlate by id.
+  if (found.obj.kind === 'notes-chat') {
+    post({ type: 'notesChat', id, subject: found.obj.subject, question, context: { turns: priorTurns } });
+  } else {
+    post({ type: 'ask', id, question, context: { turns: priorTurns } });
+  }
   return id;
 }
 
@@ -531,7 +543,7 @@ export function rerunRunById(view, id) {
 // chat, an incoming answer belongs to the LAST (streaming) turn rather than a
 // top-level `a` field, so route it there; everything else merges flat.
 export function mergeAiDone(obj, patch) {
-  if (obj.kind === 'chat' && 'a' in patch) {
+  if (isChatKind(obj.kind) && 'a' in patch) {
     const { a, ...rest } = patch;
     const turns = (obj.turns || []).slice();
     if (turns.length) turns[turns.length - 1] = { ...turns[turns.length - 1], a };

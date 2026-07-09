@@ -245,6 +245,57 @@ export function runClean(
   );
 }
 
+// Frame the page as an ongoing, subject-scoped conversation for the orchestrator
+// MCP: unlike /ingest (one whole page, one shot), /talk pins every turn to a
+// single known subject and asks Claude to keep that subject's notebook current
+// as the conversation goes, via ingest_topic (which creates the notebook on
+// first use — the subject need not exist yet). It's also told, explicitly, how
+// to reorganize what's already there when asked — this doesn't just ride on the
+// server's ambient "rewrite when messy" heuristic (that's a quiet, incidental
+// trigger, not a guaranteed response to a direct request). Conversation history
+// is folded in exactly like buildPrompt's /chat continuation.
+function buildTalkPrompt(subject: string, question: string, context?: AskContext): string {
+  const instructions =
+    `You are having an ongoing conversation with the user about the subject "${subject}", ` +
+    'tracked by a personal-knowledge-base MCP server (the orchestrator). Reply to the user ' +
+    'conversationally. Whenever they share information, facts, updates, or decisions worth ' +
+    `remembering about ${subject}, call the orchestrator's ingest_topic tool with ` +
+    `subject="${subject}" to file it (it creates the notebook on first use if none exists yet). ` +
+    'Keep this invisible to the user except a brief, natural mention when you file something. ' +
+    'Do not file trivial chit-chat — only real content.\n\n' +
+    `If the user says they don't like how the existing "${subject}" notes are organized or ` +
+    'formatted, or asks you to clean them up, restructure them, or make them more digestible: ' +
+    `call ${subject}_notes to read the whole current notebook, then call ${subject}_rewrite with ` +
+    'a rewritten markdown body. Reorganize freely — regroup related facts under clear headings, ' +
+    'convert action items into `- [ ]` task checkboxes (`- [x]` for ones already done), turn ' +
+    'loose prose into lists where that reads better, fix grammar, and remove duplication. Preserve ' +
+    'every fact and its meaning — never invent or drop information. Briefly tell the user what you ' +
+    `changed. (${subject}_notes/${subject}_rewrite only exist once this subject's notebook has ` +
+    "been created — if they aren't available yet, say so instead of trying.)\n\n";
+  const turns = context?.turns?.filter(t => t.q);
+  if (turns && turns.length) {
+    const history = turns.map(t => `User: ${t.q}\n\nAssistant: ${t.a || ''}`).join('\n\n');
+    return instructions + `Conversation so far:\n\n${history}\n\nNow reply to:\n\n${question}`;
+  }
+  return instructions + question;
+}
+
+/**
+ * Stream a /talk reply for `subject`. Runs on the same proven stream path as
+ * {@link runAsk} (reconnect, cancellation, delta/done handling) but the prompt
+ * keeps the orchestrator's ingest_topic tool pointed at one fixed subject the
+ * whole thread, so the notebook stays current turn by turn instead of at the end.
+ */
+export function runNotesChat(
+  subject: string,
+  question: string,
+  cb: AskCallbacks,
+  session: SessionOpts,
+  context?: AskContext,
+): AskHandle {
+  return runAsk(buildTalkPrompt(subject, question, context), cb, session);
+}
+
 export interface IngestCallbacks {
   /** The run finished cleanly; `summary` is Claude's one-line report of what it filed. */
   onDone: (summary: string) => void;

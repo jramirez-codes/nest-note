@@ -19,6 +19,11 @@ const SLASH_COMMANDS = [
     apply: '/chat ',
   },
   {
+    label: '/talk',
+    detail: 'Chat about a subject — /talk SUBJECT <message> — the orchestrator keeps its notes updated as you talk',
+    apply: '/talk ',
+  },
+  {
     label: '/record',
     detail: 'Record microphone audio — keeps going in the background; tap to stop',
     apply: '/record',
@@ -143,6 +148,41 @@ export const codeProjectSource = makeProjectSource('code');
 export const runProjectSource = makeProjectSource('run');
 export const deleteProjectSource = makeProjectSource('delete');
 
+// --- subject autocomplete for `/talk <subject>` -------------------------------
+// A separate list from codeProjects above: this is the orchestrator's existing
+// MCP notebook slugs, not project directories. Kept in sync by RN pushing
+// window.__setTalkSubjects (see index.js) with the reply to each listSubjects
+// post. Starts empty; the first `/talk ` keystroke asks for the list and the
+// menu repopulates as soon as it lands. Typing a subject not in the list is
+// still valid — it just means /talk will create that notebook on first use.
+let talkSubjects = [];
+export function setTalkSubjects(names) {
+  talkSubjects = Array.isArray(names) ? names.filter(n => typeof n === 'string') : [];
+}
+
+const TALK_SUBJECT_RE = /^\/ ?talk\s+(\S*)$/;
+
+// Mirrors projectSource (see makeProjectSource above) but reads talkSubjects and
+// asks for a fresh listSubjects reply instead of listProjects.
+export function talkSubjectSource(context) {
+  const line = context.state.doc.lineAt(context.pos);
+  const before = line.text.slice(0, context.pos - line.from);
+  const m = TALK_SUBJECT_RE.exec(before);
+  if (!m) return null;
+  // Ask RN to (re)send the current subject list; the reply refreshes talkSubjects
+  // and re-opens the menu (see window.__setTalkSubjects). Fire-and-forget — serve
+  // whatever's cached now.
+  post({ type: 'listSubjects' });
+  const word = m[1].toLowerCase();
+  const options = talkSubjects
+    .filter(name => name.toLowerCase().startsWith(word))
+    .map(name => ({ label: name, type: 'text', apply: name + ' ' }));
+  if (!options.length) return null;
+  // Replace just the partial name (from the caret back over m[1]), leaving the
+  // `/talk ` prefix intact; CM's own filter is off since we prefix-matched already.
+  return { from: context.pos - m[1].length, to: context.pos, options, filter: false };
+}
+
 // Enter on a `/ask <question>` or `/pair <payload>` line turns that line into a
 // card and hands the work to RN. Returns true to swallow the newline when it
 // fires; otherwise Enter behaves normally.
@@ -207,6 +247,35 @@ export function aiCommandOnEnter(view) {
     });
     // The first turn has no prior context; runs on the same /ask stream path.
     post({ type: 'ask', id, question: chat[1] });
+    return true;
+  }
+
+  // `/talk SUBJECT <message>`: like /chat, but pinned to one subject notebook —
+  // every reply has the orchestrator's ingest_topic tool available and is told to
+  // file anything worth remembering under that subject as the conversation goes,
+  // creating the notebook on first use. Renders with the very same chat card.
+  const talk = /^\/talk\s+(\S+)\s+(.+\S)\s*$/.exec(text);
+  if (talk) {
+    const id = genId();
+    const subject = talk[1].toLowerCase();
+    const marker = encodeAiMarker({
+      v: 1,
+      kind: 'notes-chat',
+      id,
+      subject,
+      turns: [{ q: talk[2], a: '' }],
+      open: true,
+      status: 'streaming',
+    });
+    // Trailing blank line under the card's closing `-->` so there's always a
+    // clickable, typeable spot directly beneath the widget (the card decoration
+    // otherwise butts straight up against whatever follows it).
+    const insert = marker + '\n\n';
+    view.dispatch({
+      changes: { from: line.from, to: line.to, insert },
+      selection: { anchor: line.from + marker.length + 1 },
+    });
+    post({ type: 'notesChat', id, subject, question: talk[2] });
     return true;
   }
 

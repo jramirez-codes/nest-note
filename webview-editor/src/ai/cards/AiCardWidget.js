@@ -3,6 +3,7 @@ import { c } from '../../theme/palette.js';
 import { unmountAnswerView } from '../answerView.js';
 import { renderAsk, updateAskStream } from './ask.js';
 import { renderChat } from './chat.js';
+import { isChatKind } from '../marker.js';
 import { renderPair } from './pair.js';
 import { renderClean } from './clean.js';
 import { renderIngest } from './ingest.js';
@@ -46,10 +47,10 @@ export class AiCardWidget extends WidgetType {
     this.payloadV = payloadV || 0;
   }
   // The live answer applies to the turn currently streaming — the sole turn for
-  // /ask, the last turn for a /chat transcript.
+  // /ask, the last turn for a /chat or /talk transcript.
   get answer() {
     if (this.live && this.live.a != null) return this.live.a;
-    if (this.obj.kind === 'chat') {
+    if (isChatKind(this.obj.kind)) {
       const turns = this.obj.turns || [];
       return turns.length ? turns[turns.length - 1].a || '' : '';
     }
@@ -115,6 +116,7 @@ export class AiCardWidget extends WidgetType {
       case 'ingest':
         return renderIngest(view, this);
       case 'chat':
+      case 'notes-chat':
         return renderChat(view, this);
       case 'record':
         return renderRecord(view, this);
@@ -136,7 +138,7 @@ export class AiCardWidget extends WidgetType {
   updateDOM(dom, view) {
     if (this.obj.kind === 'run') return updateRun(dom, view, this);
     if (this.obj.kind === 'code') return updateCode(dom, view, this);
-    if (this.obj.kind === 'ask' || this.obj.kind === 'chat') return updateAskStream(dom, view, this);
+    if (this.obj.kind === 'ask' || isChatKind(this.obj.kind)) return updateAskStream(dom, view, this);
     return false;
   }
   // Tear down the nested answer editor(s) when CM discards this card's DOM
