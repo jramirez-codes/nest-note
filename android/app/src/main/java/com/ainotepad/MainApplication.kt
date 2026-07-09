@@ -6,6 +6,8 @@ import com.facebook.react.ReactApplication
 import com.facebook.react.ReactHost
 import com.facebook.react.ReactNativeApplicationEntryPoint.loadReactNative
 import com.facebook.react.defaults.DefaultReactHost.getDefaultReactHost
+import com.ainotepad.secure.AiNotepadSecurePackage
+import com.ainotepad.recorder.AiNotepadRecorderPackage
 
 class MainApplication : Application(), ReactApplication {
 
@@ -14,8 +16,11 @@ class MainApplication : Application(), ReactApplication {
       context = applicationContext,
       packageList =
         PackageList(this).packages.apply {
-          // Packages that cannot be autolinked yet can be added manually here, for example:
-          // add(MyReactNativePackage())
+          // The pinned-networking module isn't autolinked (it lives in the app),
+          // so register it by hand.
+          add(AiNotepadSecurePackage())
+          // Likewise the in-app audio recorder module (/record card).
+          add(AiNotepadRecorderPackage())
         },
     )
   }

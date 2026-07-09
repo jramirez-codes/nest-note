@@ -11,6 +11,13 @@ interface NotePageProps {
    *  the caret/keyboard doesn't stay on a page you've swiped away from. */
   isActive: boolean;
   onChangeContent: (id: string, content: string) => void;
+  onSetTitle: (id: string, title: string) => void;
+  /** Called after `/ingest` files this page into the dashboard — deletes the page. */
+  onIngested: (id: string) => void;
+  /** A tapped wikilink asks to flip the pad to `title` (in notebook `slug`, or the current one). */
+  onOpenPage?: (slug: string, title: string) => void;
+  /** Notebook this page lives in — /record clips are bucketed by notebook + page id. */
+  notebookId: string;
 }
 
 /**
@@ -20,10 +27,27 @@ interface NotePageProps {
  * Memoized so that editing one page (which updates the parent's notes array)
  * does not re-render its sibling pages.
  */
-function NotePage({ note, width, isActive, onChangeContent }: NotePageProps) {
+function NotePage({
+  note,
+  width,
+  isActive,
+  onChangeContent,
+  onSetTitle,
+  onIngested,
+  onOpenPage,
+  notebookId,
+}: NotePageProps) {
   const handleChangeContent = useCallback(
     (content: string) => onChangeContent(note.id, content),
     [note.id, onChangeContent],
+  );
+  const handleSetTitle = useCallback(
+    (title: string) => onSetTitle(note.id, title),
+    [note.id, onSetTitle],
+  );
+  const handleIngested = useCallback(
+    () => onIngested(note.id),
+    [note.id, onIngested],
   );
 
   return (
@@ -34,7 +58,13 @@ function NotePage({ note, width, isActive, onChangeContent }: NotePageProps) {
         <NoteEditorWebView
           initialContent={note.content}
           isActive={isActive}
+          hasTitle={note.title.trim().length > 0}
           onChangeContent={handleChangeContent}
+          onSetTitle={handleSetTitle}
+          onIngested={handleIngested}
+          onOpenPage={onOpenPage}
+          notebookId={notebookId}
+          pageId={note.id}
         />
       </KeyboardAvoidingView>
     </View>

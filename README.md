@@ -5,56 +5,53 @@ note is a full-screen page; swipe left/right to move between them, and tap the
 blank sheet at the end to start a new note. Text is edited as live-preview
 markdown via **CodeMirror 6** running in a WebView (see the editor section below).
 
-## Architecture
+## The three pieces
+
+The project is three cooperating parts, each independently buildable:
+
+```
+src/            React Native app (this repo's main deliverable)
+webview-editor/  CodeMirror 6 editor, bundled into the app as one HTML string
+server/          Optional Go companion server for the AI features
+```
+
+You can run the app with just the first two. `server/` only comes into play for
+the in-note AI commands (below); without a paired server the notepad is a fully
+functional offline markdown pad.
+
+## App architecture (`src/`)
 
 The code is organized into small, single-responsibility layers so features can
-be added without churn. Everything app-specific lives under `src/`:
+be added without churn:
 
 ```
 src/
-  types/       Domain models (Note) and pure helpers (deriveTitle)
-  data/        NotesRepository interface + swappable implementations
-  hooks/       useNotes — state + actions, mediated through the repository
-  theme/       Semantic color tokens
-  components/  Presentational pieces (NoteEditorWebView, NotePage, NewNotePage, PageIndicator)
+  types/       Domain model (Note) and pure helpers (deriveTitle)
+  storage/     SQLite persistence — the single source of truth (see below)
+  hooks/       useNotes / useNotebookPages / useServerStatus — state + actions
+  theme/       Semantic color tokens (Catppuccin Mocha)
+  components/  UI pieces: NoteEditorWebView, PaperPager, DashboardPage, headers…
   screens/     NotebookScreen — composes the paged pad
+  server/      Client for the companion server's pinned-TLS protocol (below)
+  webview/     editorHtml.ts — the generated editor bundle (do not edit by hand)
   utils/       Framework-agnostic helpers (id, date, async)
 ```
 
 Key design choices that keep it scalable:
 
-- **Persistence is behind an interface.** The UI only knows `NotesRepository`.
-  It's backed by `MmkvNotesRepository` (on-device [MMKV](https://github.com/mrousavy/react-native-mmkv)),
-  with each note stored under its own `note.<id>` key so a single edit is one
-  small write. `InMemoryNotesRepository` remains as a reference/test double. To
-  change storage, drop in a new implementation and edit the single wiring line
-  in `src/data/index.ts` — nothing else changes. The seed note is applied only
-  when the store is empty, so it appears once and never clobbers real notes.
-- **Derived data isn't stored.** Titles/previews come from `deriveTitle(content)`,
-  so there's nothing to keep in sync.
+- **SQLite is the single source of truth.** Notes, notebooks, full-text search
+  and a key/value store all live in one `ainotepad.sqlite` file via
+  [op-sqlite](https://github.com/OP-Engineering/op-sqlite). The app only imports
+  from `src/storage/` and never touches SQL directly; `initStorage()` (called
+  once in `App.tsx`) opens and migrates the DB before any screen renders. See
+  the storage-layer breakdown in `docs/storage-migration.md`.
+- **Derived data isn't stored.** Previews come from `deriveTitle(content)`, so
+  there's nothing to keep in sync. (Page titles are a separate AI-generated
+  field, set by `/clean` and deliberately left untouched by content edits.)
 - **Pages are memoized and self-scoped.** Editing one page doesn't re-render its
   neighbors, and each editor owns its text so the caret never jumps.
 
-## Roadmap hooks
-
-Natural next features slot into the existing seams: search/sort in `useNotes`,
-tags/folders on the `Note` type, and sync by adding a repository implementation.
-
-## Native dependency note
-
-MMKV 4 is a [Nitro module](https://nitro.margelo.com/), so after pulling deps
-you must rebuild the native app (JS-only fast refresh isn't enough):
-
-```sh
-# iOS
-bundle exec pod install
-yarn ios
-
-# Android
-yarn android
-```
-
-## Editor: CodeMirror 6 in a WebView
+## Editor: CodeMirror 6 in a WebView (`webview-editor/`)
 
 Notes are edited with **CodeMirror 6** running inside a `react-native-webview`,
 giving Obsidian-style live preview — markdown syntax marks hide to render clean
@@ -63,17 +60,48 @@ the stored format**. Because the editor reads and writes plain markdown, existin
 notes just work and there is no data migration.
 
 The editor is a small isolated web app under `webview-editor/` that bundles CM6
-into a single self-contained HTML string via esbuild. Rebuild it with:
+into a single self-contained HTML string via esbuild. Rebuild it after any change
+under `webview-editor/src/`:
 
     cd webview-editor && npm run build
 
-That writes `src/webview/editorHtml.ts`, which `NoteEditorWebView` loads into the
-WebView. The RN↔web bridge is JSON messages: markdown is injected in once the
+That regenerates `src/webview/editorHtml.ts`, which `NoteEditorWebView` loads into
+the WebView. The RN↔web bridge is JSON messages: markdown is injected in once the
 editor is ready, and edits post markdown back out. Metro is configured to ignore
 `webview-editor/` (it carries its own `node_modules`).
 
-Live-preview decorations, custom widgets, and section-highlight toggles all live
-as CM6 extensions in `webview-editor/src/editor.js`.
+The editor source is split by concern under `webview-editor/src/`: `markdown/`
+(live-preview decorations and custom widgets), `ai/` (the inline command cards),
+`theme/`, `ui/`, and `bridge.js` / `index.js` for the RN handshake.
+
+## Companion server & AI commands (`server/`)
+
+Typing a slash command on a page turns it into a live **card** backed by the Go
+companion server under `server/`, which streams the Claude Code CLI (and a few
+laptop capabilities) to the phone. Commands include:
+
+- `/ask` — ask Claude a question; `/clean` — tidy a note and title it.
+- `/code <name>` — a persistent multi-turn Claude Code agent in `projects/<name>`.
+- `/run <cmd>` — stream a live laptop shell command into the card.
+- `/view <port>` — mirror a laptop `localhost` dev server into an iframe card.
+- `/record` — record the device microphone in the background.
+
+The connection is **pinned TLS over a token-authenticated tunnel**: you pair once
+by scanning a QR (transferring the SPKI pin + a one-time code), and the app
+reconnects silently afterward. The client core lives in `src/server/` and is
+deliberately platform-agnostic — the same code is exercised by a Node harness and
+by the app, with only the pinned-socket transport (`nativeTransport.ts`) being
+native. Runs are hoisted into a long-lived `runRegistry` so they survive swiping
+between pages or swapping notebooks. See `docs/companion-server-setup.md` for the
+native setup, and `server/main.go`'s flags for the `-allow-exec/-code/-view`
+capability gates (all off by default — each runs code as you over the tunnel).
+
+## Roadmap hooks
+
+Natural next features slot into the existing seams: search/sort in `useNotes`,
+tags/folders on the `Note` type (the columns already exist), and multiple
+notebooks (the schema is notebook-scoped from day one — today there is a single
+`DEFAULT_NOTEBOOK_ID`).
 
 # Getting Started
 
