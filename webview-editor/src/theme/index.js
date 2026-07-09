@@ -25,6 +25,7 @@ import { styles as transcriptStyles } from '../ai/shared/transcript.js';
 import { styles as codeViewStyles } from '../ai/shared/codeView.js';
 import { styles as codeStyles } from '../ai/cards/code.js';
 import { styles as viewStyles } from '../ai/cards/view.js';
+import { styles as updateStyles } from '../ai/cards/update.js';
 import { styles as overlayStyles } from '../ai/overlay.js';
 import { styles as commandStyles } from '../ai/commands.js';
 
@@ -51,6 +52,7 @@ const components = {
   ...codeViewStyles,
   ...codeStyles,
   ...viewStyles,
+  ...updateStyles,
   ...overlayStyles,
   ...commandStyles,
 };

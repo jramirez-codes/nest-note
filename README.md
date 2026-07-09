@@ -85,6 +85,7 @@ laptop capabilities) to the phone. Commands include:
 - `/run <cmd>` — stream a live laptop shell command into the card.
 - `/view <port>` — mirror a laptop `localhost` dev server into an iframe card.
 - `/record` — record the device microphone in the background.
+- `/update-server` — pull the latest code on the laptop, rebuild the Go server, and restart it into the new binary.
 
 The connection is **pinned TLS over a token-authenticated tunnel**: you pair once
 by scanning a QR (transferring the SPKI pin + a one-time code), and the app

@@ -20,6 +20,7 @@ import { getPayloadsForPage, upsertPayload, deletePayload } from '../storage';
 import { pairFromPayload } from '../server/aiController';
 import { fetchProjects } from '../server/agentController';
 import { fetchViewUrl } from '../server/viewController';
+import { updateServer, waitForServerBack } from '../server/updateController';
 import {
   startAsk,
   startClean,
@@ -353,6 +354,42 @@ export function handleEditorMessage(ctx: BridgeContext, e: WebViewMessageEvent):
           )});`,
         );
       }
+    });
+  } else if (msg.type === 'updateServer' && typeof msg.id === 'string') {
+    // Tell the paired laptop to pull, rebuild its Go server, and restart. The
+    // card shows the build output and tracks the phases: running → (on success)
+    // "restarting…" while the server relaunches, then "reconnected" once its
+    // liveness probe answers again; on failure it shows which step broke.
+    const id = msg.id;
+    const done = (patch: { status: string; msg: string; out?: string }) =>
+      inject(`window.__aiDone(${JSON.stringify(id)}, ${JSON.stringify(patch)});`);
+    updateServer().then(res => {
+      if (res.error) {
+        done({ status: 'error', msg: res.error });
+        return;
+      }
+      if (!res.ok) {
+        const label =
+          res.phase === 'pull'
+            ? 'git pull failed'
+            : res.phase === 'build'
+              ? 'Rebuild failed'
+              : 'Update failed';
+        done({ status: 'error', msg: label, out: res.out });
+        return;
+      }
+      // Rebuilt; the server is relaunching into the new binary. Keep the card
+      // in-flight (status 'running' preserves its id) until the probe answers.
+      done({ status: 'running', msg: 'Rebuilt — restarting server…', out: res.out });
+      waitForServerBack().then(back => {
+        done({
+          status: back ? 'ok' : 'error',
+          msg: back
+            ? 'Server updated & reconnected'
+            : 'Rebuilt, but the server didn’t come back — check the laptop',
+          out: res.out,
+        });
+      });
     });
   }
 }

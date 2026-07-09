@@ -10,6 +10,7 @@ import { renderRecord } from './record.js';
 import { renderRun, updateRun } from './run.js';
 import { renderCode, updateCode } from './code.js';
 import { renderView } from './view.js';
+import { renderUpdate } from './update.js';
 
 // A stable token for a /code card's live transcript: block count, the length of
 // the last (only growing) block, and status. Any streamed event changes one of
@@ -123,6 +124,8 @@ export class AiCardWidget extends WidgetType {
         return renderCode(view, this);
       case 'view':
         return renderView(view, this);
+      case 'update':
+        return renderUpdate(view, this);
       default:
         return renderAsk(view, this);
     }

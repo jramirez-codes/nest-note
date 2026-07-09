@@ -44,6 +44,11 @@ const SLASH_COMMANDS = [
     apply: '/delete ',
   },
   {
+    label: '/update-server',
+    detail: 'Update the paired laptop: pull the latest code, rebuild the Go server, and restart it',
+    apply: '/update-server',
+  },
+  {
     label: '/pair',
     detail: 'Pair a device by QR code or payload',
     apply: '/pair ',
@@ -328,6 +333,31 @@ export function aiCommandOnEnter(view) {
       selection: { anchor: line.from + marker.length + 1 },
     });
     post({ type: 'view', id, port });
+    return true;
+  }
+
+  // `/update-server`: tell the paired laptop to pull the latest code, rebuild its
+  // Go server, and restart into the new binary. Takes no argument. Drops a status
+  // card; the actual pull/build/restart and the reconnect polling live on the RN
+  // side (updateController), which commits phases back via __aiDone.
+  if (/^\/update-server\s*$/.test(text)) {
+    const id = genId();
+    const marker = encodeAiMarker({
+      v: 1,
+      kind: 'update',
+      id,
+      status: 'running',
+      msg: 'Pulling & rebuilding…',
+    });
+    // Trailing blank line under the card's closing `-->` so there's always a
+    // clickable, typeable spot directly beneath the widget (the card decoration
+    // otherwise butts straight up against whatever follows it).
+    const insert = marker + '\n\n';
+    view.dispatch({
+      changes: { from: line.from, to: line.to, insert },
+      selection: { anchor: line.from + marker.length + 1 },
+    });
+    post({ type: 'updateServer', id });
     return true;
   }
 

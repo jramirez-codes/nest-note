@@ -216,7 +216,9 @@ export function encodeAiMarkerFull(obj) {
   } else if (obj.kind === 'clean' && backup != null) {
     lines.push(SEC_BACKUP);
     lines.push(escBody(backup));
-  } else if (obj.kind === 'run' && out != null) {
+  } else if ((obj.kind === 'run' || obj.kind === 'update') && out != null) {
+    // /update reuses the /run output section for its captured pull+build log. It
+    // stays inline (not externalized) — the log is capped small on the server.
     lines.push(SEC_OUTPUT);
     lines.push(escBody(out));
   } else if (obj.kind === 'code' && items != null) {
