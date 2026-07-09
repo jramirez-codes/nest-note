@@ -22,6 +22,7 @@ func main() {
 		advHost    = flag.String("advertise-host", "", "host to put in the pairing QR (e.g. a Tailscale IP or DDNS name for off-LAN access); default: bind address")
 		dir        = flag.String("dir", defaultStateDir(), "directory for cert/key/token")
 		workdir    = flag.String("workdir", mustCwd(), "directory Claude runs in (ignored when -root is set)")
+		repoDir    = flag.String("repo-dir", "", "path to the ai-notepad git checkout that /update-server pulls & rebuilds; empty = <root>/ai-notepad")
 		root       = flag.String("root", "", "scaffold projects/, mcp/, orchestrator/ under this dir and enable MCP; Claude runs in <root>/projects. Empty = disabled")
 		threshold  = flag.Int("subject-threshold", 4, "mentions before the orchestrator proposes a dedicated server for a subject (with -root)")
 		runTimeout = flag.Duration("run-timeout", 2*time.Minute, "max time for a single Claude run before it is killed and reported as failed")
@@ -129,6 +130,11 @@ func main() {
 	// phone which port to point its iframe at. See server/view.go.
 	viewMgr := newViewManager(bindIP)
 	mux.HandleFunc("/viewstart", viewStartHandler(token, *allowView, viewMgr))
+	// Self-update: pull the latest code, rebuild this binary, and restart into it.
+	// Driven by a note's `/update-server`. Always enabled — it runs one fixed
+	// recipe (never caller-supplied commands), gated by the pinned tunnel + token
+	// like everything else. See server/update.go.
+	mux.HandleFunc("/update", updateHandler(token, *root, *repoDir))
 	mux.HandleFunc("/state", stateHandler(token, *root))
 	mux.HandleFunc("/notebook", notebookHandler(token, *root))
 	mux.HandleFunc("/page", pageHandler(token, *root))
