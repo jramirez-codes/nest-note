@@ -334,12 +334,12 @@ function PageIndicator({
             ? 'h-9 flex-row items-center rounded-full bg-accent px-4 active:opacity-70'
             : 'h-9 flex-row items-center rounded-full bg-surface px-4 active:opacity-70'
         }>
-        <View className="h-4 w-4 flex-row flex-wrap" style={{ gap: 2 }}>
+        <View className="h-4 w-4 flex-row flex-wrap" style={styles.dashboardGrid}>
           {[0, 1, 2, 3].map(i => (
             <View
               key={i}
               className={onDashboard ? 'bg-background' : 'bg-faint'}
-              style={{ width: 6, height: 6, borderRadius: 1.5 }}
+              style={styles.dashboardGridCell}
             />
           ))}
         </View>
@@ -369,6 +369,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.22,
     elevation: 8,
   },
+  // The dashboard bubble's 2×2 grid glyph, drawn from four small squares.
+  dashboardGrid: { gap: 2 },
+  dashboardGridCell: { width: 6, height: 6, borderRadius: 1.5 },
 });
 
 export default React.memo(PageIndicator);

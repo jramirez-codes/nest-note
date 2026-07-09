@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   type LayoutChangeEvent,
-  StyleSheet,
   Text,
   useWindowDimensions,
   View,
@@ -13,11 +12,10 @@ import Animated, {
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
-import { Trash2 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../theme/colors';
-import { mocha } from '../theme/catppuccin';
 import DashboardPage from '../components/DashboardPage';
+import DeleteDragOverlay from '../components/DeleteDragOverlay';
 import NoteHeader from '../components/NoteHeader';
 import NotePage from '../components/NotePage';
 import PageIndicator from '../components/PageIndicator';
@@ -36,15 +34,6 @@ import { fireAndForget } from '../utils/async';
 // The Sandbox notebook is the local pad itself (editable notes + the aggregate dashboard);
 // any other value is a subject slug whose pages are pulled from the server and virtualized.
 const SANDBOX_KEY = 'sandbox';
-
-// Priority → pip color for the floating drag clone (kept tiny to avoid importing
-// the dashboard's full palette map).
-const PIP_CLASS: Record<string, string> = {
-  urgent: 'bg-red',
-  high: 'bg-peach',
-  normal: 'bg-blue',
-  low: 'bg-overlay0',
-};
 
 /**
  * A page in the pager is a local editable note (Sandbox), a virtual read-only page pulled
@@ -477,62 +466,14 @@ export default function NotebookScreen() {
         </View>
       </View>
 
-      {/* The red delete banner. Reaches the screen's top edge (through the
-          status-bar / notch area) down to the header bar's bottom, fully covering
-          the NoteHeader as the top chrome fades out — so the background→red
-          transition is smooth. Touches fall through; the drop is detected by the
-          card gesture, not this view. */}
-      <Animated.View pointerEvents="none" style={[styles.deleteBanner, bannerStyle]}>
-        <Animated.View style={[styles.deleteLabel, bannerLabelStyle]}>
-          <Trash2 size={16} color={mocha.crust} strokeWidth={2.5} />
-          <Text className="ml-2 text-xs font-bold uppercase tracking-wider text-crust">
-            Release to delete
-          </Text>
-        </Animated.View>
-      </Animated.View>
-
-      {/* The floating clone of the card being dragged. Rendered last (top of the
-          stack) so it travels over the header and footer; touches fall through. */}
-      {drag.card && (
-        <Animated.View pointerEvents="none" style={[styles.clone, cloneStyle]}>
-          <View className="flex-row items-center gap-2 rounded-2xl border border-surface1 bg-surface px-3 py-2">
-            <View className={`h-2 w-2 rounded-full ${PIP_CLASS[drag.card.priority] ?? 'bg-blue'}`} />
-            <Text numberOfLines={1} className="max-w-[220px] text-sm font-semibold text-text">
-              {drag.card.title}
-            </Text>
-          </View>
-        </Animated.View>
-      )}
+      {/* The drag-to-delete banner + floating card clone (presentational; fed the
+          animated styles computed above). */}
+      <DeleteDragOverlay
+        bannerStyle={bannerStyle}
+        bannerLabelStyle={bannerLabelStyle}
+        cloneStyle={cloneStyle}
+        card={drag.card}
+      />
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  // The drag clone floats above everything and is positioned by an animated
-  // transform from window coordinates.
-  clone: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    zIndex: 50,
-    elevation: 8,
-  },
-  // The red delete banner. `top` and `height` come from the animated style; it
-  // reaches the screen's top edge but is bottom-aligned (with padding matching the
-  // header's) so the label sits in the header band rather than up in the notch.
-  deleteBanner: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    backgroundColor: mocha.red,
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    paddingBottom: 12,
-    zIndex: 45,
-    elevation: 7,
-  },
-  deleteLabel: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-});

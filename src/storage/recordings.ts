@@ -53,5 +53,7 @@ export function extractRecordingFiles(content: string): string[] {
  */
 export function cleanupRecordings(content: string): void {
   const files = extractRecordingFiles(content);
-  if (files.length) void deleteRecordings(files).catch(() => {});
+  if (files.length) {
+    deleteRecordings(files).catch(() => {});
+  }
 }

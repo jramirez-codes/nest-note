@@ -1,36 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Modal,
   Pressable,
   RefreshControl,
   ScrollView,
+  StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import { runOnJS } from 'react-native-reanimated';
-import {
-  Bell,
-  BellRing,
-  ChevronDown,
-  Check,
-  Clock,
-  Folder,
-  GitMerge,
-  Inbox,
-  Layers,
-  Lightbulb,
-  ListChecks,
-  PenLine,
-  Search,
-  Sparkles,
-  TriangleAlert,
-  type LucideIcon,
-} from 'lucide-react-native';
-import { useTheme, type ThemeColors } from '../theme/colors';
-import { mocha } from '../theme/catppuccin';
+import { Bell, Folder, GitMerge, Inbox, Lightbulb, ListChecks } from 'lucide-react-native';
+import { useTheme } from '../theme/colors';
 import type { CardDragShared } from './cardDrag';
 import {
   applyDashboardAction,
@@ -43,6 +22,15 @@ import {
   type DashboardState,
   type DashboardSuggestion,
 } from '../server/aiController';
+import { compareCards, compareTasks, humanizeKind } from './dashboard/cardModel';
+import { NotebookSwitcher, type NotebookOption } from './dashboard/NotebookSwitcher';
+import {
+  DraggableCard,
+  IdeaCard,
+  NotificationCard,
+  SectionHeader,
+  TaskRow,
+} from './dashboard/DashboardCards';
 
 interface DashboardPageProps {
   /** Exact page width so the sheet fills its slot in the pager. */
@@ -62,274 +50,17 @@ interface DashboardPageProps {
   onSelectNotebook: (key: string) => void;
 }
 
-// --- Card sorting + presentation -------------------------------------------
-
-// Priority ranks so a higher-urgency card sorts first. Unknown strings fall to
-// the middle (normal) so a novel priority never crashes the sort.
-const PRIORITY_RANK: Record<string, number> = { urgent: 3, high: 2, normal: 1, low: 0 };
-const rankOf = (p: string) => PRIORITY_RANK[p] ?? 1;
-
-// Each priority carries its own hue (for icons/pips) drawn from the raw Catppuccin
-// palette, plus matching NativeWind classes so we never inline a style for it.
-interface PriorityStyle {
-  hex: string;
-  pip: string;
-  chip: string;
-  label: string;
-}
-const PRIORITY: Record<string, PriorityStyle> = {
-  urgent: { hex: mocha.red, pip: 'bg-red', chip: 'bg-red/20', label: 'Urgent' },
-  high: { hex: mocha.peach, pip: 'bg-peach', chip: 'bg-peach/20', label: 'High' },
-  normal: { hex: mocha.blue, pip: 'bg-blue', chip: 'bg-blue/20', label: 'Normal' },
-  low: { hex: mocha.overlay0, pip: 'bg-overlay0', chip: 'bg-overlay0/30', label: 'Low' },
-};
-const prio = (p: string): PriorityStyle => PRIORITY[p] ?? PRIORITY.normal;
-
-// The stable card sort key the spec calls for: priority rank desc, then soonest
-// `date` asc (dated cards ahead of undated), then `created_at` asc as a tiebreak.
-function compareCards(a: DashboardCard, b: DashboardCard): number {
-  const pr = rankOf(b.priority) - rankOf(a.priority);
-  if (pr) return pr;
-  const ad = a.date || '';
-  const bd = b.date || '';
-  if (ad && bd && ad !== bd) return ad < bd ? -1 : 1;
-  if (ad && !bd) return -1;
-  if (!ad && bd) return 1;
-  const ac = a.created_at || '';
-  const bc = b.created_at || '';
-  return ac < bc ? -1 : ac > bc ? 1 : 0;
-}
-
-// Tasks sort like everything else but completed ones sink to the bottom.
-function compareTasks(a: DashboardCard, b: DashboardCard): number {
-  if (!!a.done !== !!b.done) return a.done ? 1 : -1;
-  return compareCards(a, b);
-}
-
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-// Format an ISO `YYYY-MM-DD` relatively (Today / Tomorrow / Yesterday / "Jul 9"),
-// and report whether it's in the past so a task can flag itself overdue.
-function relDate(iso: string): { label: string; overdue: boolean } {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
-  if (!m) return { label: iso, overdue: false };
-  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const days = Math.round((d.getTime() - today.getTime()) / 86400000);
-  if (days === 0) return { label: 'Today', overdue: false };
-  if (days === 1) return { label: 'Tomorrow', overdue: false };
-  if (days === -1) return { label: 'Yesterday', overdue: true };
-  const label =
-    `${MONTHS[d.getMonth()]} ${d.getDate()}` +
-    (d.getFullYear() !== today.getFullYear() ? `, ${d.getFullYear()}` : '');
-  return { label, overdue: days < 0 };
-}
-
-// Title-case a kind slug into a section heading, e.g. "reading-list" → "Reading
-// lists". Keeps unknown kinds presentable without any bespoke code.
-function humanizeKind(kind: string): string {
-  const words = kind.replace(/[-_]+/g, ' ').trim();
-  if (!words) return 'Cards';
-  const titled = words.charAt(0).toUpperCase() + words.slice(1);
-  return titled.endsWith('s') ? titled : titled + 's';
-}
-
-// --- Notebook switcher -----------------------------------------------------
-
-// One entry in the notebook picker. `key` is 'all' (the roll-up), 'sandbox' (the
-// single local pad), or a subject slug. Counts are the open tasks + notifications
-// that notebook owns, shown inline so the list itself reads as a map of the world.
-interface NotebookOption {
-  key: string;
-  label: string;
-  summary?: string;
-  kind: 'all' | 'local' | 'server';
-  tasks: number;
-  notifs: number;
-}
-
-const nbIcon = (kind: NotebookOption['kind']): LucideIcon =>
-  kind === 'all' ? Layers : kind === 'local' ? PenLine : Folder;
-
-// A one-line summary of what a notebook holds, e.g. "2 tasks · 1 alert", falling
-// back to the subject's own summary (or a hint for the special entries).
-function nbSubtitle(o: NotebookOption): string {
-  const parts: string[] = [];
-  if (o.tasks) parts.push(`${o.tasks} task${o.tasks === 1 ? '' : 's'}`);
-  if (o.notifs) parts.push(`${o.notifs} alert${o.notifs === 1 ? '' : 's'}`);
-  if (parts.length) return parts.join(' · ');
-  if (o.kind === 'local') return 'Local scratch pad';
-  if (o.kind === 'all') return 'Everything filed';
-  return o.summary || 'No open items';
-}
-
-// Renders a label with the typed query substring highlighted in the accent color,
-// so the autocomplete visibly matches what the user typed.
-function HighlightedLabel({ text, query }: { text: string; query: string }) {
-  const q = query.trim();
-  const i = q ? text.toLowerCase().indexOf(q.toLowerCase()) : -1;
-  if (i < 0) {
-    return (
-      <Text className="text-sm font-semibold text-text" numberOfLines={1}>
-        {text}
-      </Text>
-    );
-  }
-  return (
-    <Text className="text-sm font-semibold text-text" numberOfLines={1}>
-      {text.slice(0, i)}
-      <Text className="text-accent">{text.slice(i, i + q.length)}</Text>
-      {text.slice(i + q.length)}
-    </Text>
-  );
-}
-
-/**
- * The notebook picker pinned to the top of the dashboard: a tap-to-open control
- * showing the current notebook, and a dropdown with a search field that
- * autocompletes the notebook list as the user types. The dropdown is anchored
- * under the trigger (measured in window coords) inside a transparent Modal, so it
- * floats cleanly over the scrolling content and gets native keyboard handling.
- */
-function NotebookSwitcher({
-  options,
-  selected,
-  onSelect,
-  colors,
-}: {
-  options: NotebookOption[];
-  selected: NotebookOption;
-  onSelect: (key: string) => void;
-  colors: ThemeColors;
-}) {
-  const triggerRef = useRef<View>(null);
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState('');
-  const [anchor, setAnchor] = useState({ x: 0, y: 0, width: 0, height: 0 });
-
-  const openMenu = useCallback(() => {
-    triggerRef.current?.measureInWindow((x, y, width, height) => {
-      setAnchor({ x, y, width, height });
-      setQuery('');
-      setOpen(true);
-    });
-  }, []);
-  const close = useCallback(() => setOpen(false), []);
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return options;
-    return options.filter(o => o.label.toLowerCase().includes(q));
-  }, [options, query]);
-
-  const TriggerIcon = nbIcon(selected.kind);
-
-  return (
-    <>
-      <Pressable
-        ref={triggerRef}
-        onPress={openMenu}
-        accessibilityRole="button"
-        accessibilityLabel={`Notebook: ${selected.label}`}
-        className="flex-row items-center rounded-2xl border border-surface1 bg-surface px-3.5 py-3 active:opacity-80">
-        <View className="mr-3 h-9 w-9 items-center justify-center rounded-xl bg-accent/20">
-          <TriggerIcon size={18} color={colors.accent} strokeWidth={2} />
-        </View>
-        <View className="flex-1 pr-2">
-          <Text className="text-base font-bold text-text" numberOfLines={1}>
-            {selected.label}
-          </Text>
-          <Text className="mt-0.5 text-xs text-muted" numberOfLines={1}>
-            {nbSubtitle(selected)}
-          </Text>
-        </View>
-        <ChevronDown size={20} color={colors.faint} strokeWidth={2} />
-      </Pressable>
-
-      <Modal visible={open} transparent animationType="fade" onRequestClose={close} statusBarTranslucent>
-        {/* Full-screen scrim: a tap anywhere outside the card dismisses the menu. */}
-        <Pressable className="flex-1" style={{ backgroundColor: 'rgba(0,0,0,0.45)' }} onPress={close}>
-          <View
-            style={{
-              position: 'absolute',
-              top: anchor.y + anchor.height + 6,
-              left: anchor.x,
-              width: anchor.width,
-            }}>
-            {/* Inner Pressable swallows taps so they don't reach the scrim. */}
-            <Pressable
-              onPress={() => {}}
-              className="overflow-hidden rounded-2xl border border-surface1 bg-surface">
-              {/* Search field. */}
-              <View className="flex-row items-center gap-2 border-b border-surface1 px-3 py-2.5">
-                <Search size={16} color={colors.faint} strokeWidth={2} />
-                <TextInput
-                  autoFocus
-                  value={query}
-                  onChangeText={setQuery}
-                  placeholder="Search notebooks…"
-                  placeholderTextColor={colors.faint}
-                  className="flex-1 p-0 text-sm text-text"
-                  returnKeyType="done"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-              </View>
-              <ScrollView
-                keyboardShouldPersistTaps="handled"
-                style={{ maxHeight: 320 }}
-                contentContainerStyle={{ paddingVertical: 4 }}>
-                {filtered.length === 0 ? (
-                  <Text className="px-3 py-4 text-center text-sm text-muted">No notebooks match.</Text>
-                ) : (
-                  filtered.map(o => {
-                    const RowIcon = nbIcon(o.kind);
-                    const isSel = o.key === selected.key;
-                    return (
-                      <Pressable
-                        key={o.key}
-                        onPress={() => {
-                          onSelect(o.key);
-                          close();
-                        }}
-                        className="flex-row items-center px-2.5 py-2.5 active:bg-surface1/50">
-                        <View className="mr-3 h-8 w-8 items-center justify-center rounded-lg bg-background">
-                          <RowIcon size={16} color={isSel ? colors.accent : colors.muted} strokeWidth={2} />
-                        </View>
-                        <View className="flex-1 pr-2">
-                          <HighlightedLabel text={o.label} query={query} />
-                          <Text className="mt-0.5 text-xs text-muted" numberOfLines={1}>
-                            {nbSubtitle(o)}
-                          </Text>
-                        </View>
-                        {o.kind === 'local' && (
-                          <View className="mr-2 rounded-full bg-overlay0/30 px-2 py-0.5">
-                            <Text className="text-[10px] font-semibold uppercase tracking-wide text-muted">
-                              Local
-                            </Text>
-                          </View>
-                        )}
-                        {isSel && <Check size={16} color={colors.accent} strokeWidth={2.5} />}
-                      </Pressable>
-                    );
-                  })
-                )}
-              </ScrollView>
-            </Pressable>
-          </View>
-        </Pressable>
-      </Modal>
-    </>
-  );
-}
-
 /**
  * The dashboard: the trailing page of the pad. It's the home for the MCP world
  * `/ingest` builds up — its reminders and action items, each subject's notes, and
  * any merge suggestions — laid out as a Material-style action center. Cards are
  * removed by pressing and holding, then dragging them up onto the header, which
  * turns into a delete target, so a delete is always deliberate.
+ *
+ * This component owns the dashboard's state and orchestration; the notebook picker
+ * lives in ./dashboard/NotebookSwitcher, the card renderers in
+ * ./dashboard/DashboardCards, and the sorting/formatting rules in
+ * ./dashboard/cardModel.
  */
 function DashboardPage({
   width,
@@ -399,8 +130,11 @@ function DashboardPage({
   useEffect(() => {
     // A cold start with no cache shows the loader; a cache hit reconciles silently.
     load(getCachedDashboardState() ? 'silent' : 'initial');
+    // Capture the ref object so the cleanup mutates the same counter even if the
+    // component's ref were to change; bumping it invalidates any in-flight fetch.
+    const seq = reqSeq;
     return () => {
-      reqSeq.current++; // invalidate any in-flight fetch on unmount
+      seq.current++; // invalidate any in-flight fetch on unmount
     };
   }, [load]);
 
@@ -552,7 +286,7 @@ function DashboardPage({
       <ScrollView
         // Freeze the scroll while a card is being dragged so the list stays put.
         scrollEnabled={!liftedId}
-        contentContainerStyle={{ padding: 20, paddingBottom: 120 }}
+        contentContainerStyle={styles.scrollContent}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -705,203 +439,8 @@ function DashboardPage({
   );
 }
 
-// Wraps a card in a long-press pan gesture: hold ~220ms to lift it, drag up onto
-// the header (which turns into the delete target, tracked by comparing the finger's
-// window-Y to the header's bottom edge), and release there to dismiss. A quick tap
-// still reaches the card's own controls.
-function DraggableCard({
-  card,
-  drag,
-  onLift,
-  onDrop,
-  onRelease,
-  children,
-}: {
-  card: DashboardCard;
-  drag: CardDragShared;
-  onLift: (c: DashboardCard) => void;
-  onDrop: (c: DashboardCard) => void;
-  onRelease: () => void;
-  children: React.ReactNode;
-}) {
-  const pan = useMemo(
-    () =>
-      Gesture.Pan()
-        .activateAfterLongPress(220)
-        .maxPointers(1)
-        .onStart(e => {
-          drag.active.value = 1;
-          drag.overDelete.value = 0;
-          drag.dragX.value = e.absoluteX;
-          drag.dragY.value = e.absoluteY;
-          runOnJS(onLift)(card);
-        })
-        .onUpdate(e => {
-          drag.dragX.value = e.absoluteX;
-          drag.dragY.value = e.absoluteY;
-          drag.overDelete.value = e.absoluteY <= drag.headerBottomY.value ? 1 : 0;
-        })
-        .onEnd(() => {
-          if (drag.overDelete.value === 1) runOnJS(onDrop)(card);
-        })
-        .onFinalize(() => {
-          drag.active.value = 0;
-          drag.overDelete.value = 0;
-          runOnJS(onRelease)();
-        }),
-    [card, drag, onLift, onDrop, onRelease],
-  );
-  return <GestureDetector gesture={pan}>{children}</GestureDetector>;
-}
-
-// A section heading: a small Lucide glyph, an uppercase label, and a count chip —
-// the same rhythm across every block of the dashboard.
-function SectionHeader({
-  icon: IconCmp,
-  title,
-  count,
-  colors,
-}: {
-  icon: LucideIcon;
-  title: string;
-  count?: number;
-  colors: ThemeColors;
-}) {
-  return (
-    <View className="mb-2 flex-row items-center gap-2 px-1">
-      <IconCmp size={14} color={colors.faint} strokeWidth={2.5} />
-      <Text className="text-xs font-bold uppercase tracking-wider text-faint">{title}</Text>
-      {typeof count === 'number' && (
-        <Text className="text-xs font-bold text-faint">· {count}</Text>
-      )}
-    </View>
-  );
-}
-
-// One task row inside the grouped Tasks surface: a checkbox that toggles done, the
-// title (struck through when done), a priority pip, and a due date (red when overdue).
-function TaskRow({
-  card,
-  colors,
-  busy,
-  onToggle,
-  dimmed,
-}: {
-  card: DashboardCard;
-  colors: ThemeColors;
-  busy: Record<string, boolean>;
-  onToggle: (c: DashboardCard) => void;
-  dimmed: boolean;
-}) {
-  const due = card.date ? relDate(card.date) : null;
-  const overdue = !!due?.overdue && !card.done;
-  return (
-    // collapsable={false} keeps Android from view-flattening this node away, which
-    // the wrapping GestureDetector needs to attach the drag gesture reliably.
-    <View collapsable={false} className={`flex-row items-center px-3 py-3 ${dimmed ? 'opacity-30' : ''}`}>
-      <Pressable
-        onPress={() => onToggle(card)}
-        disabled={busy[card.id]}
-        hitSlop={8}
-        accessibilityRole="checkbox"
-        accessibilityState={{ checked: !!card.done }}
-        accessibilityLabel={card.title}
-        className={`h-6 w-6 items-center justify-center rounded-md border ${
-          card.done ? 'border-accent bg-accent' : 'border-overlay0'
-        }`}>
-        {card.done && <Check size={15} color={colors.background} strokeWidth={3} />}
-      </Pressable>
-      <Pressable
-        onPress={() => onToggle(card)}
-        disabled={busy[card.id]}
-        className="flex-1 flex-row items-center pl-3 pr-2">
-        <View className={`mr-2 h-1.5 w-1.5 rounded-full ${prio(card.priority).pip}`} />
-        <Text
-          numberOfLines={1}
-          className={`flex-1 text-sm ${card.done ? 'text-faint line-through' : 'text-text'}`}>
-          {card.title}
-        </Text>
-      </Pressable>
-      {due && !card.done && (
-        <View className="flex-row items-center gap-1">
-          <Clock size={12} color={overdue ? colors.danger : colors.muted} strokeWidth={2} />
-          <Text className={`text-xs ${overdue ? 'text-danger' : 'text-muted'}`}>{due.label}</Text>
-        </View>
-      )}
-    </View>
-  );
-}
-
-// The icon for a notification chip, chosen by urgency.
-function notifIcon(priority: string): LucideIcon {
-  switch (priority) {
-    case 'urgent':
-      return TriangleAlert;
-    case 'high':
-      return BellRing;
-    case 'low':
-      return Clock;
-    default:
-      return Bell;
-  }
-}
-
-// A notification: a tinted icon chip (colored by priority), a title, and a subtitle
-// combining its date and body.
-function NotificationCard({ card, dimmed }: { card: DashboardCard; dimmed: boolean }) {
-  const p = prio(card.priority);
-  const NotifIcon = notifIcon(card.priority);
-  const date = card.date ? relDate(card.date).label : '';
-  const subtitle = [date, card.body].filter(Boolean).join(' · ');
-  return (
-    <View
-      collapsable={false}
-      className={`mb-2 flex-row items-center rounded-2xl border border-surface1 bg-surface p-3 ${
-        dimmed ? 'opacity-30' : ''
-      }`}>
-      <View className={`mr-3 h-10 w-10 items-center justify-center rounded-xl ${p.chip}`}>
-        <NotifIcon size={20} color={p.hex} strokeWidth={2} />
-      </View>
-      <View className="flex-1 pr-1">
-        <Text className="text-sm font-semibold text-text" numberOfLines={1}>
-          {card.title}
-        </Text>
-        {!!subtitle && (
-          <Text className="mt-0.5 text-xs text-muted" numberOfLines={2}>
-            {subtitle}
-          </Text>
-        )}
-      </View>
-    </View>
-  );
-}
-
-// The generic card, used for ideas and — as the graceful fallback — any unknown
-// kind. A compact grid tile with a colored top accent bar, a kind glyph, and the
-// title. This is what makes the engine scalable: emit a novel kind and it renders.
-function IdeaCard({ card, dimmed }: { card: DashboardCard; dimmed: boolean }) {
-  const p = prio(card.priority);
-  const KindIcon = card.kind === 'idea' ? Lightbulb : Sparkles;
-  return (
-    <View
-      collapsable={false}
-      className={`mb-3 w-[48%] overflow-hidden rounded-2xl border border-surface1 bg-surface p-3 ${
-        dimmed ? 'opacity-30' : ''
-      }`}>
-      <View className={`absolute left-0 right-0 top-0 h-1 ${p.pip}`} />
-      <View className="mt-1">
-        <KindIcon size={16} color={p.hex} strokeWidth={2} />
-      </View>
-      <Text className="mt-1.5 text-sm font-semibold text-text" numberOfLines={3}>
-        {card.title}
-      </Text>
-      {!!card.body && (
-        <Text className="mt-1 text-xs text-muted" numberOfLines={2}>
-          {card.body}
-        </Text>
-      )}
-    </View>
-  );
-}
+const styles = StyleSheet.create({
+  scrollContent: { padding: 20, paddingBottom: 120 },
+});
 
 export default React.memo(DashboardPage);
