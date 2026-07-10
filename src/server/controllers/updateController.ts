@@ -15,7 +15,7 @@
  */
 
 import { getTransport, currentServer, NO_MODULE } from './aiController';
-import { setServerStatus } from './status';
+import { setServerStatus } from '../transport/status';
 
 export interface UpdateResult {
   /** True once the rebuild succeeded and the restart was kicked off. */

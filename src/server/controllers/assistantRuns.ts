@@ -9,9 +9,9 @@
  * reconnect, and cancellation logic is written once.
  */
 
-import { run, type RunHandle, type SessionOpts } from './client';
-import { getTransport, currentServer, NO_MODULE } from './connection';
-import { setServerStatus } from './status';
+import { run, type RunHandle, type SessionOpts } from '../transport/client';
+import { getTransport, currentServer, NO_MODULE } from '../transport/connection';
+import { setServerStatus } from '../transport/status';
 
 export interface AskCallbacks {
   /** Called with the full answer-so-far on every streamed chunk. */

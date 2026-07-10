@@ -10,7 +10,7 @@ import React from 'react';
 import { StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import Animated, { type AnimatedStyle } from 'react-native-reanimated';
 import { Trash2 } from 'lucide-react-native';
-import { mocha } from '../theme/catppuccin';
+import { mocha } from '../../theme/catppuccin';
 
 // Priority → pip color for the floating drag clone (kept tiny to avoid importing
 // the dashboard's full palette map).

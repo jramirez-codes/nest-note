@@ -9,7 +9,7 @@
  * tunnel it authenticates.
  */
 
-import { getValue, setValue, deleteValue } from '../storage/kv';
+import { getValue, setValue, deleteValue } from '../../storage/kv';
 import type { ServerAddress } from './client';
 import { isPairPayload, type PairPayload } from './protocol';
 

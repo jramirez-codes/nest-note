@@ -5,13 +5,13 @@ import {
   type WebViewMessageEvent,
   type WebViewProps,
 } from 'react-native-webview';
-import { EDITOR_HTML } from '../webview/editorHtml';
-import { pairFromPayload } from '../server/aiController';
-import { removeProject } from '../server/agentController';
-import { detach as detachRun, type RunSink } from '../server/runRegistry';
-import { stopPlayback, onPlaybackEnded } from '../server/audioController';
-import ConfirmDialog from './ConfirmDialog';
-import QrPairModal from './QrPairModal';
+import { EDITOR_HTML } from '../../webview/editorHtml';
+import { pairFromPayload } from '../../server/controllers/aiController';
+import { removeProject } from '../../server/controllers/agentController';
+import { detach as detachRun, type RunSink } from '../../server/runRegistry';
+import { stopPlayback, onPlaybackEnded } from '../../server/controllers/audioController';
+import ConfirmDialog from '../modals/ConfirmDialog';
+import QrPairModal from '../modals/QrPairModal';
 import { handleEditorMessage } from './noteEditorBridge';
 
 // react-native-webview@14's class-component typings resolve to `never` under

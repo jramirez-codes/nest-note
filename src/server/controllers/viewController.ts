@@ -16,7 +16,7 @@
  */
 
 import { getTransport, currentServer, NO_MODULE } from './aiController';
-import { setServerStatus } from './status';
+import { setServerStatus } from '../transport/status';
 
 export interface ViewResult {
   /** The plaintext iframe URL, present on success. */

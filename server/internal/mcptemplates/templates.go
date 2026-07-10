@@ -1,4 +1,8 @@
-package main
+// Package mcptemplates holds the raw Go-source templates the server writes out
+// when scaffolding generated MCP servers (see scaffold.go). Almost everything in
+// this file is a string literal — the generated programs' own source — not real
+// declarations in this package, so it has no dependency on the rest of the server.
+package mcptemplates
 
 import "strings"
 
@@ -289,12 +293,12 @@ func readAllPages(notesDir string) string {
 }
 `
 
-// mcpxTmpl is a tiny, stdlib-only MCP server over stdio: newline-delimited
+// MCPXTmpl is a tiny, stdlib-only MCP server over stdio: newline-delimited
 // JSON-RPC 2.0 with just the methods Claude needs (initialize, tools/list,
 // tools/call, ping). It is copied verbatim into each generated module so the
 // capability servers have no external dependencies and no network fetch on
 // first build.
-var mcpxTmpl = bt(`package mcpx
+var MCPXTmpl = bt(`package mcpx
 
 import (
 	"bufio"
@@ -467,9 +471,9 @@ func (s *Server) callTool(name string, args map[string]any) map[string]any {
 }
 `)
 
-// dogMainTmpl is the seed capability server: a template to copy when adding a
+// DogMainTmpl is the seed capability server: a template to copy when adding a
 // new server. Its "storage" is a stub — swap the handlers for real logic.
-var dogMainTmpl = bt(`package main
+var DogMainTmpl = bt(`package main
 
 import "ainotepad-mcp/mcpx"
 
@@ -503,23 +507,23 @@ func main() {
 }
 `)
 
-// dogCapabilityTmpl is read by the orchestrator's list_capabilities tool. Every
+// DogCapabilityTmpl is read by the orchestrator's list_capabilities tool. Every
 // capability server folder should carry one of these describing itself.
-var dogCapabilityTmpl = `{
+var DogCapabilityTmpl = `{
   "name": "dog",
   "summary": "Profile and notes about Jordan's dog.",
   "tools": ["dog_profile", "dog_add_note"]
 }
 `
 
-// orchestratorMainTmpl is the discovery + growth server. It still reports what
+// OrchestratorMainTmpl is the discovery + growth server. It still reports what
 // exists (list_capabilities), but it also keeps a persistent tally of the
 // subjects Claude reports each turn (record_subject) and decides, by a simple
 // mention threshold, when a subject has come up often enough to deserve its own
 // notes server. It never builds anything itself: request_new_server just drops
 // a request file that the Go server materialises on the next run. That keeps all
 // code generation on the trusted server side.
-var orchestratorMainTmpl = withPageHelpers(bt(`package main
+var OrchestratorMainTmpl = withPageHelpers(bt(`package main
 
 import (
 	"encoding/json"
@@ -1427,13 +1431,13 @@ func listCapabilities() string {
 }
 `))
 
-// factStoreMainTmpl is the body of a generated per-subject notes server. The Go server
+// FactStoreMainTmpl is the body of a generated per-subject notes server. The Go server
 // substitutes __NAME__ for the subject slug before writing it. Notes are a folder of
 // "#N (Title).md" pages at <mcp>/__NAME__/notes/, resolved from the running binary's
 // location (<mcp>/bin/__NAME__) so they move with the root. The shared page helpers
 // (spliced in at //__PAGE_HELPERS__) do the parsing/upserting/appendix work: add_note
 // files a bullet on a page, notes returns every page, and rewrite replaces one page.
-var factStoreMainTmpl = withPageHelpers(bt(`package main
+var FactStoreMainTmpl = withPageHelpers(bt(`package main
 
 import (
 	"encoding/json"

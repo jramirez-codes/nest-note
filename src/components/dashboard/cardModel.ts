@@ -4,7 +4,7 @@
  * easy to find and reason about on their own.
  */
 import { mocha } from '../../theme/catppuccin';
-import type { DashboardCard } from '../../server/aiController';
+import type { DashboardCard } from '../../server/controllers/aiController';
 
 // Priority ranks so a higher-urgency card sorts first. Unknown strings fall to
 // the middle (normal) so a novel priority never crashes the sort.

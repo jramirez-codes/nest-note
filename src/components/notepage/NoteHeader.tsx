@@ -1,10 +1,10 @@
 import React, { useCallback, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { Plus } from 'lucide-react-native';
-import type { Note } from '../types/note';
-import { useTheme } from '../theme/colors';
-import { formatNoteDate } from '../utils/date';
-import ConfirmDialog from './ConfirmDialog';
+import type { Note } from '../../types/note';
+import { useTheme } from '../../theme/colors';
+import { formatNoteDate } from '../../utils/date';
+import ConfirmDialog from '../modals/ConfirmDialog';
 
 /** Greetings for the dashboard header, rotated one per day. */
 const GREETINGS = [

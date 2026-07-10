@@ -1,4 +1,4 @@
-import { deleteRecordings } from '../server/audioController';
+import { deleteRecordings } from '../server/controllers/audioController';
 
 /**
  * Recording-file lifecycle glue for the storage layer.

@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useSharedValue, type SharedValue } from 'react-native-reanimated';
-import type { DashboardCard } from '../server/aiController';
+import type { DashboardCard } from '../server/controllers/aiController';
 
 /**
  * The UI-thread values that drive the drag-to-delete interaction, written by the

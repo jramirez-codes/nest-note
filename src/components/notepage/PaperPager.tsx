@@ -9,7 +9,7 @@ import React, {
 } from 'react';
 import { Animated, Keyboard, PanResponder, StyleSheet, View } from 'react-native';
 import type { PanResponderGestureState } from 'react-native';
-import { theme } from '../theme/colors';
+import { theme } from '../../theme/colors';
 
 // A shared frozen "0" translate for the static sheet sitting underneath.
 const staticZero = new Animated.Value(0);

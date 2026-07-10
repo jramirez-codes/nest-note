@@ -25,11 +25,11 @@ import {
   runNotesChat,
   runAggTasks,
   type AskContext,
-} from './aiController';
-import { runCommand } from './codeController';
-import { startCode } from './agentController';
-import type { StreamEvent } from './protocol';
-import type { SessionOpts } from './client';
+} from './controllers/aiController';
+import { runCommand } from './controllers/codeController';
+import { startCode } from './controllers/agentController';
+import type { StreamEvent } from './transport/protocol';
+import type { SessionOpts } from './transport/client';
 
 // Strip ANSI escape / color sequences so a dev server's output reads as plain
 // text in the terminal card (v1 renders no color), and normalise CRLF to LF.

@@ -15,12 +15,12 @@
 import type React from 'react';
 import { Linking } from 'react-native';
 import type { WebViewMessageEvent } from 'react-native-webview';
-import { fetchLinkPreview } from '../utils/linkPreview';
-import { getPayloadsForPage, upsertPayload, deletePayload } from '../storage';
-import { pairFromPayload, fetchDashboardState } from '../server/aiController';
-import { fetchProjects } from '../server/agentController';
-import { fetchViewUrl } from '../server/viewController';
-import { updateServer, waitForServerBack } from '../server/updateController';
+import { fetchLinkPreview } from '../../utils/linkPreview';
+import { getPayloadsForPage, upsertPayload, deletePayload } from '../../storage';
+import { pairFromPayload, fetchDashboardState } from '../../server/controllers/aiController';
+import { fetchProjects } from '../../server/controllers/agentController';
+import { fetchViewUrl } from '../../server/controllers/viewController';
+import { updateServer, waitForServerBack } from '../../server/controllers/updateController';
 import {
   startAsk,
   startNotesChat,
@@ -36,7 +36,7 @@ import {
   attach as attachRun,
   resume as resumeRun,
   type RunSink,
-} from '../server/runRegistry';
+} from '../../server/runRegistry';
 import {
   ensureRecordingPermissions,
   startRecording,
@@ -46,7 +46,7 @@ import {
   exportRecording,
   playRecording,
   pausePlayback,
-} from '../server/audioController';
+} from '../../server/controllers/audioController';
 
 /** The union of shapes the editor can post over the bridge (loosely typed; each
  *  branch narrows the fields it needs). */

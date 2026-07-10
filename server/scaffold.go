@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"ainotepad/server/internal/mcptemplates"
 )
 
 // mcpSetup is the outcome of scaffolding a root: where Claude should run and
@@ -62,10 +64,10 @@ func scaffoldRoot(root string, threshold int) (mcpSetup, error) {
 	// so their modtimes stay stable and the build guard below stays effective.
 	for _, f := range []struct{ path, content string }{
 		{filepath.Join(mcpDir, "go.mod"), goModTmpl("ainotepad-mcp")},
-		{filepath.Join(mcpDir, "mcpx", "mcpx.go"), mcpxTmpl},
+		{filepath.Join(mcpDir, "mcpx", "mcpx.go"), mcptemplates.MCPXTmpl},
 		{filepath.Join(orchDir, "go.mod"), goModTmpl("ainotepad-orchestrator")},
-		{filepath.Join(orchDir, "mcpx", "mcpx.go"), mcpxTmpl},
-		{filepath.Join(orchDir, "main.go"), orchestratorMainTmpl},
+		{filepath.Join(orchDir, "mcpx", "mcpx.go"), mcptemplates.MCPXTmpl},
+		{filepath.Join(orchDir, "main.go"), mcptemplates.OrchestratorMainTmpl},
 	} {
 		if err := writeIfChanged(f.path, f.content); err != nil {
 			return mcpSetup{}, err
@@ -73,10 +75,10 @@ func scaffoldRoot(root string, threshold int) (mcpSetup, error) {
 	}
 
 	// User-owned seed: only written if absent so edits survive a restart.
-	if err := writeIfMissing(filepath.Join(mcpDir, "dog", "main.go"), dogMainTmpl); err != nil {
+	if err := writeIfMissing(filepath.Join(mcpDir, "dog", "main.go"), mcptemplates.DogMainTmpl); err != nil {
 		return mcpSetup{}, err
 	}
-	if err := writeIfMissing(filepath.Join(mcpDir, "dog", "capability.json"), dogCapabilityTmpl); err != nil {
+	if err := writeIfMissing(filepath.Join(mcpDir, "dog", "capability.json"), mcptemplates.DogCapabilityTmpl); err != nil {
 		return mcpSetup{}, err
 	}
 
@@ -251,7 +253,7 @@ func seedSubjectServer(mcpDir, name, summary string) error {
 	}
 
 	// Query layer: regenerated from the template so a template change rebuilds.
-	main := strings.ReplaceAll(factStoreMainTmpl, "__NAME__", name)
+	main := strings.ReplaceAll(mcptemplates.FactStoreMainTmpl, "__NAME__", name)
 	cap, _ := json.MarshalIndent(map[string]any{
 		"name":    name,
 		"summary": summary,

@@ -1,7 +1,7 @@
 import React from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Platform, View } from 'react-native';
 import NoteEditorWebView from './NoteEditorWebView';
-import { useTheme } from '../theme/colors';
+import { useTheme } from '../../theme/colors';
 
 const noop = () => {};
 

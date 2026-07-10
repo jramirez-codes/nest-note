@@ -12,7 +12,7 @@ import {
   useCameraDevice,
   useCodeScanner,
 } from 'react-native-vision-camera';
-import { theme } from '../theme/colors';
+import { theme } from '../../theme/colors';
 
 interface QrPairModalProps {
   visible: boolean;

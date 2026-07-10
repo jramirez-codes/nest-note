@@ -1,6 +1,6 @@
 import React, { useCallback } from 'react';
 import { KeyboardAvoidingView, Platform, View } from 'react-native';
-import type { Note } from '../types/note';
+import type { Note } from '../../types/note';
 import NoteEditorWebView from './NoteEditorWebView';
 
 interface NotePageProps {

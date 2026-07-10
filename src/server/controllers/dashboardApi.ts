@@ -9,9 +9,9 @@
  * Writes: merge-suggestion actions and card complete/dismiss.
  */
 
-import { getTransport, currentServer, serverOrigin, NO_MODULE } from './connection';
-import { setServerStatus } from './status';
-import type { PairedServer } from './store';
+import { getTransport, currentServer, serverOrigin, NO_MODULE } from '../transport/connection';
+import { setServerStatus } from '../transport/status';
+import type { PairedServer } from '../transport/store';
 
 /**
  * One markdown page in a notebook's notes/ folder. `num` is the page number (0 = the

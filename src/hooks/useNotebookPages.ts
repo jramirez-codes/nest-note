@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { fetchNotebookIndex, fetchPage, type NotePage } from '../server/aiController';
+import { fetchNotebookIndex, fetchPage, type NotePage } from '../server/controllers/aiController';
 
 export interface UseNotebookPagesResult {
   /** Ordered page stubs (Appendix first); empty until the index loads. */

@@ -8,11 +8,11 @@
  * lifting (pinned socket, multi-turn stream-json framing) lives in ./agentClient.
  */
 
-import { openAgent, listProjects, deleteProject, type AgentHandle } from './agentClient';
+import { openAgent, listProjects, deleteProject, type AgentHandle } from '../transport/agentClient';
 import { getTransport, currentServer, NO_MODULE } from './aiController';
-import { setServerStatus } from './status';
-import type { StreamEvent } from './protocol';
-import type { SessionOpts } from './client';
+import { setServerStatus } from '../transport/status';
+import type { StreamEvent } from '../transport/protocol';
+import type { SessionOpts } from '../transport/client';
 
 export interface CodeCallbacks {
   /** A parsed Claude stream event: assistant text/deltas, tool calls/results, results. */

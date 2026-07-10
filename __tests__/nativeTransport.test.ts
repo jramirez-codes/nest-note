@@ -35,7 +35,7 @@ jest.mock('react-native', () => ({
   },
 }));
 
-import { createNativeTransport } from '../src/server/nativeTransport';
+import { createNativeTransport } from '../src/server/transport/nativeTransport';
 
 test('an error event fires both onError and onClose (contract: onClose always fires when the socket ends)', async () => {
   const t = createNativeTransport();

@@ -18,8 +18,8 @@ import {
   type LucideIcon,
 } from 'lucide-react-native';
 import type { ThemeColors } from '../../theme/colors';
-import type { DashboardCard } from '../../server/aiController';
-import type { CardDragShared } from '../cardDrag';
+import type { DashboardCard } from '../../server/controllers/aiController';
+import type { CardDragShared } from '../../hooks/useCardDrag';
 import { prio, relDate, type TaskSort } from './cardModel';
 
 // Wraps a card in a long-press pan gesture: hold ~220ms to lift it, drag up onto

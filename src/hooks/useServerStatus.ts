@@ -15,8 +15,8 @@ import {
   getServerStatus,
   subscribeServerStatus,
   type ServerStatus,
-} from '../server/status';
-import { pingServer } from '../server/aiController';
+} from '../server/transport/status';
+import { pingServer } from '../server/controllers/aiController';
 import { fireAndForget } from '../utils/async';
 
 /** How often to re-probe while the app is foregrounded. */

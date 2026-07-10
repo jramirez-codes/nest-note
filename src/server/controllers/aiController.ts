@@ -23,7 +23,7 @@ export {
   pingServer,
   pairFromPayload,
   NO_MODULE,
-} from './connection';
+} from '../transport/connection';
 
 export {
   runAsk,

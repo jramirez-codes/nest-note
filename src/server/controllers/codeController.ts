@@ -8,10 +8,10 @@
  * (pinned socket, live duplex framing) lives in ./execClient.
  */
 
-import { exec, type ExecHandle } from './execClient';
+import { exec, type ExecHandle } from '../transport/execClient';
 import { getTransport, currentServer, NO_MODULE } from './aiController';
-import { setServerStatus } from './status';
-import type { SessionOpts } from './client';
+import { setServerStatus } from '../transport/status';
+import type { SessionOpts } from '../transport/client';
 
 export interface RunCallbacks {
   /** A chunk of live output, tagged with its stream. */
