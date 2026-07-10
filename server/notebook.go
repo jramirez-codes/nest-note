@@ -209,7 +209,16 @@ func upsertPage(mcpDir, slug, title string, bullets []string) error {
 	}
 	for _, b := range bullets {
 		if b = strings.TrimSpace(b); b != "" {
-			body += "- " + b + "\n"
+			// A block that's already a heading (e.g. a task-log entry) is inserted as
+			// its own block, blank-line separated, rather than folded into a bullet.
+			if strings.HasPrefix(b, "#") {
+				if !strings.HasSuffix(body, "\n\n") {
+					body += "\n"
+				}
+				body += b + "\n\n"
+			} else {
+				body += "- " + b + "\n"
+			}
 		}
 	}
 	if err := os.WriteFile(filepath.Join(dir, pageFileName(num, title)), []byte(body), 0o644); err != nil {
