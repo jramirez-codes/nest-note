@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -281,7 +282,7 @@ func actionHandler(token, root string) http.HandlerFunc {
 				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
-			if !updateCard(mcpDir, req.Source, req.ID, func(c *dashCard) { c.Done = req.Action == "complete" }) {
+			if _, ok := updateCard(mcpDir, req.Source, req.ID, func(c *dashCard) { c.Done = req.Action == "complete" }); !ok {
 				http.Error(w, "card not found", http.StatusNotFound)
 				return
 			}
@@ -293,10 +294,16 @@ func actionHandler(token, root string) http.HandlerFunc {
 					http.Error(w, "bad request", http.StatusBadRequest)
 					return
 				}
-				if !updateCard(mcpDir, req.Source, req.ID, func(c *dashCard) { c.Dismissed = true }) {
+				var dismissed dashCard
+				slug, ok := updateCard(mcpDir, req.Source, req.ID, func(c *dashCard) {
+					c.Dismissed = true
+					dismissed = *c
+				})
+				if !ok {
 					http.Error(w, "card not found", http.StatusNotFound)
 					return
 				}
+				logTaskDismissal(mcpDir, slug, dismissed)
 				writeOK(w)
 				return
 			}
@@ -349,11 +356,12 @@ func writeOK(w http.ResponseWriter) {
 
 // updateCard finds mcp/<slug>/cards/<id>.json, applies mutate, bumps updated_at, and
 // writes it back. `hint` (the card's source notebook, when the caller knows it) is
-// tried first; otherwise every notebook is searched. Reports false when the card is
-// missing so the caller can 404. id and hint must already be validSlug-checked.
-func updateCard(mcpDir, hint, id string, mutate func(*dashCard)) bool {
-	try := func(slug string) bool {
-		path := filepath.Join(cardsDirFor(mcpDir, slug), id+".json")
+// tried first; otherwise every notebook is searched. Reports the notebook slug the
+// card was actually found under, and false when the card is missing so the caller
+// can 404. id and hint must already be validSlug-checked.
+func updateCard(mcpDir, hint, id string, mutate func(*dashCard)) (slug string, ok bool) {
+	try := func(s string) bool {
+		path := filepath.Join(cardsDirFor(mcpDir, s), id+".json")
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return false
@@ -368,18 +376,75 @@ func updateCard(mcpDir, hint, id string, mutate func(*dashCard)) bool {
 		if err != nil {
 			return false
 		}
-		return os.WriteFile(path, append(out, '\n'), 0o644) == nil
-	}
-	if validSlug(hint) && try(hint) {
+		if os.WriteFile(path, append(out, '\n'), 0o644) != nil {
+			return false
+		}
+		slug = s
 		return true
 	}
-	for _, slug := range listNotebookSlugs(mcpDir) {
-		if slug == hint {
+	if validSlug(hint) && try(hint) {
+		return slug, true
+	}
+	for _, s := range listNotebookSlugs(mcpDir) {
+		if s == hint {
 			continue
 		}
-		if try(slug) {
-			return true
+		if try(s) {
+			return slug, true
 		}
 	}
-	return false
+	return "", false
+}
+
+// logTaskDismissal appends one line to the owning notebook's "Task Log" page recording
+// that a task was deleted: whether it was completed or dropped, and how long it lived
+// (created_at -> the moment it was dismissed). The trailing [task_log ...] tag is a
+// stable key=value format meant for later regex extraction; the prose ahead of it is
+// for reading the notebook directly.
+func logTaskDismissal(mcpDir, slug string, c dashCard) {
+	if slug == "" || c.Kind != "task" {
+		return
+	}
+	_ = upsertPage(mcpDir, slug, "Task Log", []string{taskLogLine(slug, c)})
+}
+
+func taskLogLine(slug string, c dashCard) string {
+	now := time.Now().UTC()
+	status, verb := "dropped", "dropped"
+	if c.Done {
+		status, verb = "done", "completed"
+	}
+	created, err := time.Parse(time.RFC3339, c.CreatedAt)
+	if err != nil {
+		created = now
+	}
+	dur := now.Sub(created)
+	return fmt.Sprintf(
+		"Task %q %s after %s (filed %s -> closed %s). [task_log status=%s id=%s source=%s created_at=%s closed_at=%s duration_s=%d]",
+		c.Title, verb, humanDuration(dur),
+		created.Format("2006-01-02 15:04 MST"), now.Format("2006-01-02 15:04 MST"),
+		status, c.ID, slug, c.CreatedAt, now.Format(time.RFC3339), int64(dur.Seconds()),
+	)
+}
+
+// humanDuration renders a duration as its two most significant units (days+hours,
+// hours+minutes, minutes+seconds, or bare seconds) for a short, readable "took X" note.
+func humanDuration(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	days := int(d.Hours()) / 24
+	hours := int(d.Hours()) % 24
+	mins := int(d.Minutes()) % 60
+	secs := int(d.Seconds()) % 60
+	switch {
+	case days > 0:
+		return fmt.Sprintf("%dd %dh", days, hours)
+	case hours > 0:
+		return fmt.Sprintf("%dh %dm", hours, mins)
+	case mins > 0:
+		return fmt.Sprintf("%dm %ds", mins, secs)
+	default:
+		return fmt.Sprintf("%ds", secs)
+	}
 }

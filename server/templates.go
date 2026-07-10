@@ -1097,7 +1097,7 @@ func dismissCard(args map[string]any) (string, error) {
 		return "no card id given.", nil
 	}
 	hint := slug(fmt.Sprintf("%v", args["source"]))
-	path, _, ok := findCard(hint, id)
+	path, foundSource, ok := findCard(hint, id)
 	if !ok {
 		return fmt.Sprintf("no card found with id %q. Call list_cards to find the right id.", id), nil
 	}
@@ -1115,7 +1115,61 @@ func dismissCard(args map[string]any) (string, error) {
 	if err := os.WriteFile(path, append(out, '\n'), 0o644); err != nil {
 		return "", err
 	}
+	logTaskDismissal(foundSource, c)
 	return fmt.Sprintf("dismissed card %q (id %s).", c.Title, id), nil
+}
+
+// logTaskDismissal appends one line to the owning subject's "Task Log" notebook page
+// recording that a task was removed: whether it was completed or dropped, and how long
+// it lived (created_at -> the moment it was dismissed). The trailing [task_log ...] tag
+// is a stable key=value format meant for later regex extraction; the prose ahead of it
+// is for reading the notebook directly.
+func logTaskDismissal(source string, c card) {
+	if source == "" || c.Kind != "task" {
+		return
+	}
+	_ = upsertPageIn(notesDirFor(source), "Task Log", []string{taskLogLine(source, c)})
+}
+
+func taskLogLine(source string, c card) string {
+	now := time.Now().UTC()
+	status, verb := "dropped", "dropped"
+	if c.Done {
+		status, verb = "done", "completed"
+	}
+	created, err := time.Parse(time.RFC3339, c.CreatedAt)
+	if err != nil {
+		created = now
+	}
+	dur := now.Sub(created)
+	return fmt.Sprintf(
+		"Task %q %s after %s (filed %s -> closed %s). [task_log status=%s id=%s source=%s created_at=%s closed_at=%s duration_s=%d]",
+		c.Title, verb, humanDuration(dur),
+		created.Format("2006-01-02 15:04 MST"), now.Format("2006-01-02 15:04 MST"),
+		status, c.ID, source, c.CreatedAt, now.Format(time.RFC3339), int64(dur.Seconds()),
+	)
+}
+
+// humanDuration renders a duration as its two most significant units (days+hours,
+// hours+minutes, minutes+seconds, or bare seconds) for a short, readable "took X" note.
+func humanDuration(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	days := int(d.Hours()) / 24
+	hours := int(d.Hours()) % 24
+	mins := int(d.Minutes()) % 60
+	secs := int(d.Seconds()) % 60
+	switch {
+	case days > 0:
+		return fmt.Sprintf("%dd %dh", days, hours)
+	case hours > 0:
+		return fmt.Sprintf("%dh %dm", hours, mins)
+	case mins > 0:
+		return fmt.Sprintf("%dm %ds", mins, secs)
+	default:
+		return fmt.Sprintf("%ds", secs)
+	}
 }
 
 // listCards reports the current cards across every notebook (or, when source is
