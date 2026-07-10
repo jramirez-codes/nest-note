@@ -186,7 +186,8 @@ func nextPageNum(pages []notePage) int {
 // upsertPage files bullets under a titled content page: an existing content page with
 // the same title (case-insensitive) has the bullets appended; otherwise a new
 // next-numbered page is created. The Appendix is regenerated and the manifest touched
-// so the index and recency stay current.
+// so the index and recency stay current. Creating a new non-Task-Log page pushes any
+// existing Task Log page(s) to higher numbers so they stay the notebook's last pages.
 func upsertPage(mcpDir, slug, title string, bullets []string) error {
 	title = sanitizePageTitle(title)
 	dir := notesDirFor(mcpDir, slug)
@@ -196,12 +197,19 @@ func upsertPage(mcpDir, slug, title string, bullets []string) error {
 	pages := listPages(mcpDir, slug)
 	num := nextPageNum(pages)
 	body := "# " + title + "\n"
+	reused := false
 	// An existing content page with the same title (case-insensitive) is reused —
 	// keep its number AND its original title so we append in place, not fork a file.
 	for _, p := range pages {
 		if p.Num != appendixNum && strings.EqualFold(p.Title, title) {
 			num, title, body = p.Num, p.Title, p.Body
+			reused = true
 			break
+		}
+	}
+	if _, isLog := taskLogSeq(title); !reused && !isLog {
+		if err := pushTaskLogPagesAfter(mcpDir, slug, num, pages); err != nil {
+			return err
 		}
 	}
 	if !strings.HasSuffix(body, "\n") {
@@ -228,6 +236,54 @@ func upsertPage(mcpDir, slug, title string, bullets []string) error {
 		return err
 	}
 	return touchNotebook(mcpDir, slug, "")
+}
+
+// taskLogSeq reports whether title is a Task Log page's title ("Task Log" or
+// "Task Log N"), returning its sequence number (1 for the bare title).
+func taskLogSeq(title string) (int, bool) {
+	switch {
+	case title == "Task Log":
+		return 1, true
+	case strings.HasPrefix(title, "Task Log "):
+		if v, err := strconv.Atoi(strings.TrimPrefix(title, "Task Log ")); err == nil && v > 1 {
+			return v, true
+		}
+	}
+	return 0, false
+}
+
+// pushTaskLogPagesAfter renumbers any existing Task Log pages so they all sit at
+// numbers greater than afterNum, in their existing sequence order — keeping them
+// the notebook's last pages whenever a new non-Task-Log page claims a number.
+// No-op if there's no Task Log page yet.
+func pushTaskLogPagesAfter(mcpDir, slug string, afterNum int, pages []notePage) error {
+	var logs []notePage
+	for _, p := range pages {
+		if _, ok := taskLogSeq(p.Title); ok {
+			logs = append(logs, p)
+		}
+	}
+	if len(logs) == 0 {
+		return nil
+	}
+	sort.Slice(logs, func(i, j int) bool {
+		ni, _ := taskLogSeq(logs[i].Title)
+		nj, _ := taskLogSeq(logs[j].Title)
+		return ni < nj
+	})
+	dir := notesDirFor(mcpDir, slug)
+	next := afterNum + 1
+	for _, p := range logs {
+		if p.Num != next {
+			oldPath := filepath.Join(dir, p.File)
+			newPath := filepath.Join(dir, pageFileName(next, p.Title))
+			if err := os.Rename(oldPath, newPath); err != nil {
+				return err
+			}
+		}
+		next++
+	}
+	return nil
 }
 
 // rebuildAppendix regenerates a notebook's "#0 (Appendix).md": the notebook title and

@@ -432,16 +432,7 @@ func taskLogTargetTitle(mcpDir, slug string) string {
 func latestTaskLogPage(pages []notePage) (int, string) {
 	best, body := 0, ""
 	for _, p := range pages {
-		n := 0
-		switch {
-		case p.Title == "Task Log":
-			n = 1
-		case strings.HasPrefix(p.Title, "Task Log "):
-			if v, err := strconv.Atoi(strings.TrimPrefix(p.Title, "Task Log ")); err == nil && v > 1 {
-				n = v
-			}
-		}
-		if n > best {
+		if n, ok := taskLogSeq(p.Title); ok && n > best {
 			best, body = n, p.Body
 		}
 	}
@@ -462,10 +453,10 @@ func countTaskLogEntries(body string) int {
 	return n
 }
 
-// taskLogLine renders one dismissal as its own "## " heading (the task, bold, with
-// its outcome) followed by plain bullets for the details — readable directly in the
-// notebook, no machine-only tag. No source field: the entry already lives on the
-// owning subject's own Task Log page.
+// taskLogLine renders one dismissal as its own "## " heading (just the task title)
+// followed by plain bullets for the details — readable directly in the notebook, no
+// machine-only tag. No source field: the entry already lives on the owning
+// subject's own Task Log page.
 func taskLogLine(c dashCard) string {
 	now := time.Now().UTC()
 	verb := "Dropped"
@@ -478,7 +469,8 @@ func taskLogLine(c dashCard) string {
 	}
 	dur := now.Sub(created)
 	return strings.Join([]string{
-		fmt.Sprintf("## **%s** — %s after %s", c.Title, verb, humanDuration(dur)),
+		fmt.Sprintf("## %s", c.Title),
+		fmt.Sprintf("- %s after %s", verb, humanDuration(dur)),
 		fmt.Sprintf("- Filed %s → Closed %s", created.Format("2006-01-02 15:04 MST"), now.Format("2006-01-02 15:04 MST")),
 		fmt.Sprintf("- id: `%s`", c.ID),
 	}, "\n")

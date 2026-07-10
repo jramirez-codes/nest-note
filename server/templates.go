@@ -143,7 +143,9 @@ func rebuildAppendixIn(notesDir string) error {
 
 // upsertPageIn files bullets under a titled content page: an existing content page with
 // the same title (case-insensitive) has the bullets appended; otherwise a new
-// next-numbered page is created. Regenerates the Appendix.
+// next-numbered page is created. Regenerates the Appendix. Creating a new non-Task-Log
+// page pushes any existing Task Log page(s) to higher numbers so they stay the
+// notebook's last pages.
 func upsertPageIn(notesDir, title string, bullets []string) error {
 	title = sanitizePageTitle(title)
 	if err := os.MkdirAll(notesDir, 0o755); err != nil {
@@ -152,12 +154,19 @@ func upsertPageIn(notesDir, title string, bullets []string) error {
 	pages := listPagesIn(notesDir)
 	num := nextPageNum(pages)
 	body := "# " + title + "\n"
+	reused := false
 	// Reuse an existing content page with the same title (case-insensitive): keep its
 	// number AND original title so we append in place rather than fork a new file.
 	for _, p := range pages {
 		if p.Num != 0 && strings.EqualFold(p.Title, title) {
 			num, title, body = p.Num, p.Title, p.Body
+			reused = true
 			break
+		}
+	}
+	if _, isLog := taskLogSeq(title); !reused && !isLog {
+		if err := pushTaskLogPagesAfter(notesDir, num, pages); err != nil {
+			return err
 		}
 	}
 	if !strings.HasSuffix(body, "\n") {
@@ -181,6 +190,53 @@ func upsertPageIn(notesDir, title string, bullets []string) error {
 		return err
 	}
 	return rebuildAppendixIn(notesDir)
+}
+
+// taskLogSeq reports whether title is a Task Log page's title ("Task Log" or
+// "Task Log N"), returning its sequence number (1 for the bare title).
+func taskLogSeq(title string) (int, bool) {
+	switch {
+	case title == "Task Log":
+		return 1, true
+	case strings.HasPrefix(title, "Task Log "):
+		if v, err := strconv.Atoi(strings.TrimPrefix(title, "Task Log ")); err == nil && v > 1 {
+			return v, true
+		}
+	}
+	return 0, false
+}
+
+// pushTaskLogPagesAfter renumbers any existing Task Log pages so they all sit at
+// numbers greater than afterNum, in their existing sequence order — keeping them
+// the notebook's last pages whenever a new non-Task-Log page claims a number.
+// No-op if there's no Task Log page yet.
+func pushTaskLogPagesAfter(notesDir string, afterNum int, pages []page) error {
+	var logs []page
+	for _, p := range pages {
+		if _, ok := taskLogSeq(p.Title); ok {
+			logs = append(logs, p)
+		}
+	}
+	if len(logs) == 0 {
+		return nil
+	}
+	sort.Slice(logs, func(i, j int) bool {
+		ni, _ := taskLogSeq(logs[i].Title)
+		nj, _ := taskLogSeq(logs[j].Title)
+		return ni < nj
+	})
+	next := afterNum + 1
+	for _, p := range logs {
+		if p.Num != next {
+			oldPath := filepath.Join(notesDir, p.File)
+			newPath := filepath.Join(notesDir, pageFileName(next, p.Title))
+			if err := os.Rename(oldPath, newPath); err != nil {
+				return err
+			}
+		}
+		next++
+	}
+	return nil
 }
 
 // rewritePageIn replaces one page's body, matching target by number ("1"/"#1") or
@@ -1165,16 +1221,7 @@ func taskLogTargetTitle(notesDir string) string {
 func latestTaskLogPage(pages []page) (int, string) {
 	best, body := 0, ""
 	for _, p := range pages {
-		n := 0
-		switch {
-		case p.Title == "Task Log":
-			n = 1
-		case strings.HasPrefix(p.Title, "Task Log "):
-			if v, err := strconv.Atoi(strings.TrimPrefix(p.Title, "Task Log ")); err == nil && v > 1 {
-				n = v
-			}
-		}
-		if n > best {
+		if n, ok := taskLogSeq(p.Title); ok && n > best {
 			best, body = n, p.Body
 		}
 	}
@@ -1195,10 +1242,10 @@ func countTaskLogEntries(body string) int {
 	return n
 }
 
-// taskLogLine renders one dismissal as its own "## " heading (the task, bold, with
-// its outcome) followed by plain bullets for the details — readable directly in the
-// notebook, no machine-only tag. No source field: the entry already lives on the
-// owning subject's own Task Log page.
+// taskLogLine renders one dismissal as its own "## " heading (just the task title)
+// followed by plain bullets for the details — readable directly in the notebook, no
+// machine-only tag. No source field: the entry already lives on the owning
+// subject's own Task Log page.
 func taskLogLine(c card) string {
 	now := time.Now().UTC()
 	verb := "Dropped"
@@ -1211,7 +1258,8 @@ func taskLogLine(c card) string {
 	}
 	dur := now.Sub(created)
 	return strings.Join([]string{
-		fmt.Sprintf("## **%s** — %s after %s", c.Title, verb, humanDuration(dur)),
+		fmt.Sprintf("## %s", c.Title),
+		fmt.Sprintf("- %s after %s", verb, humanDuration(dur)),
 		fmt.Sprintf("- Filed %s → Closed %s", created.Format("2006-01-02 15:04 MST"), now.Format("2006-01-02 15:04 MST")),
 		fmt.Sprintf("- id: %BT%%s%BT%", c.ID),
 	}, "\n")
