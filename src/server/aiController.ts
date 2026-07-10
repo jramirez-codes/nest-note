@@ -30,11 +30,13 @@ export {
   runClean,
   runIngest,
   runNotesChat,
+  runAggTasks,
   type AskCallbacks,
   type AskHandle,
   type AskContext,
   type CleanCallbacks,
   type IngestCallbacks,
+  type AggTasksCallbacks,
 } from './assistantRuns';
 
 export {

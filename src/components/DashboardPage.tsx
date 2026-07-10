@@ -22,9 +22,22 @@ import {
   type DashboardState,
   type DashboardSuggestion,
 } from '../server/aiController';
-import { compareCards, compareTasks, humanizeKind } from './dashboard/cardModel';
+import {
+  compareCards,
+  compareTasksBy,
+  humanizeKind,
+  TASK_PAGE_SIZE,
+  type TaskSort,
+} from './dashboard/cardModel';
 import { NotebookSwitcher, type NotebookOption } from './dashboard/NotebookSwitcher';
-import { DraggableCard, IdeaCard, SectionHeader, TaskRow } from './dashboard/DashboardCards';
+import {
+  DraggableCard,
+  IdeaCard,
+  Pager,
+  SectionHeader,
+  TaskRow,
+  TaskSortToggle,
+} from './dashboard/DashboardCards';
 
 interface DashboardPageProps {
   /** Exact page width so the sheet fills its slot in the pager. */
@@ -79,6 +92,15 @@ function DashboardPage({
   // The card currently lifted, kept locally so only this page dims its source row
   // (the screen tracks its own copy for the floating clone).
   const [liftedId, setLiftedId] = useState<string | null>(null);
+
+  // The Tasks section's sort toggle and current page (reset to page 0 whenever the
+  // sort or notebook changes, since the old page may no longer line up).
+  const [taskSort, setTaskSort] = useState<TaskSort>('priority');
+  const [taskPage, setTaskPage] = useState(0);
+  const changeTaskSort = useCallback((s: TaskSort) => {
+    setTaskSort(s);
+    setTaskPage(0);
+  }, []);
 
   // Guard against setState after unmount / after a newer fetch superseded this one.
   const reqSeq = useRef(0);
@@ -248,7 +270,7 @@ function DashboardPage({
   // Split cards into their sections. Tasks are first-class; every other kind is
   // grouped by kind and rendered through the generic idea-card grid, so a brand-new
   // kind appears immediately with no code change here.
-  const tasks = cards.filter(c => c.kind === 'task').sort(compareTasks);
+  const tasks = cards.filter(c => c.kind === 'task').sort(compareTasksBy(taskSort));
   const otherKinds: Record<string, DashboardCard[]> = {};
   for (const c of cards) {
     if (c.kind === 'task') continue;
@@ -258,6 +280,19 @@ function DashboardPage({
 
   const openTaskCount = tasks.filter(t => !t.done).length;
   const nothingAtAll = cards.length === 0 && suggestions.length === 0;
+
+  // Reset the pager whenever the notebook changes — a page index from one
+  // notebook's task list is meaningless against another's.
+  useEffect(() => setTaskPage(0), [selected.key]);
+
+  const taskPageCount = Math.max(1, Math.ceil(tasks.length / TASK_PAGE_SIZE));
+  // Clamp rather than resync via effect: cheap, and avoids a stale-page flash when
+  // e.g. completing the last task on the last page shrinks the list.
+  const safeTaskPage = Math.min(taskPage, taskPageCount - 1);
+  const pagedTasks = tasks.slice(
+    safeTaskPage * TASK_PAGE_SIZE,
+    safeTaskPage * TASK_PAGE_SIZE + TASK_PAGE_SIZE,
+  );
 
   // Shared drag props handed to every draggable card.
   const dragProps = {
@@ -324,12 +359,15 @@ function DashboardPage({
               </View>
             )}
 
-            {/* Tasks — one high-density surface with hairline dividers. */}
+            {/* Tasks — sort toggle, a high-density surface with hairline dividers, then a pager. */}
             {tasks.length > 0 && (
               <View className="mb-6">
                 <SectionHeader icon={ListChecks} title="Tasks" count={openTaskCount} colors={colors} />
+                <View className="mb-2">
+                  <TaskSortToggle sort={taskSort} onChange={changeTaskSort} colors={colors} />
+                </View>
                 <View className="overflow-hidden rounded-2xl border border-surface1 bg-surface">
-                  {tasks.map((card, i) => (
+                  {pagedTasks.map((card, i) => (
                     <View key={card.id}>
                       {i > 0 && <View className="ml-11 h-px bg-surface1/60" />}
                       <DraggableCard card={card} {...dragProps}>
@@ -343,6 +381,12 @@ function DashboardPage({
                       </DraggableCard>
                     </View>
                   ))}
+                  <Pager
+                    page={safeTaskPage}
+                    pageCount={taskPageCount}
+                    onChange={setTaskPage}
+                    colors={colors}
+                  />
                 </View>
               </View>
             )}

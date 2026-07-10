@@ -47,6 +47,7 @@ import {
   runProjectSource,
   deleteProjectSource,
   talkSubjectSource,
+  aggTasksSubjectSource,
   setCodeProjects,
   setTalkSubjects,
   aiCommandOnEnter,
@@ -163,15 +164,20 @@ const extensions = [
       runProjectSource,
       deleteProjectSource,
       talkSubjectSource,
+      aggTasksSubjectSource,
     ],
     icons: false,
     activateOnTyping: true,
-    // Picking `/code`, `/run`, `/delete` or `/talk` from the slash menu lands the
-    // caret on `/code `/`/run `/`/delete `/`/talk ` — all take a project or subject
-    // first, so re-open completion straight away and that list shows without
-    // waiting for a keystroke. Other commands close as usual.
+    // Picking `/code`, `/run`, `/delete`, `/talk` or `/agg-tasks` from the slash
+    // menu lands the caret on `/code `/`/run `/`/delete `/`/talk `/`/agg-tasks ` —
+    // all take a project or subject first, so re-open completion straight away and
+    // that list shows without waiting for a keystroke. Other commands close as usual.
     activateOnCompletion: c =>
-      c.label === '/code' || c.label === '/run' || c.label === '/delete' || c.label === '/talk',
+      c.label === '/code' ||
+      c.label === '/run' ||
+      c.label === '/delete' ||
+      c.label === '/talk' ||
+      c.label === '/agg-tasks',
     aboveCursor: false,
   }),
   openLinks,

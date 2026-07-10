@@ -9,6 +9,11 @@ import { c } from '../theme/palette.js';
 // on Enter in aiCommandOnEnter below.
 const SLASH_COMMANDS = [
   {
+    label: '/agg-tasks',
+    detail: 'Sweep a subject\'s whole notebook for action items and file one task card per item',
+    apply: '/agg-tasks ',
+  },
+  {
     label: '/ask',
     detail: 'Ask Claude a question — the answer streams into a card',
     apply: '/ask ',
@@ -148,40 +153,46 @@ export const codeProjectSource = makeProjectSource('code');
 export const runProjectSource = makeProjectSource('run');
 export const deleteProjectSource = makeProjectSource('delete');
 
-// --- subject autocomplete for `/talk <subject>` -------------------------------
+// --- subject autocomplete for `/talk <subject>` and `/agg-tasks <subject>` ----
 // A separate list from codeProjects above: this is the orchestrator's existing
 // MCP notebook slugs, not project directories. Kept in sync by RN pushing
 // window.__setTalkSubjects (see index.js) with the reply to each listSubjects
-// post. Starts empty; the first `/talk ` keystroke asks for the list and the
-// menu repopulates as soon as it lands. Typing a subject not in the list is
-// still valid — it just means /talk will create that notebook on first use.
+// post. Starts empty; the first keystroke of either command asks for the list
+// and the menu repopulates as soon as it lands. Typing a subject not in the
+// list is still valid for /talk (it creates that notebook on first use); for
+// /agg-tasks an unknown subject just means nothing to sweep.
 let talkSubjects = [];
 export function setTalkSubjects(names) {
   talkSubjects = Array.isArray(names) ? names.filter(n => typeof n === 'string') : [];
 }
 
-const TALK_SUBJECT_RE = /^\/ ?talk\s+(\S*)$/;
-
-// Mirrors projectSource (see makeProjectSource above) but reads talkSubjects and
-// asks for a fresh listSubjects reply instead of listProjects.
-export function talkSubjectSource(context) {
-  const line = context.state.doc.lineAt(context.pos);
-  const before = line.text.slice(0, context.pos - line.from);
-  const m = TALK_SUBJECT_RE.exec(before);
-  if (!m) return null;
-  // Ask RN to (re)send the current subject list; the reply refreshes talkSubjects
-  // and re-opens the menu (see window.__setTalkSubjects). Fire-and-forget — serve
-  // whatever's cached now.
-  post({ type: 'listSubjects' });
-  const word = m[1].toLowerCase();
-  const options = talkSubjects
-    .filter(name => name.toLowerCase().startsWith(word))
-    .map(name => ({ label: name, type: 'text', apply: name + ' ' }));
-  if (!options.length) return null;
-  // Replace just the partial name (from the caret back over m[1]), leaving the
-  // `/talk ` prefix intact; CM's own filter is off since we prefix-matched already.
-  return { from: context.pos - m[1].length, to: context.pos, options, filter: false };
+// Builds a completion source for `/<cmd> <subject>`, mirroring makeProjectSource
+// above but reading talkSubjects and asking for a fresh listSubjects reply
+// instead of listProjects.
+function makeSubjectSource(cmd) {
+  const re = new RegExp('^\\/ ?' + cmd + '\\s+(\\S*)$');
+  return function subjectSource(context) {
+    const line = context.state.doc.lineAt(context.pos);
+    const before = line.text.slice(0, context.pos - line.from);
+    const m = re.exec(before);
+    if (!m) return null;
+    // Ask RN to (re)send the current subject list; the reply refreshes talkSubjects
+    // and re-opens the menu (see window.__setTalkSubjects). Fire-and-forget — serve
+    // whatever's cached now.
+    post({ type: 'listSubjects' });
+    const word = m[1].toLowerCase();
+    const options = talkSubjects
+      .filter(name => name.toLowerCase().startsWith(word))
+      .map(name => ({ label: name, type: 'text', apply: name + ' ' }));
+    if (!options.length) return null;
+    // Replace just the partial name (from the caret back over m[1]), leaving the
+    // `/<cmd> ` prefix intact; CM's own filter is off since we prefix-matched already.
+    return { from: context.pos - m[1].length, to: context.pos, options, filter: false };
+  };
 }
+
+export const talkSubjectSource = makeSubjectSource('talk');
+export const aggTasksSubjectSource = makeSubjectSource('agg-tasks');
 
 // Enter on a `/ask <question>` or `/pair <payload>` line turns that line into a
 // card and hands the work to RN. Returns true to swallow the newline when it
@@ -276,6 +287,33 @@ export function aiCommandOnEnter(view) {
       selection: { anchor: line.from + marker.length + 1 },
     });
     post({ type: 'notesChat', id, subject, question: talk[2] });
+    return true;
+  }
+
+  // `/agg-tasks SUBJECT`: sweep that subject's whole notebook for action items and
+  // file a task card for each (fire-and-forget, like /clean and /ingest — the
+  // status chip updates in place with Claude's summary when it's done).
+  const aggTasks = /^\/agg-tasks\s+(\S+)\s*$/.exec(text);
+  if (aggTasks) {
+    const id = genId();
+    const subject = aggTasks[1].toLowerCase();
+    const marker = encodeAiMarker({
+      v: 1,
+      kind: 'agg-tasks',
+      id,
+      subject,
+      status: 'running',
+      msg: `Sweeping “${subject}” for tasks…`,
+    });
+    // Trailing blank line under the card's closing `-->` so there's always a
+    // clickable, typeable spot directly beneath the widget (the card decoration
+    // otherwise butts straight up against whatever follows it).
+    const insert = marker + '\n\n';
+    view.dispatch({
+      changes: { from: line.from, to: line.to, insert },
+      selection: { anchor: line.from + marker.length + 1 },
+    });
+    post({ type: 'aggTasks', id, subject });
     return true;
   }
 

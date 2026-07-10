@@ -271,7 +271,16 @@ function buildTalkPrompt(subject: string, question: string, context?: AskContext
     'loose prose into lists where that reads better, fix grammar, and remove duplication. Preserve ' +
     'every fact and its meaning — never invent or drop information. Briefly tell the user what you ' +
     `changed. (${subject}_notes/${subject}_rewrite only exist once this subject's notebook has ` +
-    "been created — if they aren't available yet, say so instead of trying.)\n\n";
+    "been created — if they aren't available yet, say so instead of trying.)\n\n" +
+    `This subject's dashboard tasks are also yours to manage here, live, as the user asks: ` +
+    `call the orchestrator's list_cards with source="${subject}" to see what already exists ` +
+    'before creating or changing anything. To add a task, call upsert_card with kind="task", ' +
+    `source="${subject}", an honest priority (urgent | high | normal | low), and a date if one ` +
+    'was mentioned. To edit one (retitle, reschedule, reprioritize), call upsert_card again with ' +
+    'that same card\'s id. To mark one done or reopen it, call upsert_card with that id and ' +
+    'done=true/false. To remove one entirely (the user says delete/drop/cancel it), call ' +
+    'dismiss_card with its id. Do this quietly and confirm briefly in your reply — do not ask ' +
+    'the user to go to the dashboard to make a change they already asked you for in words.\n\n';
   const turns = context?.turns?.filter(t => t.q);
   if (turns && turns.length) {
     const history = turns.map(t => `User: ${t.q}\n\nAssistant: ${t.a || ''}`).join('\n\n');
@@ -355,6 +364,65 @@ export function runIngest(pageText: string, cb: IngestCallbacks, session: Sessio
     {
       onDelta: () => {},
       onDone: answer => cb.onDone(answer.trim()),
+      onError: msg => cb.onError(msg),
+    },
+    session,
+  );
+}
+
+// Frame a whole subject notebook as a task-sweep for the orchestrator MCP: read
+// every page of `${subject}_notes`, cross-reference the subject's existing cards,
+// and file (or update) a task card for every action item found across the whole
+// notebook — not just its newest page, unlike /talk's turn-by-turn filing. This is
+// /agg-tasks's entire job, so it's the only thing the prompt describes.
+function buildAggTasksPrompt(subject: string): string {
+  return (
+    `You are sweeping the "${subject}" notebook (a personal-knowledge-base subject ` +
+    'tracked by the orchestrator MCP) for action items, without asking the user anything.\n\n' +
+    'Do exactly this:\n' +
+    `1. Call ${subject}_notes to read the whole notebook. If that tool does not exist, ` +
+    `there is no "${subject}" notebook yet — reply saying so and stop.\n` +
+    `2. Call the orchestrator's list_cards with source="${subject}" to see which tasks ` +
+    'are already filed for this subject.\n' +
+    '3. Read every page and pull out every action item, commitment, or thing the user ' +
+    'still needs to do — across the whole notebook, not just the most recent page. ' +
+    'For each one, call upsert_card with kind="task", ' +
+    `source="${subject}", an honest priority (urgent | high | normal | low), and a date ` +
+    'when one is stated or clearly implied.\n' +
+    '4. Match against the existing cards from step 2 by meaning, not exact wording: if a ' +
+    'task is already filed, call upsert_card with that same card\'s id so it updates in ' +
+    'place instead of duplicating (and leave its done state alone by omitting `done`). ' +
+    'Only create a new card for a genuinely new action item.\n' +
+    '5. Do not invent tasks that are not actually in the notes, and do not file ' +
+    'informational notes as tasks.\n\n' +
+    'When finished, reply with a single short line: how many tasks were filed as new vs. ' +
+    'already up to date. Do not ask questions.'
+  );
+}
+
+export interface AggTasksCallbacks {
+  /** The sweep finished cleanly; `summary` is Claude's one-line report. */
+  onDone: (summary: string) => void;
+  /** The sweep failed; nothing was necessarily written, and the error is shown. */
+  onError: (msg: string) => void;
+}
+
+/**
+ * Sweep `subject`'s whole notebook for action items and file/update a task card for
+ * each (see {@link buildAggTasksPrompt}). Runs on the same proven stream path as
+ * {@link runAsk} but only cares about the final one-line summary. Cancelling tears
+ * down the underlying run.
+ */
+export function runAggTasks(
+  subject: string,
+  cb: AggTasksCallbacks,
+  session: SessionOpts,
+): AskHandle {
+  return runAsk(
+    buildAggTasksPrompt(subject),
+    {
+      onDelta: () => {},
+      onDone: answer => cb.onDone(answer.trim() || 'Done — nothing to report.'),
       onError: msg => cb.onError(msg),
     },
     session,

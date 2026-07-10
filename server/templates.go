@@ -575,7 +575,7 @@ func main() {
 	})
 	s.AddTool(mcpx.Tool{
 		Name:        "upsert_card",
-		Description: "Create or update a dashboard card from the notes. Use kind=\"task\" for action items the user must do (with a due date if one is stated). Set priority as an honest urgency judgment: urgent, high, normal, or low. Idempotent: omit id and the same title+kind always maps to the same card, so re-running /ingest updates rather than duplicates. Call list_cards first to avoid making a near-duplicate of an existing card. Note: kind=\"notification\" is retired — do not use it; file a task instead.",
+		Description: "Create or update a dashboard card from the notes, or from a conversation about an existing subject (e.g. during /talk). Use kind=\"task\" for action items the user must do (with a due date if one is stated). Set priority as an honest urgency judgment: urgent, high, normal, or low. Idempotent: omit id and the same title+kind always maps to the same card, so re-running /ingest — or editing the same task again later — updates rather than duplicates. Call list_cards first to avoid making a near-duplicate of an existing card, or to find the id of a task the user wants changed. Pass done=true/false to mark a task complete or reopen it. Note: kind=\"notification\" is retired — do not use it; file a task instead.",
 		InputSchema: mcpx.ObjectSchema(map[string]any{
 			"kind":     map[string]any{"type": "string", "description": "task, or any future kind (notification is retired)"},
 			"title":    map[string]any{"type": "string", "description": "short one-line card title"},
@@ -585,14 +585,29 @@ func main() {
 			"payload":  map[string]any{"type": "object", "description": "optional kind-specific extras, stored opaquely"},
 			"source":   map[string]any{"type": "string", "description": "optional subject slug the card came from"},
 			"id":       map[string]any{"type": "string", "description": "optional stable id; omit to derive one from title+kind"},
+			"done":     map[string]any{"type": "boolean", "description": "optional: set true to mark a task complete, false to reopen it. Omit to leave its done state unchanged."},
 		}, []string{"kind", "title", "priority"}),
 		Handler: upsertCard,
 	})
 	s.AddTool(mcpx.Tool{
 		Name:        "list_cards",
-		Description: "List the dashboard cards that already exist (tasks), so you can update or avoid duplicating them.",
-		InputSchema: mcpx.ObjectSchema(nil, nil),
-		Handler:     func(args map[string]any) (string, error) { return listCards(), nil },
+		Description: "List the dashboard cards that already exist (tasks), so you can update or avoid duplicating them, or find the id of one to change. Pass 'source' to see only one subject's cards (e.g. the subject of the current /talk conversation).",
+		InputSchema: mcpx.ObjectSchema(map[string]any{
+			"source": map[string]any{"type": "string", "description": "optional subject slug to filter to just that notebook's cards"},
+		}, nil),
+		Handler: func(args map[string]any) (string, error) {
+			source, _ := args["source"].(string)
+			return listCards(slug(source)), nil
+		},
+	})
+	s.AddTool(mcpx.Tool{
+		Name:        "dismiss_card",
+		Description: "Remove a dashboard card (e.g. a task the user says to delete, drop, or cancel) so it stops showing on the dashboard. This does not delete history — it just hides the card. Call list_cards first to find the id. Irreversible from here: to bring it back, use upsert_card with the same id.",
+		InputSchema: mcpx.ObjectSchema(map[string]any{
+			"id":     map[string]any{"type": "string", "description": "the card's id, from list_cards"},
+			"source": map[string]any{"type": "string", "description": "optional subject slug the card lives under; speeds up the lookup"},
+		}, []string{"id"}),
+		Handler: dismissCard,
 	})
 
 	if err := s.Serve(); err != nil {
@@ -1016,6 +1031,10 @@ func upsertCard(args map[string]any) (string, error) {
 	if createdAt == "" {
 		createdAt = now
 	}
+	done := prev.Done
+	if b, ok := args["done"].(bool); ok {
+		done = b
+	}
 	c := card{
 		ID:        id,
 		Kind:      kind,
@@ -1024,7 +1043,7 @@ func upsertCard(args map[string]any) (string, error) {
 		Title:     title,
 		Body:      strings.TrimSpace(body),
 		Payload:   payload,
-		Done:      prev.Done,
+		Done:      done,
 		Dismissed: prev.Dismissed,
 		Source:    source,
 		CreatedAt: createdAt,
@@ -1034,18 +1053,84 @@ func upsertCard(args map[string]any) (string, error) {
 	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("filed %s card %q (priority %s, id %s).", kind, title, c.Priority, id), nil
+	doneNote := ""
+	if kind == "task" && done {
+		doneNote = ", done"
+	}
+	return fmt.Sprintf("filed %s card %q (priority %s%s, id %s).", kind, title, c.Priority, doneNote, id), nil
 }
 
-// listCards reports the current cards across every notebook so Claude can update or
-// avoid duplicating them. Cards live under each notebook's cards/ dir; dismissed
-// ones are skipped and done tasks are flagged.
-func listCards() string {
+// findCard locates mcp/<slug>/cards/<id>.json for a card id, trying hint (the
+// caller's guess at its source notebook) first, then every notebook. Returns the
+// resolved path, the card's owning subject slug, and whether it was found.
+func findCard(hint, id string) (path, foundSource string, ok bool) {
+	try := func(name string) bool {
+		p := filepath.Join(cardsDirFor(name), id+".json")
+		if _, err := os.Stat(p); err != nil {
+			return false
+		}
+		path, foundSource = p, name
+		return true
+	}
+	if hint != "" && try(hint) {
+		return path, foundSource, true
+	}
+	subjects, _ := os.ReadDir(mcpDir)
+	for _, sub := range subjects {
+		name := sub.Name()
+		if !sub.IsDir() || name == "mcpx" || name == "bin" || name == hint {
+			continue
+		}
+		if try(name) {
+			return path, foundSource, true
+		}
+	}
+	return "", "", false
+}
+
+// dismissCard hides a card from the dashboard (mirrors the phone's own dismiss
+// action) without deleting its history — upsert_card with the same id can
+// resurrect it later.
+func dismissCard(args map[string]any) (string, error) {
+	id := slug(fmt.Sprintf("%v", args["id"]))
+	if id == "" {
+		return "no card id given.", nil
+	}
+	hint := slug(fmt.Sprintf("%v", args["source"]))
+	path, _, ok := findCard(hint, id)
+	if !ok {
+		return fmt.Sprintf("no card found with id %q. Call list_cards to find the right id.", id), nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	var c card
+	if json.Unmarshal(data, &c) != nil {
+		return "", fmt.Errorf("card %s is corrupt", id)
+	}
+	c.Dismissed = true
+	c.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	out, _ := json.MarshalIndent(c, "", "  ")
+	if err := os.WriteFile(path, append(out, '\n'), 0o644); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("dismissed card %q (id %s).", c.Title, id), nil
+}
+
+// listCards reports the current cards across every notebook (or, when source is
+// non-empty, just that notebook's) so Claude can update or avoid duplicating them.
+// Cards live under each notebook's cards/ dir; dismissed ones are skipped and done
+// tasks are flagged.
+func listCards(source string) string {
 	var cards []card
 	subjects, _ := os.ReadDir(mcpDir)
 	for _, sub := range subjects {
 		name := sub.Name()
 		if !sub.IsDir() || name == "mcpx" || name == "bin" {
+			continue
+		}
+		if source != "" && name != source {
 			continue
 		}
 		entries, err := os.ReadDir(cardsDirFor(name))
@@ -1071,6 +1156,9 @@ func listCards() string {
 		}
 	}
 	if len(cards) == 0 {
+		if source != "" {
+			return fmt.Sprintf("No cards yet for %q.", source)
+		}
 		return "No cards yet."
 	}
 	sort.Slice(cards, func(i, j int) bool { return cards[i].ID < cards[j].ID })

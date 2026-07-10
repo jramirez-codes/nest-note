@@ -18,7 +18,14 @@
  * to completion. Only an explicit user Stop/× (or a terminal result) ends a run.
  */
 
-import { runAsk, runClean, runIngest, runNotesChat, type AskContext } from './aiController';
+import {
+  runAsk,
+  runClean,
+  runIngest,
+  runNotesChat,
+  runAggTasks,
+  type AskContext,
+} from './aiController';
 import { runCommand } from './codeController';
 import { startCode } from './agentController';
 import type { StreamEvent } from './protocol';
@@ -77,7 +84,7 @@ export interface RunSink {
   onIngested?(): void;
 }
 
-type Kind = 'ask' | 'clean' | 'ingest' | 'run' | 'code';
+type Kind = 'ask' | 'clean' | 'ingest' | 'agg-tasks' | 'run' | 'code';
 
 // A coalesced /code transcript item, mirroring the webview's reduceCodeItems so a
 // re-attach can repaint compactly (accumulated tokens as one text block) instead
@@ -366,6 +373,34 @@ export function startIngest(id: string, pageText: string, sink: RunSink, resumeO
 }
 
 /**
+ * Start an /agg-tasks sweep of `subject`'s whole notebook. Unlike /ingest, nothing
+ * is deleted either way — on success the card's status/msg is updated in place to
+ * Claude's one-line summary; on failure it shows the error.
+ */
+export function startAggTasks(
+  id: string,
+  subject: string,
+  sink: RunSink,
+  resumeOnly = false,
+): void {
+  const handle = runAggTasks(
+    subject,
+    {
+      onDone: summary =>
+        settle(id, s =>
+          s.inject(`window.__aiDone(${j(id)}, ${j({ status: 'done', msg: summary })});`),
+        ),
+      onError: msg =>
+        settle(id, s =>
+          s.inject(`window.__aiDone(${j(id)}, ${j({ status: 'error', msg })});`),
+        ),
+    },
+    makeSession(id, 'ask', resumeOnly),
+  );
+  put(id, base('agg-tasks', handle, sink));
+}
+
+/**
  * Start a /run terminal session, streaming stdout/stderr into the card. `dir` is
  * the project subdir (from `/run PROJECT <cmd>`) the command starts in; omitted on
  * a resume, where the server already holds the session's directory.
@@ -513,6 +548,9 @@ export function resume(id: string, kind: string, sink: RunSink): void {
       break;
     case 'ingest':
       startIngest(id, '', sink, true);
+      break;
+    case 'agg-tasks':
+      startAggTasks(id, '', sink, true);
       break;
     case 'notes-chat':
       startNotesChat(id, '', '', sink, undefined, true);

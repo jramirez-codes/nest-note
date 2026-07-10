@@ -42,10 +42,28 @@ export function compareCards(a: DashboardCard, b: DashboardCard): number {
   return ac < bc ? -1 : ac > bc ? 1 : 0;
 }
 
-// Tasks sort like everything else but completed ones sink to the bottom.
+// Tasks sort like everything else but completed ones sink to the bottom. This is
+// the 'priority' order: priority rank desc (red → orange → blue → gray), then
+// soonest due date as the tiebreak.
 export function compareTasks(a: DashboardCard, b: DashboardCard): number {
   if (!!a.done !== !!b.done) return a.done ? 1 : -1;
   return compareCards(a, b);
+}
+
+// The 'date' order: soonest due date first (dated tasks ahead of undated), then
+// priority rank desc as the tiebreak. Completed tasks still sink to the bottom.
+export function compareTasksByDate(a: DashboardCard, b: DashboardCard): number {
+  if (!!a.done !== !!b.done) return a.done ? 1 : -1;
+  const ad = a.date || '';
+  const bd = b.date || '';
+  if (ad && bd && ad !== bd) return ad < bd ? -1 : 1;
+  if (ad && !bd) return -1;
+  if (!ad && bd) return 1;
+  const pr = rankOf(b.priority) - rankOf(a.priority);
+  if (pr) return pr;
+  const ac = a.created_at || '';
+  const bc = b.created_at || '';
+  return ac < bc ? -1 : ac > bc ? 1 : 0;
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -67,6 +85,16 @@ export function relDate(iso: string): { label: string; overdue: boolean } {
     (d.getFullYear() !== today.getFullYear() ? `, ${d.getFullYear()}` : '');
   return { label, overdue: days < 0 };
 }
+
+// The Tasks section's sort toggle: 'priority' leads with urgency (date breaks
+// ties), 'date' leads with the soonest due date (priority breaks ties).
+export type TaskSort = 'priority' | 'date';
+
+export const compareTasksBy = (sort: TaskSort): typeof compareTasks =>
+  sort === 'date' ? compareTasksByDate : compareTasks;
+
+// Tasks per page in the Tasks card's pager.
+export const TASK_PAGE_SIZE = 4;
 
 // Title-case a kind slug into a section heading, e.g. "reading-list" → "Reading
 // lists". Keeps unknown kinds presentable without any bespoke code.

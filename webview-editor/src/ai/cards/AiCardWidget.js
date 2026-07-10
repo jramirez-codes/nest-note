@@ -115,6 +115,8 @@ export class AiCardWidget extends WidgetType {
         return renderClean(view, this);
       case 'ingest':
         return renderIngest(view, this);
+      case 'agg-tasks':
+        return renderUpdate(view, this);
       case 'chat':
       case 'notes-chat':
         return renderChat(view, this);

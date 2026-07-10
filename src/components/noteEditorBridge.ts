@@ -26,6 +26,7 @@ import {
   startNotesChat,
   startClean,
   startIngest,
+  startAggTasks,
   startRun,
   startCodeRun,
   codePrompt,
@@ -233,6 +234,12 @@ export function handleEditorMessage(ctx: BridgeContext, e: WebViewMessageEvent):
     // the error and the page is untouched.
     attachedIds.current.add(msg.id);
     startIngest(msg.id, msg.pageText, sink);
+  } else if (msg.type === 'aggTasks' && typeof msg.id === 'string' && typeof msg.subject === 'string') {
+    // /agg-tasks: sweep one subject's whole notebook for action items and file a
+    // task card for each (registry-owned so it survives page swaps). Nothing is
+    // deleted either way — the card just updates in place with Claude's summary.
+    attachedIds.current.add(msg.id);
+    startAggTasks(msg.id, msg.subject, sink);
   } else if (msg.type === 'pairScan' && typeof msg.id === 'string') {
     // Bare `/pair`: open the QR scanner; the scan result feeds pairing.
     setPairScan({ id: msg.id });
