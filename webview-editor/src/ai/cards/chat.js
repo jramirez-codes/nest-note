@@ -1,7 +1,6 @@
 import { c } from '../../theme/palette.js';
-import { SEND, EXPAND } from '../../ui/icons.js';
-import { makeCardActionButton } from '../../ui/buttons.js';
-import { guardTaps } from '../../ui/events.js';
+import { SEND, EXPAND, CHAT } from '../../ui/icons.js';
+import { makeCopyButton, makeCornerButton } from '../../ui/buttons.js';
 import { updateAiMarker, deleteCardLine, appendChatTurn } from '../marker.js';
 import { openCardOverlay } from '../overlay.js';
 import { mountAnswerView } from '../answerView.js';
@@ -33,6 +32,20 @@ export function renderChat(view, widget) {
   chev.textContent = '▶';
   head.appendChild(chev);
 
+  // /talk cards (kind:'notes-chat') pin to one subject notebook — badge it like
+  // the /code card badges its project, so both "persistent, named context" cards
+  // read the same way.
+  if (obj.kind === 'notes-chat') {
+    const subj = document.createElement('span');
+    subj.className = 'cm-chat-subject';
+    subj.innerHTML = CHAT;
+    const label = document.createElement('span');
+    label.textContent = obj.subject || '';
+    subj.appendChild(label);
+    subj.title = 'Subject: ' + (obj.subject || '');
+    head.appendChild(subj);
+  }
+
   const q = document.createElement('div');
   q.className = 'cm-ask-q';
   q.textContent = turns.length ? turns[0].q || '' : '';
@@ -45,24 +58,21 @@ export function renderChat(view, widget) {
     head.appendChild(badge);
   }
 
-  head.appendChild(
-    makeCardActionButton({
-      copyValue: widget.answer,
-      onDelete: () => deleteCardLine(view, card),
-      holdTarget: card,
-      inline: true,
-    }),
-  );
+  // Copy is always just Copy now — Delete lives on the corner control below.
+  head.appendChild(makeCopyButton(widget.answer, { inline: true }));
 
-  // A plain Expand control (tap → full-page thread); it owns its own taps so the
-  // header's collapse toggle doesn't also fire. Delete stays on the copy button's
-  // long-press above, so there's no competing hold-to-delete gesture on the card.
-  const expand = document.createElement('span');
-  expand.className = 'cm-rec-corner cm-rec-export cm-chat-expand';
-  expand.innerHTML = EXPAND;
-  expand.setAttribute('aria-label', 'Expand');
-  guardTaps(expand, () => openCardOverlay(view, obj));
-  head.appendChild(expand);
+  // Corner control: Expand by default (tap → full-page thread); a long-press
+  // anywhere on the card morphs it into Delete for 3s, same gesture as /code
+  // and /run — not tied to the accordion's open/closed state.
+  const corner = makeCornerButton({
+    icon: EXPAND,
+    label: 'Expand',
+    holdTarget: card,
+    onActivate: () => openCardOverlay(view, obj),
+    onDelete: () => deleteCardLine(view, card),
+  });
+  corner.classList.add('cm-chat-expand');
+  head.appendChild(corner);
 
   head.addEventListener('mousedown', e => {
     e.preventDefault();
@@ -153,9 +163,31 @@ function followupFoot(view, card) {
 }
 
 export const styles = {
-  // The Expand control sits inline in the flex header (centered, not pinned to the
-  // top like its /run + /code corner-button cousins).
+  // The Expand/Delete control sits inline in the flex header (centered, not
+  // pinned to the top like its /run + /code corner-button cousins).
   '.cm-chat-expand': { alignSelf: 'center' },
+  // The /talk subject pill — mirrors /code's `.cm-code-proj` project chip, with a
+  // chat-bubble icon in place of the "✦" star.
+  '.cm-chat-subject': {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '4px',
+    flexShrink: '0',
+    maxWidth: '40%',
+    padding: '2px 9px',
+    borderRadius: '7px',
+    backgroundColor: c.surface0,
+    border: `1px solid ${c.surface1}`,
+    color: c.mauve,
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+    fontSize: '12px',
+    fontWeight: '600',
+    lineHeight: '1.5',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+  },
+  '.cm-chat-subject span': { overflow: 'hidden', textOverflow: 'ellipsis' },
+  '.cm-chat-subject svg': { display: 'block', width: '13px', height: '13px', flexShrink: '0' },
   // The inline transcript scroller: capped at the same height as the /run log so a
   // long thread scrolls in place instead of stretching the card past the screen.
   // The overlay's own `.cm-ov .cm-chat-log` rule lifts this cap for the full page.

@@ -16,10 +16,11 @@ function setBtnIcon(btn, icon, label) {
 
 // The shared copy button (code cards and link cards use the same UI). Copies
 // `text`, flips to a check briefly, and swallows the tap so it doesn't reach
-// the surrounding widget (which would open the link / move the caret).
-export function makeCopyButton(text) {
+// the surrounding widget (which would open the link / move the caret). `inline`
+// sits it in a flex header (e.g. /chat, /talk) instead of pinning it absolute.
+export function makeCopyButton(text, { inline } = {}) {
   const btn = document.createElement('span');
-  btn.className = 'cm-copy-btn';
+  btn.className = 'cm-copy-btn' + (inline ? ' cm-copy-inline' : '');
   setBtnIcon(btn, COPY, 'Copy');
   btn.addEventListener('mousedown', e => {
     e.preventDefault();
@@ -94,8 +95,8 @@ export function makeCardActionButton({ copyValue, onDelete, holdTarget, inline }
 // tapped. Tapping runs `onActivate` in the default state or `onDelete` when
 // armed. Optional `onArm` fires the moment it morphs into Delete (used by /run to
 // copy the command to the clipboard). Shared by the finished /record card
-// (Export) and the /run + /code cards (Expand) — the same hold-to-delete gesture
-// the /ask card uses.
+// (Export), the /run + /code cards (Expand), and now /chat + /talk — the same
+// hold-to-delete gesture everywhere.
 export function makeCornerButton({ icon, label, holdTarget, onActivate, onDelete, onArm }) {
   const corner = document.createElement('span');
   corner.className = 'cm-rec-corner cm-rec-export';
