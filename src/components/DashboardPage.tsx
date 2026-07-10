@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  type LayoutChangeEvent,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -100,6 +101,21 @@ function DashboardPage({
   const changeTaskSort = useCallback((s: TaskSort) => {
     setTaskSort(s);
     setTaskPage(0);
+  }, []);
+
+  // The one task row (if any) currently expanded to show its full, wrapped title.
+  // A single id, not a set — expanding a row collapses whichever was open.
+  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
+  const toggleExpand = useCallback((id: string) => {
+    setExpandedTaskId(prev => (prev === id ? null : id));
+  }, []);
+
+  // The Tasks box holds a fixed number of collapsed rows' worth of height (measured
+  // from the first row, so it tracks the live font scale) and scrolls internally —
+  // expanding a row grows it past that height instead of growing the whole page.
+  const [taskRowHeight, setTaskRowHeight] = useState<number | null>(null);
+  const handleFirstTaskRowLayout = useCallback((e: LayoutChangeEvent) => {
+    setTaskRowHeight(prev => prev ?? e.nativeEvent.layout.height);
   }, []);
 
   // Guard against setState after unmount / after a newer fetch superseded this one.
@@ -295,6 +311,9 @@ function DashboardPage({
   // Reset the pager whenever the notebook changes — a page index from one
   // notebook's task list is meaningless against another's.
   useEffect(() => setTaskPage(0), [selected.key]);
+  // Collapse any expanded task whenever the visible set of rows changes underneath
+  // it — the row it referred to may no longer be on screen.
+  useEffect(() => setExpandedTaskId(null), [selected.key, taskSort, taskPage]);
 
   const taskPageCount = Math.max(1, Math.ceil(tasks.length / TASK_PAGE_SIZE));
   // Clamp rather than resync via effect: cheap, and avoids a stale-page flash when
@@ -378,21 +397,34 @@ function DashboardPage({
                   <TaskSortToggle sort={taskSort} onChange={changeTaskSort} colors={colors} />
                 </View>
                 <View className="overflow-hidden rounded-2xl border border-surface1 bg-surface">
-                  {pagedTasks.map((card, i) => (
-                    <View key={card.id}>
-                      {i > 0 && <View className="ml-11 h-px bg-surface1/60" />}
-                      <DraggableCard card={card} {...dragProps}>
-                        <TaskRow
-                          card={card}
-                          colors={colors}
-                          busy={busy}
-                          onToggle={onToggle}
-                          dimmed={liftedId === card.id}
-                          subjectTitle={subjectTitleFor(card.source)}
-                        />
-                      </DraggableCard>
-                    </View>
-                  ))}
+                  <ScrollView
+                    nestedScrollEnabled
+                    scrollEnabled={!liftedId}
+                    style={
+                      // +1px per hairline divider between rows (there's none above the
+                      // first row), so 5 collapsed rows fit with no scroll sliver.
+                      taskRowHeight
+                        ? { maxHeight: taskRowHeight * TASK_PAGE_SIZE + (TASK_PAGE_SIZE - 1) }
+                        : undefined
+                    }>
+                    {pagedTasks.map((card, i) => (
+                      <View key={card.id} onLayout={i === 0 ? handleFirstTaskRowLayout : undefined}>
+                        {i > 0 && <View className="ml-11 h-px bg-surface1/60" />}
+                        <DraggableCard card={card} {...dragProps}>
+                          <TaskRow
+                            card={card}
+                            colors={colors}
+                            busy={busy}
+                            onToggle={onToggle}
+                            dimmed={liftedId === card.id}
+                            subjectTitle={subjectTitleFor(card.source)}
+                            expanded={expandedTaskId === card.id}
+                            onExpandToggle={() => toggleExpand(card.id)}
+                          />
+                        </DraggableCard>
+                      </View>
+                    ))}
+                  </ScrollView>
                   <Pager
                     page={safeTaskPage}
                     pageCount={taskPageCount}

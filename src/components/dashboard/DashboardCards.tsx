@@ -97,7 +97,9 @@ export function SectionHeader({
 
 // One task row inside the grouped Tasks surface: a checkbox that toggles done, the
 // title (struck through when done), a subject badge (themed to the task's priority),
-// and a due date (red when overdue).
+// and a due date (red when overdue). Tapping the title expands it in place — it
+// wraps to full text and the due date steps aside — rather than truncating with an
+// ellipsis, so the row grows instead of hiding text behind a separate control.
 export function TaskRow({
   card,
   colors,
@@ -105,6 +107,8 @@ export function TaskRow({
   onToggle,
   dimmed,
   subjectTitle,
+  expanded,
+  onExpandToggle,
 }: {
   card: DashboardCard;
   colors: ThemeColors;
@@ -112,13 +116,19 @@ export function TaskRow({
   onToggle: (c: DashboardCard) => void;
   dimmed: boolean;
   subjectTitle: string;
+  expanded: boolean;
+  onExpandToggle: () => void;
 }) {
   const due = card.date ? relDate(card.date) : null;
   const overdue = !!due?.overdue && !card.done;
   return (
     // collapsable={false} keeps Android from view-flattening this node away, which
     // the wrapping GestureDetector needs to attach the drag gesture reliably.
-    <View collapsable={false} className={`flex-row items-center px-3 py-3 ${dimmed ? 'opacity-30' : ''}`}>
+    <View
+      collapsable={false}
+      className={`flex-row px-3 py-3 ${expanded ? 'items-start' : 'items-center'} ${
+        dimmed ? 'opacity-30' : ''
+      }`}>
       <Pressable
         onPress={() => onToggle(card)}
         disabled={busy[card.id]}
@@ -132,9 +142,11 @@ export function TaskRow({
         {card.done && <Check size={15} color={colors.background} strokeWidth={3} />}
       </Pressable>
       <Pressable
-        onPress={() => onToggle(card)}
+        onPress={onExpandToggle}
         disabled={busy[card.id]}
-        className="flex-1 flex-row items-center pl-3 pr-2">
+        accessibilityRole="button"
+        accessibilityLabel={`Task: ${card.title}`}
+        className={`flex-1 flex-row pl-3 pr-2 ${expanded ? 'items-start' : 'items-center'}`}>
         {!!subjectTitle && (
           <View
             className={`mr-2 max-w-[35%] shrink-0 rounded-full px-2 py-0.5 ${prio(card.priority).chip}`}>
@@ -144,12 +156,12 @@ export function TaskRow({
           </View>
         )}
         <Text
-          numberOfLines={1}
+          numberOfLines={expanded ? undefined : 1}
           className={`flex-1 text-sm ${card.done ? 'text-faint line-through' : 'text-text'}`}>
           {card.title}
         </Text>
       </Pressable>
-      {due && !card.done && (
+      {due && !card.done && !expanded && (
         <View className="flex-row items-center gap-1">
           <Clock size={12} color={overdue ? colors.danger : colors.muted} strokeWidth={2} />
           <Text className={`text-xs ${overdue ? 'text-danger' : 'text-muted'}`}>{due.label}</Text>

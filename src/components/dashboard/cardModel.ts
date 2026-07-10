@@ -94,7 +94,7 @@ export const compareTasksBy = (sort: TaskSort): typeof compareTasks =>
   sort === 'date' ? compareTasksByDate : compareTasks;
 
 // Tasks per page in the Tasks card's pager.
-export const TASK_PAGE_SIZE = 4;
+export const TASK_PAGE_SIZE = 5;
 
 // Title-case a kind slug into a section heading, e.g. "reading-list" → "Reading
 // lists". Keeps unknown kinds presentable without any bespoke code.
