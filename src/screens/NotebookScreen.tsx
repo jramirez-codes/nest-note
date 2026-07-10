@@ -2,7 +2,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   type LayoutChangeEvent,
+  Pressable,
   Text,
+  TextInput,
   useWindowDimensions,
   View,
 } from 'react-native';
@@ -357,6 +359,27 @@ export default function NotebookScreen() {
       ? currentVirtual.title || `Page ${currentIndex + 1}`
       : 'Dashboard';
 
+  // Sandbox note titles are renamed in place by tapping the header title. Tracked by
+  // note id (not a plain boolean) so a swipe away from the page being renamed is
+  // detected below and commits the draft instead of silently dropping it. The draft
+  // is mirrored into a ref so commitTitleEdit's identity stays stable across
+  // keystrokes — otherwise it'd change every keystroke and re-fire the effect below.
+  const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
+  const [titleDraft, setTitleDraft] = useState('');
+  const titleDraftRef = useRef('');
+  titleDraftRef.current = titleDraft;
+  const commitTitleEdit = useCallback(() => {
+    setEditingTitleId(current => {
+      if (current) updateNoteTitle(current, titleDraftRef.current.trim());
+      return null;
+    });
+  }, [updateNoteTitle]);
+  useEffect(() => {
+    if (editingTitleId && editingTitleId !== currentNote?.id) {
+      commitTitleEdit();
+    }
+  }, [currentNote, editingTitleId, commitTitleEdit]);
+
   return (
     <View
       ref={rootRef}
@@ -374,12 +397,39 @@ export default function NotebookScreen() {
             <View className="mr-2">
               <ServerStatusDot />
             </View>
-            <Text
-              numberOfLines={1}
-              ellipsizeMode="tail"
-              className="shrink text-xl font-bold text-text">
-              {headerTitle}
-            </Text>
+            {currentNote && editingTitleId === currentNote.id ? (
+              <TextInput
+                autoFocus
+                value={titleDraft}
+                onChangeText={setTitleDraft}
+                onSubmitEditing={commitTitleEdit}
+                onBlur={commitTitleEdit}
+                placeholder={`Smart Note #${currentIndex + 1}`}
+                placeholderTextColor={colors.faint}
+                returnKeyType="done"
+                selectTextOnFocus
+                className="shrink p-0 text-xl font-bold text-text"
+              />
+            ) : (
+              <Pressable
+                disabled={!currentNote}
+                onPress={() => {
+                  if (!currentNote) return;
+                  setTitleDraft(currentNote.title);
+                  setEditingTitleId(currentNote.id);
+                }}
+                hitSlop={8}
+                accessibilityRole={currentNote ? 'button' : undefined}
+                accessibilityLabel={currentNote ? 'Edit note title' : undefined}
+                className="shrink">
+                <Text
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                  className="text-xl font-bold text-text">
+                  {headerTitle}
+                </Text>
+              </Pressable>
+            )}
           </View>
           <Text className="text-xs text-faint">
             {contentCount}{' '}

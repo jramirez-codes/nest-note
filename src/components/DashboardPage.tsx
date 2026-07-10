@@ -115,7 +115,11 @@ function DashboardPage({
   // expanding a row grows it past that height instead of growing the whole page.
   const [taskRowHeight, setTaskRowHeight] = useState<number | null>(null);
   const handleFirstTaskRowLayout = useCallback((e: LayoutChangeEvent) => {
-    setTaskRowHeight(prev => prev ?? e.nativeEvent.layout.height);
+    // Read the height synchronously — the event is pooled and `e.nativeEvent` goes
+    // null after this handler returns, but the setState updater below can run again
+    // later (e.g. Strict Mode's double-invoke), so it must close over a plain number.
+    const height = e.nativeEvent.layout.height;
+    setTaskRowHeight(prev => prev ?? height);
   }, []);
 
   // Guard against setState after unmount / after a newer fetch superseded this one.
@@ -401,10 +405,11 @@ function DashboardPage({
                     nestedScrollEnabled
                     scrollEnabled={!liftedId}
                     style={
-                      // +1px per hairline divider between rows (there's none above the
-                      // first row), so 5 collapsed rows fit with no scroll sliver.
+                      // Fixed, not max — the box holds this height even when a page has
+                      // fewer than 5 tasks, so it doesn't resize page to page. +1px per
+                      // hairline divider between rows (there's none above the first row).
                       taskRowHeight
-                        ? { maxHeight: taskRowHeight * TASK_PAGE_SIZE + (TASK_PAGE_SIZE - 1) }
+                        ? { height: taskRowHeight * TASK_PAGE_SIZE + (TASK_PAGE_SIZE - 1) }
                         : undefined
                     }>
                     {pagedTasks.map((card, i) => (
