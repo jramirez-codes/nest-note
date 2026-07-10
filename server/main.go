@@ -25,7 +25,7 @@ func main() {
 		repoDir    = flag.String("repo-dir", "", "path to the ai-notepad git checkout that /update-server pulls & rebuilds; empty = <root>/ai-notepad")
 		root       = flag.String("root", "", "scaffold projects/, mcp/, orchestrator/ under this dir and enable MCP; Claude runs in <root>/projects. Empty = disabled")
 		threshold  = flag.Int("subject-threshold", 4, "mentions before the orchestrator proposes a dedicated server for a subject (with -root)")
-		runTimeout = flag.Duration("run-timeout", 2*time.Minute, "max time for a single Claude run before it is killed and reported as failed")
+		runTimeout = flag.Duration("run-timeout", 8*time.Minute, "max time for a single Claude run before it is killed and reported as failed (/agg-tasks sweeps a whole notebook and can need several minutes)")
 		pairTTL    = flag.Duration("pair-ttl", 10*time.Minute, "how long the pairing code stays valid")
 		allowExec  = flag.Bool("allow-exec", false, "enable /exec: the direct \"/run <cmd>\" shell channel. OFF by default — it runs arbitrary commands as this user, gated only by the pinned tunnel + token")
 		allowCode  = flag.Bool("allow-code", false, "enable /code: a persistent Claude Code agent session in projects/<name> with every tool auto-accepted (bypassPermissions). OFF by default — full code execution as this user, gated only by the pinned tunnel + token")

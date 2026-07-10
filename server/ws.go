@@ -129,6 +129,7 @@ func startRunProcess(sess *session, workdir string, mcpConfigs, allowedTools []s
 				log.Printf("run: first output after %s", time.Since(start).Round(time.Millisecond))
 			}
 			frames++
+			logProgress(line)
 			sess.emit(append([]byte(nil), line...))
 		})
 		if err != nil {
@@ -150,6 +151,55 @@ func startRunProcess(sess *session, workdir string, mcpConfigs, allowedTools []s
 		}
 		sess.markDone()
 	}()
+}
+
+// streamPeek reads just enough of one stream-json line to log what Claude is
+// doing, mirroring the client's own parseStreamLine (src/server/protocol.ts)
+// without replicating its full event model — this is a log line, not a parse.
+type streamPeek struct {
+	Type    string `json:"type"`
+	Subtype string `json:"subtype"`
+	Message struct {
+		Content []struct {
+			Type string `json:"type"`
+			Name string `json:"name"`
+			Text string `json:"text"`
+		} `json:"content"`
+	} `json:"message"`
+}
+
+// logProgress prints one short line per meaningful event in a run so a long
+// /agg-tasks (or any) sweep shows visible, ongoing activity in the server log
+// instead of going silent until it finishes or times out. Deliberately skips
+// stream_event (per-token deltas) — with --include-partial-messages those fire
+// many times a second and would flood the log; a completed text/tool_use block
+// arrives once each via the 'assistant'/'user' frames handled below.
+func logProgress(line []byte) {
+	var p streamPeek
+	if json.Unmarshal(line, &p) != nil {
+		return
+	}
+	switch p.Type {
+	case "system":
+		log.Printf("run: session %s", p.Subtype)
+	case "assistant":
+		for _, b := range p.Message.Content {
+			switch b.Type {
+			case "tool_use":
+				log.Printf("run: tool call %s", b.Name)
+			case "text":
+				if b.Text != "" {
+					log.Printf("run: assistant reply (%d chars)", len(b.Text))
+				}
+			}
+		}
+	case "user":
+		for _, b := range p.Message.Content {
+			if b.Type == "tool_result" {
+				log.Printf("run: tool result received")
+			}
+		}
+	}
 }
 
 // serveRunSocket attaches c (replaying the buffered tail) and waits. /run has no
