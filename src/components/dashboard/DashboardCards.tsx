@@ -1,23 +1,14 @@
 /**
  * The presentational pieces of the dashboard: the long-press drag wrapper, the
- * section header, and the three card renderers (task row, notification, generic
- * idea card). All are pure views driven by props — the container in
- * ../DashboardPage.tsx owns the state and hands cards down.
+ * section header, and the card renderers (task row, generic idea card). All are
+ * pure views driven by props — the container in ../DashboardPage.tsx owns the
+ * state and hands cards down.
  */
 import React, { useMemo } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
-import {
-  Bell,
-  BellRing,
-  Check,
-  Clock,
-  Lightbulb,
-  Sparkles,
-  TriangleAlert,
-  type LucideIcon,
-} from 'lucide-react-native';
+import { Check, Clock, Lightbulb, Sparkles, type LucideIcon } from 'lucide-react-native';
 import type { ThemeColors } from '../../theme/colors';
 import type { DashboardCard } from '../../server/aiController';
 import type { CardDragShared } from '../cardDrag';
@@ -146,50 +137,6 @@ export function TaskRow({
           <Text className={`text-xs ${overdue ? 'text-danger' : 'text-muted'}`}>{due.label}</Text>
         </View>
       )}
-    </View>
-  );
-}
-
-// The icon for a notification chip, chosen by urgency.
-function notifIcon(priority: string): LucideIcon {
-  switch (priority) {
-    case 'urgent':
-      return TriangleAlert;
-    case 'high':
-      return BellRing;
-    case 'low':
-      return Clock;
-    default:
-      return Bell;
-  }
-}
-
-// A notification: a tinted icon chip (colored by priority), a title, and a subtitle
-// combining its date and body.
-export function NotificationCard({ card, dimmed }: { card: DashboardCard; dimmed: boolean }) {
-  const p = prio(card.priority);
-  const NotifIcon = notifIcon(card.priority);
-  const date = card.date ? relDate(card.date).label : '';
-  const subtitle = [date, card.body].filter(Boolean).join(' · ');
-  return (
-    <View
-      collapsable={false}
-      className={`mb-2 flex-row items-center rounded-2xl border border-surface1 bg-surface p-3 ${
-        dimmed ? 'opacity-30' : ''
-      }`}>
-      <View className={`mr-3 h-10 w-10 items-center justify-center rounded-xl ${p.chip}`}>
-        <NotifIcon size={20} color={p.hex} strokeWidth={2} />
-      </View>
-      <View className="flex-1 pr-1">
-        <Text className="text-sm font-semibold text-text" numberOfLines={1}>
-          {card.title}
-        </Text>
-        {!!subtitle && (
-          <Text className="mt-0.5 text-xs text-muted" numberOfLines={2}>
-            {subtitle}
-          </Text>
-        )}
-      </View>
     </View>
   );
 }

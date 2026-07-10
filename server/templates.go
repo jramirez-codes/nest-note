@@ -485,7 +485,8 @@ type subjectState struct {
 	MergedInto string %BT%json:"merged_into,omitempty"%BT%
 }
 
-// card is one dashboard card (a task, a notification, or any future kind). It is
+// card is one dashboard card (a task, or any future kind — "notification" is
+// retired and rejected by upsertCard). It is
 // persisted as one JSON file per card under state/cards/<id>.json. The schema is
 // deliberately flat and kind-agnostic: the dashboard renders unknown kinds with a
 // generic fallback, so new kinds need no new code. Payload carries kind-specific
@@ -574,12 +575,12 @@ func main() {
 	})
 	s.AddTool(mcpx.Tool{
 		Name:        "upsert_card",
-		Description: "Create or update a dashboard card from the notes. Use kind=\"task\" for action items the user must do (with a due date if one is stated), and kind=\"notification\" for dated or important upcoming things to be aware of (events, deadlines, reminders). Set priority as an honest urgency judgment: urgent, high, normal, or low. Idempotent: omit id and the same title+kind always maps to the same card, so re-running /ingest updates rather than duplicates. Call list_cards first to avoid making a near-duplicate of an existing card.",
+		Description: "Create or update a dashboard card from the notes. Use kind=\"task\" for action items the user must do (with a due date if one is stated). Set priority as an honest urgency judgment: urgent, high, normal, or low. Idempotent: omit id and the same title+kind always maps to the same card, so re-running /ingest updates rather than duplicates. Call list_cards first to avoid making a near-duplicate of an existing card. Note: kind=\"notification\" is retired — do not use it; file a task instead.",
 		InputSchema: mcpx.ObjectSchema(map[string]any{
-			"kind":     map[string]any{"type": "string", "description": "task, notification, or any future kind"},
+			"kind":     map[string]any{"type": "string", "description": "task, or any future kind (notification is retired)"},
 			"title":    map[string]any{"type": "string", "description": "short one-line card title"},
 			"priority": map[string]any{"type": "string", "description": "urgent | high | normal | low"},
-			"date":     map[string]any{"type": "string", "description": "optional ISO date (YYYY-MM-DD): due date for a task, event date for a notification"},
+			"date":     map[string]any{"type": "string", "description": "optional ISO date (YYYY-MM-DD): due date for a task"},
 			"body":     map[string]any{"type": "string", "description": "optional extra detail or context"},
 			"payload":  map[string]any{"type": "object", "description": "optional kind-specific extras, stored opaquely"},
 			"source":   map[string]any{"type": "string", "description": "optional subject slug the card came from"},
@@ -589,7 +590,7 @@ func main() {
 	})
 	s.AddTool(mcpx.Tool{
 		Name:        "list_cards",
-		Description: "List the dashboard cards that already exist (tasks and notifications), so you can update or avoid duplicating them.",
+		Description: "List the dashboard cards that already exist (tasks), so you can update or avoid duplicating them.",
 		InputSchema: mcpx.ObjectSchema(nil, nil),
 		Handler:     func(args map[string]any) (string, error) { return listCards(), nil },
 	})
@@ -624,7 +625,7 @@ func suggestionsDir() string    { return filepath.Join(stateDir, "suggestions") 
 
 // The notebook layout, mirrored from the Go server's notebook.go: a subject folder
 // under mcp/<slug>/ holds notes/ (a folder of "#N (Title).md" pages), notebook.json
-// (its viewable identity), and cards/ (its tasks/notifications). Cards live with their
+// (its viewable identity), and cards/ (its tasks). Cards live with their
 // notebook, not in a global queue, so each notebook owns its own actions.
 const notebookManifest = "notebook.json"
 
@@ -965,6 +966,9 @@ func upsertCard(args map[string]any) (string, error) {
 	kind := slug(fmt.Sprintf("%v", args["kind"]))
 	if kind == "" {
 		return "no card kind given.", nil
+	}
+	if kind == "notification" {
+		return "kind=\"notification\" is retired and no longer accepted; file kind=\"task\" instead.", nil
 	}
 	title := strings.TrimSpace(fmt.Sprintf("%v", args["title"]))
 	if title == "" {

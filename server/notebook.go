@@ -19,7 +19,7 @@ import (
 //	mcp/<slug>/
 //	  notebook.json   manifest: the notebook's identity + appearance  (this file)
 //	  notes/          ordered markdown pages: "#N (Title).md" (see below)
-//	  cards/<id>.json this notebook's tasks / notifications / ideas
+//	  cards/<id>.json this notebook's tasks / ideas
 //	  capability.json MCP tool manifest (query layer)
 //	  main.go         the fact-store MCP server (query layer)
 //

@@ -126,8 +126,24 @@ const normalizeBulletMarkers = EditorState.transactionFilter.of(tr => {
 // Sandbox is edited — so those pages call window.__setReadOnly(true) after seeding content.
 const editableConf = new Compartment();
 
+// Android's Gboard treats a spellcheck/autocorrect underline as an in-progress
+// composition. When the user selects text that overlaps one and hits the
+// keyboard's delete key, Chrome sometimes reports the deletion as a 1-character
+// `beforeinput` (as if committing/clearing the composition) instead of one
+// covering the whole selection — CM then only removes that one character. This
+// is the same class of bug the `1`→`/` line-start shortcut above already works
+// around (see slashCommandSource). Turning off autocorrect/spellcheck on the
+// content DOM stops Android from ever starting that composition, so deleting a
+// selection is always a plain, atomic edit.
+const noAndroidComposition = EditorView.contentAttributes.of({
+  autocorrect: 'off',
+  autocapitalize: 'off',
+  spellcheck: 'false',
+});
+
 const extensions = [
   editableConf.of([]),
+  noAndroidComposition,
   normalizeBulletMarkers,
   history(),
   // Highest-precedence Enter: intercept slash commands first (they turn into

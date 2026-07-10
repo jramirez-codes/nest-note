@@ -21,8 +21,8 @@ import type { ThemeColors } from '../../theme/colors';
 
 /**
  * One entry in the notebook picker. `key` is 'all' (the roll-up), 'sandbox' (the
- * single local pad), or a subject slug. Counts are the open tasks + notifications
- * that notebook owns, shown inline so the list itself reads as a map of the world.
+ * single local pad), or a subject slug. `tasks` is the open task count that
+ * notebook owns, shown inline so the list itself reads as a map of the world.
  */
 export interface NotebookOption {
   key: string;
@@ -30,19 +30,15 @@ export interface NotebookOption {
   summary?: string;
   kind: 'all' | 'local' | 'server';
   tasks: number;
-  notifs: number;
 }
 
 const nbIcon = (kind: NotebookOption['kind']): LucideIcon =>
   kind === 'all' ? Layers : kind === 'local' ? PenLine : Folder;
 
-// A one-line summary of what a notebook holds, e.g. "2 tasks · 1 alert", falling
-// back to the subject's own summary (or a hint for the special entries).
+// A one-line summary of what a notebook holds, e.g. "2 tasks", falling back to
+// the subject's own summary (or a hint for the special entries).
 function nbSubtitle(o: NotebookOption): string {
-  const parts: string[] = [];
-  if (o.tasks) parts.push(`${o.tasks} task${o.tasks === 1 ? '' : 's'}`);
-  if (o.notifs) parts.push(`${o.notifs} alert${o.notifs === 1 ? '' : 's'}`);
-  if (parts.length) return parts.join(' · ');
+  if (o.tasks) return `${o.tasks} task${o.tasks === 1 ? '' : 's'}`;
   if (o.kind === 'local') return 'Local scratch pad';
   if (o.kind === 'all') return 'Everything filed';
   return o.summary || 'No open items';

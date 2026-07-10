@@ -330,13 +330,12 @@ function buildIngestPrompt(pageText: string): string {
     'own lines.\n' +
     '4. Only if two EXISTING subjects clearly duplicate each other may you call ' +
     'suggest_merge. Never merge on your own.\n' +
-    '5. Also surface anything actionable or time-sensitive as a dashboard card ' +
-    '(call list_cards first to avoid duplicates): use upsert_card with kind="task" ' +
-    'for things the user needs to do (attach a date when a due date is stated) and ' +
-    'kind="notification" for dated or important upcoming events/deadlines/reminders. ' +
-    'Set priority (urgent | high | normal | low) as an honest urgency judgment, and ' +
-    'set source to the subject slug the card came from. Only make cards for genuine ' +
-    'tasks/events — not for every note.\n\n' +
+    '5. Also surface anything actionable as a dashboard card (call list_cards first ' +
+    'to avoid duplicates): use upsert_card with kind="task" for things the user ' +
+    'needs to do, attaching a date when a due date is stated. Set priority ' +
+    '(urgent | high | normal | low) as an honest urgency judgment, and set source to ' +
+    'the subject slug the card came from. Only make cards for genuine tasks — not ' +
+    'for every note.\n\n' +
     'When finished, reply with a single short line summarizing what you filed and ' +
     'where. Do not ask questions.\n\n<notes>\n' +
     pageText +

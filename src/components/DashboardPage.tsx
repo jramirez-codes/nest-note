@@ -8,7 +8,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { Bell, Folder, GitMerge, Inbox, Lightbulb, ListChecks } from 'lucide-react-native';
+import { Folder, GitMerge, Inbox, Lightbulb, ListChecks } from 'lucide-react-native';
 import { useTheme } from '../theme/colors';
 import type { CardDragShared } from './cardDrag';
 import {
@@ -24,13 +24,7 @@ import {
 } from '../server/aiController';
 import { compareCards, compareTasks, humanizeKind } from './dashboard/cardModel';
 import { NotebookSwitcher, type NotebookOption } from './dashboard/NotebookSwitcher';
-import {
-  DraggableCard,
-  IdeaCard,
-  NotificationCard,
-  SectionHeader,
-  TaskRow,
-} from './dashboard/DashboardCards';
+import { DraggableCard, IdeaCard, SectionHeader, TaskRow } from './dashboard/DashboardCards';
 
 interface DashboardPageProps {
   /** Exact page width so the sheet fills its slot in the pager. */
@@ -218,32 +212,21 @@ function DashboardPage({
   const allSuggestions = state?.suggestions ?? [];
 
   // The notebook picker's entries: the Sandbox (the local pad, which also rolls up every
-  // notebook's cards + alerts), then one per subject server, each tagged with its own
-  // open-task / notification counts (a card belongs to a notebook via its `source` slug).
+  // notebook's cards), then one per subject server, each tagged with its own open-task
+  // count (a card belongs to a notebook via its `source` slug).
   const nbOptions = useMemo<NotebookOption[]>(() => {
-    const countFor = (name: string) => {
-      let tasks = 0;
-      let notifs = 0;
-      for (const c of allCards) {
-        if (c.source !== name) continue;
-        if (c.kind === 'task') {
-          if (!c.done) tasks++;
-        } else if (c.kind === 'notification') notifs++;
-      }
-      return { tasks, notifs };
-    };
+    const tasksFor = (name: string) =>
+      allCards.filter(c => c.source === name && c.kind === 'task' && !c.done).length;
     const opts: NotebookOption[] = [
       {
         key: 'sandbox',
         label: 'Sandbox',
         kind: 'local',
         tasks: allCards.filter(c => c.kind === 'task' && !c.done).length,
-        notifs: allCards.filter(c => c.kind === 'notification').length,
       },
     ];
     for (const s of allServers) {
-      const { tasks, notifs } = countFor(s.name);
-      opts.push({ key: s.name, label: s.title || s.name, summary: s.summary, kind: 'server', tasks, notifs });
+      opts.push({ key: s.name, label: s.title || s.name, summary: s.summary, kind: 'server', tasks: tasksFor(s.name) });
     }
     return opts;
   }, [allCards, allServers]);
@@ -255,17 +238,20 @@ function DashboardPage({
   // A subject shows only its own cards (its notes live in the pad's pages, not here).
   const isSandbox = selected.key === 'sandbox';
 
-  const cards = isSandbox ? allCards : allCards.filter(c => c.source === selected.key);
+  // Notifications are deprecated: any that still exist on the server (filed before
+  // the kind was retired) are hidden here rather than falling into the generic grid.
+  const cards = (isSandbox ? allCards : allCards.filter(c => c.source === selected.key)).filter(
+    c => c.kind !== 'notification',
+  );
   const suggestions = isSandbox ? allSuggestions : [];
 
-  // Split cards into their sections. Tasks and notifications are first-class; every
-  // other kind is grouped by kind and rendered through the generic idea-card grid,
-  // so a brand-new kind appears immediately with no code change here.
+  // Split cards into their sections. Tasks are first-class; every other kind is
+  // grouped by kind and rendered through the generic idea-card grid, so a brand-new
+  // kind appears immediately with no code change here.
   const tasks = cards.filter(c => c.kind === 'task').sort(compareTasks);
-  const notifications = cards.filter(c => c.kind === 'notification').sort(compareCards);
   const otherKinds: Record<string, DashboardCard[]> = {};
   for (const c of cards) {
-    if (c.kind === 'task' || c.kind === 'notification') continue;
+    if (c.kind === 'task') continue;
     (otherKinds[c.kind] ??= []).push(c);
   }
   const otherKindNames = Object.keys(otherKinds).sort();
@@ -335,23 +321,6 @@ function DashboardPage({
                   <Text className="text-text">/ingest</Text> to file tasks, reminders and
                   subjects here.
                 </Text>
-              </View>
-            )}
-
-            {/* Notifications first — the alerts the user should see on arrival. */}
-            {notifications.length > 0 && (
-              <View className="mb-6">
-                <SectionHeader
-                  icon={Bell}
-                  title="Notifications"
-                  count={notifications.length}
-                  colors={colors}
-                />
-                {notifications.map(card => (
-                  <DraggableCard key={card.id} card={card} {...dragProps}>
-                    <NotificationCard card={card} dimmed={liftedId === card.id} />
-                  </DraggableCard>
-                ))}
               </View>
             )}
 

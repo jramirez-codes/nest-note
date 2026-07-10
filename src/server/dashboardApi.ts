@@ -65,7 +65,7 @@ export interface DashboardCard {
   id: string;
   kind: string;
   priority: CardPriority;
-  /** Optional ISO date: a task's due date or a notification's event date. */
+  /** Optional ISO date: a task's due date. */
   date?: string;
   title: string;
   body?: string;
