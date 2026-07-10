@@ -49,6 +49,7 @@ export {
   applyDashboardAction,
   completeCard,
   dismissCard,
+  searchNotes,
   type NotePage,
   type DashboardServer,
   type NotebookDetail,
@@ -56,4 +57,5 @@ export {
   type CardPriority,
   type DashboardCard,
   type DashboardState,
+  type SearchResult,
 } from './dashboardApi';

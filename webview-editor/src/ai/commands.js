@@ -59,6 +59,11 @@ const SLASH_COMMANDS = [
     apply: '/run ',
   },
   {
+    label: '/search',
+    detail: 'Search your notebooks — /search QUERY — pick a result to insert a link to that page',
+    apply: '/search ',
+  },
+  {
     label: '/talk',
     detail: 'Chat about a subject — /talk SUBJECT <message> — the orchestrator keeps its notes updated as you talk',
     apply: '/talk ',
@@ -193,6 +198,52 @@ function makeSubjectSource(cmd) {
 
 export const talkSubjectSource = makeSubjectSource('talk');
 export const aggTasksSubjectSource = makeSubjectSource('agg-tasks');
+
+// --- search autocomplete for `/search <query>` -------------------------------
+// Unlike the fixed lists above (fetched once, then filtered client-side as the
+// user types a prefix), a search query changes what "matches" even means — so
+// every distinct query is sent to RN for a real server-side search (see
+// window.__setSearchResults, populated by the reply to each `search` post),
+// and whatever it returns is shown as-is. Picking a result inserts a
+// `[[slug::#N (Title)]]` wikilink to that page rather than plain text.
+let searchQuery = '';
+let searchResults = []; // [{slug, title, page_num, page_title, snippet}]
+export function setSearchResults(query, results) {
+  // A reply for a query the user has since typed past — drop it so a slow
+  // round trip can't clobber a newer (and by now correct) result set.
+  if (query !== searchQuery) return;
+  searchResults = Array.isArray(results) ? results : [];
+}
+
+// The whole rest of the line after `/search ` is the query (it may contain
+// spaces), so — unlike makeProjectSource/makeSubjectSource, which match a
+// single bare word — this captures everything up to the caret.
+const searchRe = /^\/ ?search\s+(\S.*)$/;
+export function searchSource(context) {
+  const line = context.state.doc.lineAt(context.pos);
+  const before = line.text.slice(0, context.pos - line.from);
+  const m = searchRe.exec(before);
+  if (!m) return null;
+  const query = m[1];
+  if (query !== searchQuery) {
+    // A fresh query: ask RN to run it and clear stale matches until the reply
+    // lands (see window.__setSearchResults, which re-opens the menu then).
+    searchQuery = query;
+    searchResults = [];
+    post({ type: 'search', query });
+  }
+  const options = searchResults.map(r => ({
+    label: r.page_title,
+    detail: `${r.title} — ${r.snippet}`,
+    type: 'text',
+    apply: `[[${r.slug}::#${r.page_num} (${r.page_title})]] `,
+  }));
+  if (!options.length) return null;
+  // Replace just the typed query (from the caret back over m[1]), leaving the
+  // `/search ` prefix intact; CM's own filter is off since matching already
+  // happened server-side.
+  return { from: context.pos - m[1].length, to: context.pos, options, filter: false };
+}
 
 // Enter on a `/ask <question>` or `/pair <payload>` line turns that line into a
 // card and hands the work to RN. Returns true to swallow the newline when it

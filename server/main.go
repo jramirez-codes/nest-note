@@ -139,6 +139,9 @@ func main() {
 	mux.HandleFunc("/notebook", notebookHandler(token, *root))
 	mux.HandleFunc("/page", pageHandler(token, *root))
 	mux.HandleFunc("/action", actionHandler(token, *root))
+	// Read-only full-text search across every notebook's pages, backing the
+	// editor's `/search <query>` autocomplete. See server/search.go.
+	mux.HandleFunc("/search", searchHandler(token, *root))
 
 	listenAddr := net.JoinHostPort(bindIP, fmt.Sprintf("%d", *port))
 	srv := &http.Server{

@@ -168,6 +168,50 @@ export async function fetchPage(slug: string, num: number): Promise<NotePage> {
   };
 }
 
+/**
+ * One page match from `GET /search?q=`: enough to render an autocomplete row
+ * (the owning notebook, the page, a snippet of where the query hit) and to
+ * build a `[[slug::#N (Title)]]` link to it.
+ */
+export interface SearchResult {
+  slug: string;
+  title: string;
+  page_num: number;
+  page_title: string;
+  snippet: string;
+}
+
+/**
+ * Search every notebook's pages for `query` (case-insensitive, title or body)
+ * — the editor's `/search <query>` autocomplete calls this on every keystroke.
+ * An empty/whitespace-only query resolves to `[]` without a round trip; any
+ * other failure (nothing paired, server started without -root, unreachable)
+ * also resolves to `[]` rather than throwing, since the caller is a menu that
+ * should just show no suggestions, not surface an error mid-typing.
+ */
+export async function searchNotes(query: string): Promise<SearchResult[]> {
+  const q = query.trim();
+  if (!q) return [];
+  let text: string;
+  try {
+    text = await getJson(`/search?q=${encodeURIComponent(q)}`, 'no results', 'no results');
+  } catch {
+    return [];
+  }
+  const data = JSON.parse(text) as { results?: unknown };
+  if (!Array.isArray(data.results)) return [];
+  return data.results
+    .filter((r): r is Record<string, unknown> => typeof r === 'object' && r !== null)
+    .map(r => ({
+      slug: String(r.slug ?? ''),
+      title: String(r.title ?? ''),
+      page_num: typeof r.page_num === 'number' ? r.page_num : 0,
+      page_title: String(r.page_title ?? ''),
+      snippet: String(r.snippet ?? ''),
+    }))
+    .filter(r => r.slug !== '' && r.page_title !== '');
+}
+
 // The last dashboard state we held, kept in module scope so it outlives the
 // DashboardPage component. The pager unmounts non-current pages, so swiping away
 // from the dashboard and back would otherwise drop its data and flash the loading

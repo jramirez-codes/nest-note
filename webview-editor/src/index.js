@@ -48,8 +48,10 @@ import {
   deleteProjectSource,
   talkSubjectSource,
   aggTasksSubjectSource,
+  searchSource,
   setCodeProjects,
   setTalkSubjects,
+  setSearchResults,
   aiCommandOnEnter,
 } from './ai/commands.js';
 import { lineStartReplace } from './markdown/lineStartReplace.js';
@@ -165,19 +167,22 @@ const extensions = [
       deleteProjectSource,
       talkSubjectSource,
       aggTasksSubjectSource,
+      searchSource,
     ],
     icons: false,
     activateOnTyping: true,
-    // Picking `/code`, `/run`, `/delete`, `/talk` or `/agg-tasks` from the slash
-    // menu lands the caret on `/code `/`/run `/`/delete `/`/talk `/`/agg-tasks ` —
-    // all take a project or subject first, so re-open completion straight away and
-    // that list shows without waiting for a keystroke. Other commands close as usual.
+    // Picking `/code`, `/run`, `/delete`, `/talk`, `/agg-tasks` or `/search` from
+    // the slash menu lands the caret on `/code `/`/run `/`/delete `/`/talk `/
+    // `/agg-tasks `/`/search ` — all take a project, subject, or query first, so
+    // re-open completion straight away and that list shows without waiting for a
+    // keystroke. Other commands close as usual.
     activateOnCompletion: c =>
       c.label === '/code' ||
       c.label === '/run' ||
       c.label === '/delete' ||
       c.label === '/talk' ||
-      c.label === '/agg-tasks',
+      c.label === '/agg-tasks' ||
+      c.label === '/search',
     aboveCursor: false,
   }),
   openLinks,
@@ -422,6 +427,22 @@ window.__setTalkSubjects = function (names) {
   if (!sel.empty) return;
   const line = view.state.doc.lineAt(sel.head);
   if (/^\/ ?talk\s/.test(line.text.slice(0, sel.head - line.from))) {
+    startCompletion(view);
+  }
+};
+
+// RN answers a search request here with the paired laptop's matching notebook
+// pages, caching them (keyed to that exact query — see setSearchResults) for
+// the `/search <query>` autocomplete. If the caret is still sitting on that
+// `/search ` line, re-open completion so a reply that arrives after the menu
+// first showed (the search is a round trip) still populates it live.
+window.__setSearchResults = function (query, results) {
+  setSearchResults(query, results);
+  if (!view.hasFocus) return;
+  const sel = view.state.selection.main;
+  if (!sel.empty) return;
+  const line = view.state.doc.lineAt(sel.head);
+  if (/^\/ ?search\s/.test(line.text.slice(0, sel.head - line.from))) {
     startCompletion(view);
   }
 };

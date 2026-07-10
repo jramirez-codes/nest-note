@@ -17,7 +17,7 @@ import { Linking } from 'react-native';
 import type { WebViewMessageEvent } from 'react-native-webview';
 import { fetchLinkPreview } from '../../utils/linkPreview';
 import { getPayloadsForPage, upsertPayload, deletePayload } from '../../storage';
-import { pairFromPayload, fetchDashboardState } from '../../server/controllers/aiController';
+import { pairFromPayload, fetchDashboardState, searchNotes } from '../../server/controllers/aiController';
 import { fetchProjects } from '../../server/controllers/agentController';
 import { fetchViewUrl } from '../../server/controllers/viewController';
 import { updateServer, waitForServerBack } from '../../server/controllers/updateController';
@@ -71,6 +71,7 @@ export interface EditorMessage {
   data?: string;
   project?: string;
   port?: number;
+  query?: string;
 }
 
 type WebViewRef = React.RefObject<{ injectJavaScript: (js: string) => void } | null>;
@@ -357,6 +358,18 @@ export function handleEditorMessage(ctx: BridgeContext, e: WebViewMessageEvent):
       .then(names => {
         inject(`window.__setTalkSubjects(${JSON.stringify(names)});`);
       });
+  } else if (msg.type === 'search' && typeof msg.query === 'string') {
+    // The editor is autocompleting `/search <query>`: run it against the paired
+    // laptop's notebook pages and push matches back so the menu can offer them.
+    // The query rides along in the reply so a round trip that lands after the
+    // user has kept typing can be told apart from the current one (see
+    // window.__setSearchResults, which drops a stale reply instead of showing
+    // it). Fire-and-forget — an empty list (nothing paired, server started
+    // without -root, or no matches) just yields no suggestions.
+    const query = msg.query;
+    searchNotes(query).then(results => {
+      inject(`window.__setSearchResults(${JSON.stringify(query)}, ${JSON.stringify(results)});`);
+    });
   } else if (msg.type === 'deleteProject' && typeof msg.project === 'string') {
     // The editor cleared its `/delete PROJECT` line and asked us to remove
     // the folder. This is destructive, so raise the same ConfirmDialog the
