@@ -60,7 +60,7 @@ const SLASH_COMMANDS = [
   },
   {
     label: '/search',
-    detail: 'Search your notebooks — /search QUERY — pick a result to insert a link to that page',
+    detail: 'Search your notebooks — /search QUERY — pick a result to jump straight to that page',
     apply: '/search ',
   },
   {
@@ -204,8 +204,10 @@ export const aggTasksSubjectSource = makeSubjectSource('agg-tasks');
 // user types a prefix), a search query changes what "matches" even means — so
 // every distinct query is sent to RN for a real server-side search (see
 // window.__setSearchResults, populated by the reply to each `search` post),
-// and whatever it returns is shown as-is. Picking a result inserts a
-// `[[slug::#N (Title)]]` wikilink to that page rather than plain text.
+// and whatever it returns is shown as-is. `/search` is a navigation command,
+// not something that leaves content behind: picking a result deletes the whole
+// `/search <query>` line and jumps straight to that page, via the same
+// `openPage` message a wikilink tap sends (see links.js) — no card, no marker.
 let searchQuery = '';
 let searchResults = []; // [{slug, title, page_num, page_title, snippet}]
 export function setSearchResults(query, results) {
@@ -236,7 +238,20 @@ export function searchSource(context) {
     label: r.page_title,
     detail: `${r.title} — ${r.snippet}`,
     type: 'text',
-    apply: `[[${r.slug}::#${r.page_num} (${r.page_title})]] `,
+    // A function `apply` (rather than a plain string) so picking a result can
+    // both clear the command line AND fire the navigation, instead of leaving
+    // typed text behind for the user to deal with.
+    apply(view) {
+      const l = view.state.doc.lineAt(view.state.selection.main.head);
+      view.dispatch({
+        changes: { from: l.from, to: l.to, insert: '' },
+        selection: { anchor: l.from },
+      });
+      // `title` matches the on-disk page filename minus ".md" (see
+      // notebook.go's "#N (Title)" page grammar), the same shape NotebookScreen
+      // resolves a wikilink tap's title against.
+      post({ type: 'openPage', slug: r.slug, title: `#${r.page_num} (${r.page_title})` });
+    },
   }));
   if (!options.length) return null;
   // Replace just the typed query (from the caret back over m[1]), leaving the
