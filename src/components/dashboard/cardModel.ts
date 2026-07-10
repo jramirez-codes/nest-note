@@ -17,13 +17,14 @@ export interface PriorityStyle {
   hex: string;
   pip: string;
   chip: string;
+  text: string;
   label: string;
 }
 const PRIORITY: Record<string, PriorityStyle> = {
-  urgent: { hex: mocha.red, pip: 'bg-red', chip: 'bg-red/20', label: 'Urgent' },
-  high: { hex: mocha.peach, pip: 'bg-peach', chip: 'bg-peach/20', label: 'High' },
-  normal: { hex: mocha.blue, pip: 'bg-blue', chip: 'bg-blue/20', label: 'Normal' },
-  low: { hex: mocha.overlay0, pip: 'bg-overlay0', chip: 'bg-overlay0/30', label: 'Low' },
+  urgent: { hex: mocha.red, pip: 'bg-red', chip: 'bg-red/20', text: 'text-red', label: 'Urgent' },
+  high: { hex: mocha.peach, pip: 'bg-peach', chip: 'bg-peach/20', text: 'text-peach', label: 'High' },
+  normal: { hex: mocha.blue, pip: 'bg-blue', chip: 'bg-blue/20', text: 'text-blue', label: 'Normal' },
+  low: { hex: mocha.overlay0, pip: 'bg-overlay0', chip: 'bg-overlay0/30', text: 'text-overlay0', label: 'Low' },
 };
 export const prio = (p: string): PriorityStyle => PRIORITY[p] ?? PRIORITY.normal;
 
@@ -42,18 +43,17 @@ export function compareCards(a: DashboardCard, b: DashboardCard): number {
   return ac < bc ? -1 : ac > bc ? 1 : 0;
 }
 
-// Tasks sort like everything else but completed ones sink to the bottom. This is
-// the 'priority' order: priority rank desc (red → orange → blue → gray), then
-// soonest due date as the tiebreak.
+// Tasks sort like everything else; completion doesn't affect order, so checking
+// a task off leaves it in place instead of jumping it elsewhere in the list.
+// This is the 'priority' order: priority rank desc (red → orange → blue → gray),
+// then soonest due date as the tiebreak.
 export function compareTasks(a: DashboardCard, b: DashboardCard): number {
-  if (!!a.done !== !!b.done) return a.done ? 1 : -1;
   return compareCards(a, b);
 }
 
 // The 'date' order: soonest due date first (dated tasks ahead of undated), then
-// priority rank desc as the tiebreak. Completed tasks still sink to the bottom.
+// priority rank desc as the tiebreak. Completion doesn't affect order here either.
 export function compareTasksByDate(a: DashboardCard, b: DashboardCard): number {
-  if (!!a.done !== !!b.done) return a.done ? 1 : -1;
   const ad = a.date || '';
   const bd = b.date || '';
   if (ad && bd && ad !== bd) return ad < bd ? -1 : 1;

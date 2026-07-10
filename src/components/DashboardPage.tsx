@@ -233,6 +233,17 @@ function DashboardPage({
   const allCards = useMemo(() => state?.cards ?? [], [state]);
   const allSuggestions = state?.suggestions ?? [];
 
+  // Maps a card's `source` slug to its notebook's display title, for the Tasks
+  // list's subject badge — falls back to the slug itself, or "Sandbox" for cards
+  // with no source (local-pad-only cards).
+  const subjectTitleFor = useCallback(
+    (source?: string) => {
+      if (!source) return 'Sandbox';
+      return allServers.find(s => s.name === source)?.title || source;
+    },
+    [allServers],
+  );
+
   // The notebook picker's entries: the Sandbox (the local pad, which also rolls up every
   // notebook's cards), then one per subject server, each tagged with its own open-task
   // count (a card belongs to a notebook via its `source` slug).
@@ -377,6 +388,7 @@ function DashboardPage({
                           busy={busy}
                           onToggle={onToggle}
                           dimmed={liftedId === card.id}
+                          subjectTitle={subjectTitleFor(card.source)}
                         />
                       </DraggableCard>
                     </View>

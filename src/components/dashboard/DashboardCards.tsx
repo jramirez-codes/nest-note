@@ -96,19 +96,22 @@ export function SectionHeader({
 }
 
 // One task row inside the grouped Tasks surface: a checkbox that toggles done, the
-// title (struck through when done), a priority pip, and a due date (red when overdue).
+// title (struck through when done), a subject badge (themed to the task's priority),
+// and a due date (red when overdue).
 export function TaskRow({
   card,
   colors,
   busy,
   onToggle,
   dimmed,
+  subjectTitle,
 }: {
   card: DashboardCard;
   colors: ThemeColors;
   busy: Record<string, boolean>;
   onToggle: (c: DashboardCard) => void;
   dimmed: boolean;
+  subjectTitle: string;
 }) {
   const due = card.date ? relDate(card.date) : null;
   const overdue = !!due?.overdue && !card.done;
@@ -132,7 +135,14 @@ export function TaskRow({
         onPress={() => onToggle(card)}
         disabled={busy[card.id]}
         className="flex-1 flex-row items-center pl-3 pr-2">
-        <View className={`mr-2 h-1.5 w-1.5 rounded-full ${prio(card.priority).pip}`} />
+        {!!subjectTitle && (
+          <View
+            className={`mr-2 max-w-[35%] shrink-0 rounded-full px-2 py-0.5 ${prio(card.priority).chip}`}>
+            <Text numberOfLines={1} className={`text-[10px] font-bold ${prio(card.priority).text}`}>
+              {subjectTitle}
+            </Text>
+          </View>
+        )}
         <Text
           numberOfLines={1}
           className={`flex-1 text-sm ${card.done ? 'text-faint line-through' : 'text-text'}`}>
