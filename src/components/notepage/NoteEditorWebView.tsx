@@ -40,6 +40,13 @@ interface NoteEditorWebViewProps {
    */
   onOpenPage?: (slug: string, title: string) => void;
   /**
+   * A card's full-page overlay (an expanded /chat, /run, /code, or /view card)
+   * opened or closed. The overlay fills the whole WebView with its own footer
+   * composer, so the host should hide any chrome it floats on top of the
+   * WebView while this is true, and restore it once it flips back to false.
+   */
+  onWidgetExpandChange?: (expanded: boolean) => void;
+  /**
    * Render the content read-only: no caret, no typing, no edits (CM6 editable off +
    * EditorState.readOnly). Used for subject-notebook pages pulled from the server, which
    * are viewable but not editable on the phone — only the local Sandbox is edited.
@@ -75,6 +82,7 @@ export default function NoteEditorWebView({
   onSetTitle,
   onIngested,
   onOpenPage,
+  onWidgetExpandChange,
   readOnly = false,
   notebookId,
   pageId,
@@ -126,12 +134,23 @@ export default function NoteEditorWebView({
           pageId,
           onChangeContent,
           onOpenPage,
+          onWidgetExpandChange,
           setPairScan,
           setProjectDelete,
         },
         e,
       ),
-    [initialContent, hasTitle, onChangeContent, onOpenPage, readOnly, notebookId, pageId, sink],
+    [
+      initialContent,
+      hasTitle,
+      onChangeContent,
+      onOpenPage,
+      onWidgetExpandChange,
+      readOnly,
+      notebookId,
+      pageId,
+      sink,
+    ],
   );
 
   // Feed a resolved pairing outcome back into the /pair card, then close scanner.
@@ -174,6 +193,12 @@ export default function NoteEditorWebView({
       stopPlayback().catch(() => {});
     };
   }, []);
+
+  // If this page unmounts (swiped away) while a card overlay is open, restore
+  // the bubble footer the overlay had asked the host to hide — the overlay's
+  // own WebView state is gone with it, so no `cardOverlay` close message will
+  // ever arrive.
+  useEffect(() => () => onWidgetExpandChange?.(false), [onWidgetExpandChange]);
 
   // Drop focus (and dismiss the keyboard) when swiped away from.
   useEffect(() => {

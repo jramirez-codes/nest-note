@@ -14,6 +14,8 @@ interface VirtualNotePageProps {
   isActive: boolean;
   /** A tapped wikilink asks to flip the pad to `title` (in notebook `slug`, or the current one). */
   onOpenPage?: (slug: string, title: string) => void;
+  /** An AI card's full-page overlay opened/closed — see NoteEditorWebView. */
+  onWidgetExpandChange?: (expanded: boolean) => void;
   /** Subject slug + page id this virtual page belongs to (passed through for media bucketing;
    *  these pages are read-only so recording never actually fires here). */
   notebookId: string;
@@ -36,6 +38,7 @@ function VirtualNotePage({
   width,
   isActive,
   onOpenPage,
+  onWidgetExpandChange,
   notebookId,
   pageId,
 }: VirtualNotePageProps) {
@@ -59,6 +62,7 @@ function VirtualNotePage({
             onSetTitle={noop}
             onIngested={noop}
             onOpenPage={onOpenPage}
+            onWidgetExpandChange={onWidgetExpandChange}
             notebookId={notebookId}
             pageId={pageId}
           />

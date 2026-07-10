@@ -72,6 +72,7 @@ export interface EditorMessage {
   project?: string;
   port?: number;
   query?: string;
+  open?: boolean;
 }
 
 type WebViewRef = React.RefObject<{ injectJavaScript: (js: string) => void } | null>;
@@ -93,6 +94,10 @@ export interface BridgeContext {
   pageId: string;
   onChangeContent: (content: string) => void;
   onOpenPage?: (slug: string, title: string) => void;
+  /** A card's full-page overlay (e.g. an expanded /chat, /run, /code, or /view
+   *  card) opened or closed, so the host can hide/restore chrome that would
+   *  otherwise float on top of the overlay's own footer composer. */
+  onWidgetExpandChange?: (expanded: boolean) => void;
   setPairScan: (v: { id: string } | null) => void;
   setProjectDelete: (
     v: { mode: 'confirm'; project: string } | { mode: 'error'; message: string } | null,
@@ -113,6 +118,7 @@ export function handleEditorMessage(ctx: BridgeContext, e: WebViewMessageEvent):
     pageId,
     onChangeContent,
     onOpenPage,
+    onWidgetExpandChange,
     setPairScan,
     setProjectDelete,
   } = ctx;
@@ -177,6 +183,9 @@ export function handleEditorMessage(ctx: BridgeContext, e: WebViewMessageEvent):
     attachedIds.current.add(id);
   } else if (msg.type === 'change' && typeof msg.text === 'string') {
     onChangeContent(msg.text);
+  } else if (msg.type === 'cardOverlay' && typeof msg.open === 'boolean') {
+    // A card was expanded into (or closed from) its full-page overlay.
+    onWidgetExpandChange?.(msg.open);
   } else if (msg.type === 'openUrl' && typeof msg.url === 'string') {
     // Open tapped markdown links in the system browser. Restrict schemes so
     // a note can't smuggle in javascript:/file: URLs.

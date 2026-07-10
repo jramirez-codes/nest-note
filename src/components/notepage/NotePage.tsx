@@ -16,6 +16,8 @@ interface NotePageProps {
   onIngested: (id: string) => void;
   /** A tapped wikilink asks to flip the pad to `title` (in notebook `slug`, or the current one). */
   onOpenPage?: (slug: string, title: string) => void;
+  /** An AI card's full-page overlay opened/closed — see NoteEditorWebView. */
+  onWidgetExpandChange?: (expanded: boolean) => void;
   /** Notebook this page lives in — /record clips are bucketed by notebook + page id. */
   notebookId: string;
 }
@@ -35,6 +37,7 @@ function NotePage({
   onSetTitle,
   onIngested,
   onOpenPage,
+  onWidgetExpandChange,
   notebookId,
 }: NotePageProps) {
   const handleChangeContent = useCallback(
@@ -63,6 +66,7 @@ function NotePage({
           onSetTitle={handleSetTitle}
           onIngested={handleIngested}
           onOpenPage={onOpenPage}
+          onWidgetExpandChange={onWidgetExpandChange}
           notebookId={notebookId}
           pageId={note.id}
         />

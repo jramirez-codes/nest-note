@@ -74,6 +74,15 @@ export default function NotebookScreen() {
 
   const pagerRef = useRef<PaperPagerHandle>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
+  // True while the current page has an AI card expanded into its full-page
+  // overlay (e.g. an expanded /chat, /run, /code or /view card). That overlay
+  // fills the WebView with its own footer composer, so the bottom bubble strip
+  // (which floats on top of the WebView) is hidden while it's up — otherwise it
+  // sits over the composer's text input and blocks it. Reset on every page
+  // change: a freshly shown page never starts with an overlay open, and the
+  // outgoing page's WebView may unmount before it gets a chance to say so.
+  const [widgetExpanded, setWidgetExpanded] = useState(false);
+  useEffect(() => setWidgetExpanded(false), [currentIndex]);
   // The page we were on before the current one — a tap on the progress bubble
   // returns here, so e.g. Dashboard → tap bubble jumps back to the note you left.
   // Tracked in refs (not derived inside a setState updater, which can run more
@@ -311,6 +320,7 @@ export default function NotebookScreen() {
             width={width}
             isActive={isActive}
             onOpenPage={handleOpenPage}
+            onWidgetExpandChange={setWidgetExpanded}
             notebookId={subjectSlug ?? SANDBOX_KEY}
             pageId={String(page.stub.num)}
           />
@@ -325,6 +335,7 @@ export default function NotebookScreen() {
           onSetTitle={updateNoteTitle}
           onIngested={deleteNote}
           onOpenPage={handleOpenPage}
+          onWidgetExpandChange={setWidgetExpanded}
           notebookId={DEFAULT_NOTEBOOK_ID}
         />
       );
@@ -478,43 +489,50 @@ export default function NotebookScreen() {
           full height of the screen and the pad scrolls beneath the indicator.
           bottom-0 already clears the safe area — the parent's paddingBottom
           offsets absolute children in Yoga. box-none lets touches fall through
-          to the note except on the bubbles. */}
-      <View pointerEvents="box-none" className="absolute inset-x-0 bottom-0">
-        {/* Fade the note out as it scrolls up toward the bubbles: transparent at
-            the top → solid background where it meets the strip below, so text
-            dissolves rather than butting against a hard edge. none so it never
-            eats scroll gestures. */}
-        <View
-          pointerEvents="none"
-          className="h-20"
-          style={{
-            experimental_backgroundImage: [
-              {
-                type: 'linear-gradient',
-                direction: 'to bottom',
-                colorStops: [
-                  { color: 'transparent' },
-                  { color: colors.background },
-                ],
-              },
-            ],
-          }}
-        />
-        {/* The bubbles sit on a solid background strip; pb lifts them up off the
-            bottom edge (solid background fills below them). The gradient only
-            lives above the strip. */}
-        <View pointerEvents="box-none" className="bg-background pb-6">
-          <PageIndicator
-            currentIndex={currentIndex}
-            prevIndex={prevIndexRef.current}
-            noteCount={contentCount}
-            onPressDashboard={goToDashboard}
-            onPressProgress={goToPreviousPage}
-            scrubWidth={width}
-            onScrub={handleScrub}
+          to the note except on the bubbles.
+
+          Hidden entirely while a card is expanded into its full-page overlay:
+          that overlay fills the WebView with its own footer composer, and this
+          strip floats on top of the WebView, so left up it would sit over the
+          composer's text input and block it. */}
+      {!widgetExpanded && (
+        <View pointerEvents="box-none" className="absolute inset-x-0 bottom-0">
+          {/* Fade the note out as it scrolls up toward the bubbles: transparent at
+              the top → solid background where it meets the strip below, so text
+              dissolves rather than butting against a hard edge. none so it never
+              eats scroll gestures. */}
+          <View
+            pointerEvents="none"
+            className="h-20"
+            style={{
+              experimental_backgroundImage: [
+                {
+                  type: 'linear-gradient',
+                  direction: 'to bottom',
+                  colorStops: [
+                    { color: 'transparent' },
+                    { color: colors.background },
+                  ],
+                },
+              ],
+            }}
           />
+          {/* The bubbles sit on a solid background strip; pb lifts them up off the
+              bottom edge (solid background fills below them). The gradient only
+              lives above the strip. */}
+          <View pointerEvents="box-none" className="bg-background pb-6">
+            <PageIndicator
+              currentIndex={currentIndex}
+              prevIndex={prevIndexRef.current}
+              noteCount={contentCount}
+              onPressDashboard={goToDashboard}
+              onPressProgress={goToPreviousPage}
+              scrubWidth={width}
+              onScrub={handleScrub}
+            />
+          </View>
         </View>
-      </View>
+      )}
 
       {/* The drag-to-delete banner + floating card clone (presentational; fed the
           animated styles computed above). */}

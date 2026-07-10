@@ -27,6 +27,32 @@ import { growPre, growMdView, scrollBottomSoon } from './shared/streamLog.js';
 // The one overlay that can be open at a time. Null when nothing is enlarged.
 let active = null;
 
+// Keep the overlay's live footer glued to the top of the on-screen keyboard.
+// The overlay itself is `position: fixed; inset: 0` sized to the LAYOUT
+// viewport, which most mobile WebViews don't shrink when the keyboard shows —
+// only the VISUAL viewport shrinks (window.visualViewport.height), and it can
+// also pan independently (visualViewport.offsetTop) when the user touch-scrolls
+// nested content (the transcript log) while the keyboard is up. Shrinking the
+// root's `bottom` inset by whatever the visual viewport currently doesn't cover
+// keeps the flex column — and the footer pinned to its end — landing exactly
+// above the keyboard, and re-running on every visualViewport resize/scroll
+// keeps it there instead of it drifting once the log is scrolled.
+function pinOverlayToViewport(root) {
+  const vv = window.visualViewport;
+  if (!vv) return () => {};
+  const update = () => {
+    const covered = window.innerHeight - (vv.height + vv.offsetTop);
+    root.style.bottom = covered > 0 ? `${covered}px` : '0';
+  };
+  vv.addEventListener('resize', update);
+  vv.addEventListener('scroll', update);
+  update();
+  return () => {
+    vv.removeEventListener('resize', update);
+    vv.removeEventListener('scroll', update);
+  };
+}
+
 // Current status + payload for a card by id, from its live field while it runs,
 // falling back to the persisted marker once finished. Null once the card is gone
 // (deleted) — the caller closes the overlay when that happens.
@@ -479,7 +505,14 @@ export function openCardOverlay(view, obj) {
     frame: null,
     viewUrl: null,
     errBox: null,
+    unpinViewport: null,
   };
+  active.unpinViewport = pinOverlayToViewport(root);
+  // The overlay is a fixed, full-screen layer with its own footer composer
+  // pinned to the bottom — tell RN so it can hide the bubble footer it floats
+  // over the note (Dashboard/progress bubbles), which would otherwise sit on
+  // top of the composer and block it.
+  post({ type: 'cardOverlay', open: true });
   render(view);
 }
 
@@ -495,8 +528,10 @@ export function closeOverlay() {
   if (!active) return;
   teardownMd();
   active.foot = null;
+  active.unpinViewport?.();
   if (active.root) active.root.remove();
   active = null;
+  post({ type: 'cardOverlay', open: false });
 }
 
 export const styles = {
