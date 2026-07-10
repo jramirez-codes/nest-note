@@ -19,9 +19,29 @@ const SLASH_COMMANDS = [
     apply: '/chat ',
   },
   {
-    label: '/talk',
-    detail: 'Chat about a subject — /talk SUBJECT <message> — the orchestrator keeps its notes updated as you talk',
-    apply: '/talk ',
+    label: '/clean',
+    detail: 'Clean up & reorganize the whole page — add guidance after, e.g. /clean project ideas',
+    apply: '/clean ',
+  },
+  {
+    label: '/code',
+    detail: 'Start a Claude Code agent in a project on the paired laptop — chat, watch its tools run',
+    apply: '/code ',
+  },
+  {
+    label: '/delete',
+    detail: 'Delete a project folder on the paired laptop — /delete PROJECT asks to confirm, then removes it',
+    apply: '/delete ',
+  },
+  {
+    label: '/ingest',
+    detail: 'File this page into your dashboard — sorts notes into subjects, then clears the page',
+    apply: '/ingest',
+  },
+  {
+    label: '/pair',
+    detail: 'Pair a device by QR code or payload',
+    apply: '/pair ',
   },
   {
     label: '/record',
@@ -34,19 +54,9 @@ const SLASH_COMMANDS = [
     apply: '/run ',
   },
   {
-    label: '/code',
-    detail: 'Start a Claude Code agent in a project on the paired laptop — chat, watch its tools run',
-    apply: '/code ',
-  },
-  {
-    label: '/view',
-    detail: 'Preview a web page from a localhost dev server on the paired laptop — /view PORT loads http://localhost:PORT live in a card',
-    apply: '/view ',
-  },
-  {
-    label: '/delete',
-    detail: 'Delete a project folder on the paired laptop — /delete PROJECT asks to confirm, then removes it',
-    apply: '/delete ',
+    label: '/talk',
+    detail: 'Chat about a subject — /talk SUBJECT <message> — the orchestrator keeps its notes updated as you talk',
+    apply: '/talk ',
   },
   {
     label: '/update-server',
@@ -54,19 +64,9 @@ const SLASH_COMMANDS = [
     apply: '/update-server',
   },
   {
-    label: '/pair',
-    detail: 'Pair a device by QR code or payload',
-    apply: '/pair ',
-  },
-  {
-    label: '/clean',
-    detail: 'Clean up & reorganize the whole page — add guidance after, e.g. /clean project ideas',
-    apply: '/clean ',
-  },
-  {
-    label: '/ingest',
-    detail: 'File this page into your dashboard — sorts notes into subjects, then clears the page',
-    apply: '/ingest',
+    label: '/view',
+    detail: 'Preview a web page from a localhost dev server on the paired laptop — /view PORT loads http://localhost:PORT live in a card',
+    apply: '/view ',
   },
 ];
 
