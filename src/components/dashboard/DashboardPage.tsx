@@ -333,6 +333,7 @@ function DashboardPage({
                     colors={colors}
                     page={safeArchivePage}
                     pageCount={archivePageCount}
+                    pageSize={ARCHIVE_PAGE_SIZE}
                     onChangePage={setArchivePage}
                   />
                 ) : (

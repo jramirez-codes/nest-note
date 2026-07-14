@@ -4,8 +4,8 @@
  * pure views driven by props — the container in ../DashboardPage.tsx owns the
  * state and hands cards down.
  */
-import React, { useMemo } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import React, { useCallback, useMemo, useState } from 'react';
+import { type LayoutChangeEvent, Pressable, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
 import {
@@ -218,19 +218,22 @@ export function TaskSortToggle({
 }
 
 // A compact prev/next-with-numbers pager for a paginated card list. Renders nothing
-// for a single page so callers can mount it unconditionally.
+// for a single page so callers can mount it unconditionally — unless `alwaysShow`
+// is set, in which case a single page still shows "1" with both arrows disabled.
 export function Pager({
   page,
   pageCount,
   onChange,
   colors,
+  alwaysShow = false,
 }: {
   page: number;
   pageCount: number;
   onChange: (page: number) => void;
   colors: ThemeColors;
+  alwaysShow?: boolean;
 }) {
-  if (pageCount <= 1) return null;
+  if (pageCount <= 1 && !alwaysShow) return null;
   return (
     <View className="flex-row flex-wrap items-center justify-center gap-1.5 border-t border-surface1 px-3 py-2.5">
       <Pressable
@@ -282,16 +285,18 @@ function shortDate(timestamp: number): string {
 
 // The Archived section's list: a compact, single-surface list of pages lifted off
 // the pad by /archive. Each is one dense line — a small page glyph, the title, a
-// short date, and a chevron — separated by hairlines, so a long archive stays
-// scannable without eating the dashboard. Paginated (like Tasks) via the shared
-// Pager at the foot of the surface. Tapping opens the page as a temporary,
-// editable page (see ArchivedPageOverlay).
+// short date, and a chevron — separated by hairlines. Like the Tasks box it holds
+// a FIXED height of `pageSize` rows (measured from the first row so it tracks the
+// live font scale), so a partial last page doesn't shrink it, and it's paginated
+// via the shared Pager at the foot of the surface. Tapping opens the page as a
+// temporary, editable page (see ArchivedPageOverlay).
 export function ArchivedList({
   pages,
   onOpen,
   colors,
   page,
   pageCount,
+  pageSize,
   onChangePage,
 }: {
   /** The current page's slice of archived pages (the caller paginates). */
@@ -300,32 +305,57 @@ export function ArchivedList({
   colors: ThemeColors;
   page: number;
   pageCount: number;
+  /** Rows per page — the box is fixed to this many rows' height. */
+  pageSize: number;
   onChangePage: (page: number) => void;
 }) {
+  // One collapsed row's height, measured from the first row (which has no divider
+  // above it), so the fixed box height tracks the live font scale. Latched to the
+  // first measurement so it stays stable page to page.
+  const [rowHeight, setRowHeight] = useState<number | null>(null);
+  const handleFirstRowLayout = useCallback((e: LayoutChangeEvent) => {
+    const height = e.nativeEvent.layout.height;
+    setRowHeight(prev => prev ?? height);
+  }, []);
+
   return (
     <View className="overflow-hidden rounded-2xl border border-surface1 bg-surface">
-      {pages.map((note, i) => {
-        const title = note.title.trim() || deriveTitle(note.content);
-        return (
-          <View key={note.id}>
-            {i > 0 && <View className="ml-9 h-px bg-surface1/60" />}
-            <Pressable
-              onPress={() => onOpen(note)}
-              accessibilityRole="button"
-              accessibilityLabel={`Open archived page: ${title}`}
-              className="flex-row items-center gap-2.5 px-3 py-2.5 active:bg-background">
-              <FileText size={15} color={colors.faint} strokeWidth={2} />
-              <Text numberOfLines={1} className="flex-1 text-sm text-text">
-                {title}
-              </Text>
-              <Text className="text-[11px] text-faint">{shortDate(note.updatedAt)}</Text>
-              <ChevronRight size={15} color={colors.faint} strokeWidth={2.5} />
-            </Pressable>
-          </View>
-        );
-      })}
-      {/* Renders nothing for a single page (see Pager). */}
-      <Pager page={page} pageCount={pageCount} onChange={onChangePage} colors={colors} />
+      <View
+        style={
+          // Fixed, not max — the box holds this height even on a page with fewer
+          // than `pageSize` rows, so it doesn't resize page to page. +1px per
+          // hairline divider between rows (there's none above the first row).
+          rowHeight ? { height: rowHeight * pageSize + (pageSize - 1) } : undefined
+        }>
+        {pages.map((note, i) => {
+          const title = note.title.trim() || deriveTitle(note.content);
+          return (
+            <View key={note.id} onLayout={i === 0 ? handleFirstRowLayout : undefined}>
+              {i > 0 && <View className="ml-9 h-px bg-surface1/60" />}
+              <Pressable
+                onPress={() => onOpen(note)}
+                accessibilityRole="button"
+                accessibilityLabel={`Open archived page: ${title}`}
+                className="flex-row items-center gap-2.5 px-3 py-2.5 active:bg-background">
+                <FileText size={15} color={colors.faint} strokeWidth={2} />
+                <Text numberOfLines={1} className="flex-1 text-sm text-text">
+                  {title}
+                </Text>
+                <Text className="text-[11px] text-faint">{shortDate(note.updatedAt)}</Text>
+                <ChevronRight size={15} color={colors.faint} strokeWidth={2.5} />
+              </Pressable>
+            </View>
+          );
+        })}
+      </View>
+      {/* Always shown (even at one page) so the page number + arrows stay visible. */}
+      <Pager
+        page={page}
+        pageCount={pageCount}
+        onChange={onChangePage}
+        colors={colors}
+        alwaysShow
+      />
     </View>
   );
 }
