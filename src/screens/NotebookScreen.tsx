@@ -18,6 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../theme/colors';
 import DashboardPage from '../components/dashboard/DashboardPage';
 import DeleteDragOverlay from '../components/modals/DeleteDragOverlay';
+import ArchivedPageOverlay from '../components/notepage/ArchivedPageOverlay';
 import NoteHeader from '../components/notepage/NoteHeader';
 import NotePage from '../components/notepage/NotePage';
 import PageIndicator from '../components/notepage/PageIndicator';
@@ -26,6 +27,7 @@ import type { PaperPagerHandle } from '../components/notepage/PaperPager';
 import ServerStatusDot from '../components/ServerStatusDot';
 import VirtualNotePage from '../components/notepage/VirtualNotePage';
 import { NotebookBadge, type NotebookOption } from '../components/dashboard/NotebookSwitcher';
+import { useArchivedPages } from '../hooks/useArchivedPages';
 import { useCardDrag } from '../hooks/useCardDrag';
 import { DEFAULT_NOTEBOOK_ID } from '../storage/db';
 import { useNotes } from '../hooks/useNotes';
@@ -63,8 +65,32 @@ export default function NotebookScreen() {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const colors = useTheme();
-  const { notes, isLoading, createNote, updateNoteContent, updateNoteTitle, deleteNote } =
-    useNotes();
+  const {
+    notes,
+    isLoading,
+    createNote,
+    updateNoteContent,
+    updateNoteTitle,
+    deleteNote,
+    dropNoteFromList,
+  } = useNotes();
+
+  // The local pad's archived pages (from `/archive`) plus the one currently opened
+  // as a temporary page. Lives here (not in the dashboard) so the temporary page can
+  // be presented full-screen over the whole pad. Archived pages belong to the local
+  // notebook, so they're keyed off the default notebook regardless of which subject
+  // is being read.
+  const archive = useArchivedPages(DEFAULT_NOTEBOOK_ID);
+
+  // `/archive` fired on a pad note: the editor bridge already persisted the archived
+  // copy, so just lift the note off the pad and refresh the dashboard's Archived list.
+  const handleArchived = useCallback(
+    (id: string) => {
+      dropNoteFromList(id);
+      archive.refresh();
+    },
+    [dropNoteFromList, archive],
+  );
 
   // The notebook whose pages fill the pad: 'sandbox' (the local notes) or a subject slug
   // (its pages pulled from the server). The switcher on the dashboard sets this.
@@ -370,6 +396,8 @@ export default function NotebookScreen() {
             onLift={drag.lift}
             onRelease={drag.release}
             selectedNb={selectedNb}
+            archivedPages={archive.archived}
+            onOpenArchived={archive.openArchived}
           />
         );
       }
@@ -394,6 +422,7 @@ export default function NotebookScreen() {
           onChangeContent={updateNoteContent}
           onSetTitle={updateNoteTitle}
           onIngested={deleteNote}
+          onArchived={handleArchived}
           onOpenPage={handleOpenPage}
           onWidgetExpandChange={setWidgetExpanded}
           notebookId={DEFAULT_NOTEBOOK_ID}
@@ -409,10 +438,13 @@ export default function NotebookScreen() {
       updateNoteContent,
       updateNoteTitle,
       deleteNote,
+      handleArchived,
       handleOpenPage,
       drag.shared,
       drag.lift,
       drag.release,
+      archive.archived,
+      archive.openArchived,
     ],
   );
 
@@ -599,6 +631,25 @@ export default function NotebookScreen() {
         cloneStyle={cloneStyle}
         card={drag.card}
       />
+
+      {/* An archived page opened from the dashboard, shown full-screen over the pad.
+          Its edits save straight to the archive as they're made, so closing it (Back
+          or the header) just returns to the dashboard with changes persisted. */}
+      {archive.open && (
+        <ArchivedPageOverlay
+          note={archive.open}
+          width={width}
+          notebookId={DEFAULT_NOTEBOOK_ID}
+          onClose={archive.closeArchived}
+          onChangeContent={archive.updateOpenContent}
+          onSetTitle={archive.updateOpenTitle}
+          onRemove={archive.deleteOpen}
+          onOpenPage={(slug, title) => {
+            archive.closeArchived();
+            handleOpenPage(slug, title);
+          }}
+        />
+      )}
     </View>
   );
 }

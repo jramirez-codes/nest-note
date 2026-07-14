@@ -14,6 +14,8 @@ interface NotePageProps {
   onSetTitle: (id: string, title: string) => void;
   /** Called after `/ingest` files this page into the dashboard — deletes the page. */
   onIngested: (id: string) => void;
+  /** Called after `/archive` lifts this page off the pad into the Archived section. */
+  onArchived?: (id: string) => void;
   /** A tapped wikilink asks to flip the pad to `title` (in notebook `slug`, or the current one). */
   onOpenPage?: (slug: string, title: string) => void;
   /** An AI card's full-page overlay opened/closed — see NoteEditorWebView. */
@@ -36,6 +38,7 @@ function NotePage({
   onChangeContent,
   onSetTitle,
   onIngested,
+  onArchived,
   onOpenPage,
   onWidgetExpandChange,
   notebookId,
@@ -52,6 +55,10 @@ function NotePage({
     () => onIngested(note.id),
     [note.id, onIngested],
   );
+  const handleArchived = useCallback(
+    () => onArchived?.(note.id),
+    [note.id, onArchived],
+  );
 
   return (
     <View style={{ width }} className="flex-1 bg-background">
@@ -65,6 +72,7 @@ function NotePage({
           onChangeContent={handleChangeContent}
           onSetTitle={handleSetTitle}
           onIngested={handleIngested}
+          onArchived={handleArchived}
           onOpenPage={onOpenPage}
           onWidgetExpandChange={onWidgetExpandChange}
           notebookId={notebookId}

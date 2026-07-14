@@ -97,6 +97,10 @@ export const compareTasksBy = (sort: TaskSort): typeof compareTasks =>
 // Tasks per page in the Tasks card's pager.
 export const TASK_PAGE_SIZE = 5;
 
+// Archived pages per page in the Archived card's pager. A touch denser than
+// tasks since the rows are single-line and compact.
+export const ARCHIVE_PAGE_SIZE = 6;
+
 /**
  * The notebook picker's entries, derived from dashboard state: the Sandbox (the local
  * pad, which rolls up every notebook's open tasks) first, then one per subject server,

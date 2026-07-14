@@ -14,6 +14,11 @@ const SLASH_COMMANDS = [
     apply: '/agg-tasks ',
   },
   {
+    label: '/archive',
+    detail: 'Archive this page — lifts it off the pad into the dashboard\'s Archived section, reopenable from there',
+    apply: '/archive',
+  },
+  {
     label: '/ask',
     detail: 'Ask Claude a question — the answer streams into a card',
     apply: '/ask ',
@@ -611,6 +616,23 @@ export function aiCommandOnEnter(view) {
       selection: { anchor: line.from + marker.length + 1 },
     });
     post({ type: 'clean', id, pageText, guidance });
+    return true;
+  }
+
+  // `/archive`: lift the WHOLE page off the pad into the dashboard's Archived
+  // section. Like `/delete` this drops no card — we strip the command line from
+  // the doc, then hand the resulting page text to RN. Crucially we send the RAW
+  // document (NOT serializeFull): card bodies stay in card_payloads keyed by the
+  // unchanged page id, so reopening the archived page from the dashboard restores
+  // every card. RN persists this text + the archived flag and removes the page
+  // from the pad.
+  if (/^\/archive\s*$/.test(text)) {
+    view.dispatch({
+      changes: { from: line.from, to: line.to, insert: '' },
+      selection: { anchor: line.from },
+    });
+    const pageText = view.state.doc.toString().replace(/^\n+|\n+$/g, '');
+    post({ type: 'archive', pageText });
     return true;
   }
 

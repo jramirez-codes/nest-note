@@ -16,7 +16,7 @@ import type React from 'react';
 import { Linking } from 'react-native';
 import type { WebViewMessageEvent } from 'react-native-webview';
 import { fetchLinkPreview } from '../../utils/linkPreview';
-import { getPayloadsForPage, upsertPayload, deletePayload } from '../../storage';
+import { getPayloadsForPage, upsertPayload, deletePayload, archivePage } from '../../storage';
 import { pairFromPayload, fetchDashboardState, searchNotes } from '../../server/controllers/aiController';
 import { fetchProjects } from '../../server/controllers/agentController';
 import { fetchViewUrl } from '../../server/controllers/viewController';
@@ -94,6 +94,9 @@ export interface BridgeContext {
   pageId: string;
   onChangeContent: (content: string) => void;
   onOpenPage?: (slug: string, title: string) => void;
+  /** `/archive` finished persisting this page's archived copy — the host then
+   *  lifts the page off the pad (and refreshes the dashboard's Archived list). */
+  onArchived?: () => void;
   /** A card's full-page overlay (e.g. an expanded /chat, /run, /code, or /view
    *  card) opened or closed, so the host can hide/restore chrome that would
    *  otherwise float on top of the overlay's own footer composer. */
@@ -118,6 +121,7 @@ export function handleEditorMessage(ctx: BridgeContext, e: WebViewMessageEvent):
     pageId,
     onChangeContent,
     onOpenPage,
+    onArchived,
     onWidgetExpandChange,
     setPairScan,
     setProjectDelete,
@@ -244,6 +248,16 @@ export function handleEditorMessage(ctx: BridgeContext, e: WebViewMessageEvent):
     // the error and the page is untouched.
     attachedIds.current.add(msg.id);
     startIngest(msg.id, msg.pageText, sink);
+  } else if (msg.type === 'archive' && typeof msg.pageText === 'string') {
+    // `/archive`: persist this page's current text (command line already stripped
+    // by the editor) together with the archived flag, then tell the host to lift
+    // the page off the pad. The write is authoritative — done here rather than
+    // through the note list's optimistic content save — so the archived copy is
+    // never left holding the `/archive` line. The page id and its card payloads
+    // are untouched, so reopening it from the dashboard restores the page intact.
+    archivePage(pageId, msg.pageText, Date.now())
+      .then(() => onArchived?.())
+      .catch(() => {});
   } else if (msg.type === 'aggTasks' && typeof msg.id === 'string' && typeof msg.subject === 'string') {
     // /agg-tasks: sweep one subject's whole notebook for action items and file a
     // task card for each (registry-owned so it survives page swaps). Nothing is

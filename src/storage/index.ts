@@ -12,6 +12,8 @@ export { DEFAULT_NOTEBOOK_ID } from './db';
 export {
   getPage,
   listPages,
+  listArchivedPages,
+  archivePage,
   createPage,
   updatePage,
   updatePageTitle,

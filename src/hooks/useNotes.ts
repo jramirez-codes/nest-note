@@ -26,6 +26,12 @@ export interface UseNotesResult {
   /** Set a note's AI-generated title (from `/clean`). */
   updateNoteTitle: (id: string, title: string) => void;
   deleteNote: (id: string) => void;
+  /**
+   * Drop a note from the pad's list WITHOUT deleting it from storage. Used by
+   * `/archive`, which keeps the page (now flagged archived) but lifts it off the
+   * pad — the archived copy lives on in the dashboard's Archived section.
+   */
+  dropNoteFromList: (id: string) => void;
 }
 
 /**
@@ -117,6 +123,12 @@ export function useNotes(
     fireAndForget(deletePage(id), 'delete note');
   }, []);
 
+  // List-only removal: the page is already persisted (archived) by the editor
+  // bridge, so this must NOT touch storage — it just takes the note off the pad.
+  const dropNoteFromList = useCallback((id: string) => {
+    setNotes(prev => prev.filter(note => note.id !== id));
+  }, []);
+
   return {
     notes,
     isLoading,
@@ -124,5 +136,6 @@ export function useNotes(
     updateNoteContent,
     updateNoteTitle,
     deleteNote,
+    dropNoteFromList,
   };
 }

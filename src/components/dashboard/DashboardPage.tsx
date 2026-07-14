@@ -7,14 +7,25 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
-import { GitMerge, Inbox, Lightbulb, ListChecks } from 'lucide-react-native';
+import {
+  Archive,
+  GitMerge,
+  Inbox,
+  Lightbulb,
+  ListChecks,
+  Search,
+  X,
+} from 'lucide-react-native';
 import { useTheme } from '../../theme/colors';
 import type { CardDragShared } from '../../hooks/useCardDrag';
+import type { Note } from '../../types/note';
 import { type DashboardCard } from '../../server/controllers/aiController';
 import { useDashboardData } from './useDashboardData';
 import {
+  ARCHIVE_PAGE_SIZE,
   buildNotebookOptions,
   compareCards,
   compareTasksBy,
@@ -24,6 +35,7 @@ import {
 } from './cardModel';
 import { type NotebookOption } from './NotebookSwitcher';
 import {
+  ArchivedList,
   DraggableCard,
   IdeaCard,
   Pager,
@@ -46,6 +58,11 @@ interface DashboardPageProps {
   /** The notebook currently filling the pad: 'sandbox' (local) or a subject slug. Owned by
    *  the screen (swapped via the header switcher), and read here to filter the cards shown. */
   selectedNb: string;
+  /** The local pad's archived pages (from `/archive`), shown in the Sandbox dashboard's
+   *  Archived section. Owned by the screen so it can open one as a temporary page. */
+  archivedPages: Note[];
+  /** Open an archived page as a temporary, editable page. */
+  onOpenArchived: (note: Note) => void;
 }
 
 /**
@@ -67,6 +84,8 @@ function DashboardPage({
   onLift,
   onRelease,
   selectedNb,
+  archivedPages,
+  onOpenArchived,
 }: DashboardPageProps) {
   const colors = useTheme();
   const { state, error, loading, refreshing, busy, load, act, onToggle, onDismiss } =
@@ -83,6 +102,12 @@ function DashboardPage({
     setTaskSort(s);
     setTaskPage(0);
   }, []);
+
+  // The Archived section's current page (reset when the notebook changes, since a
+  // page index from one notebook's archive is meaningless against another's) and
+  // its search query (filters the archive by title/body, client-side).
+  const [archivePage, setArchivePage] = useState(0);
+  const [archiveQuery, setArchiveQuery] = useState('');
 
   // The one task row (if any) currently expanded to show its full, wrapped title.
   // A single id, not a set — expanding a row collapses whichever was open.
@@ -165,11 +190,39 @@ function DashboardPage({
   const otherKindNames = Object.keys(otherKinds).sort();
 
   const openTaskCount = tasks.filter(t => !t.done).length;
-  const nothingAtAll = cards.length === 0 && suggestions.length === 0;
+  // Archived pages are a local-pad concept, so they only surface on the Sandbox
+  // dashboard (subjects have no local pages of their own here). The search bar
+  // stays put once the section is shown, so base visibility on the full archive
+  // (not the filtered set) — a query that matches nothing shows an empty state.
+  const showArchived = isSandbox && archivedPages.length > 0;
+  const archiveQ = archiveQuery.trim().toLowerCase();
+  const filteredArchived = archiveQ
+    ? archivedPages.filter(
+        p =>
+          p.title.toLowerCase().includes(archiveQ) ||
+          p.content.toLowerCase().includes(archiveQ),
+      )
+    : archivedPages;
+  // Paginate the filtered set, like Tasks.
+  const archivePageCount = Math.max(1, Math.ceil(filteredArchived.length / ARCHIVE_PAGE_SIZE));
+  // Clamp rather than resync via effect (matches the Tasks pager): avoids a stale-page
+  // flash when deleting the last page on the last archive page shrinks the list.
+  const safeArchivePage = Math.min(archivePage, archivePageCount - 1);
+  const pagedArchived = filteredArchived.slice(
+    safeArchivePage * ARCHIVE_PAGE_SIZE,
+    safeArchivePage * ARCHIVE_PAGE_SIZE + ARCHIVE_PAGE_SIZE,
+  );
+  const nothingAtAll = cards.length === 0 && suggestions.length === 0 && !showArchived;
 
-  // Reset the pager whenever the notebook changes — a page index from one
-  // notebook's task list is meaningless against another's.
+  // Reset the pagers whenever the notebook changes — a page index from one
+  // notebook's task/archive list is meaningless against another's. The archive
+  // search is cleared on a swap too, then reset to page 0 on any query change.
   useEffect(() => setTaskPage(0), [selected.key]);
+  useEffect(() => {
+    setArchivePage(0);
+    setArchiveQuery('');
+  }, [selected.key]);
+  useEffect(() => setArchivePage(0), [archiveQuery]);
   // Collapse any expanded task whenever the visible set of rows changes underneath
   // it — the row it referred to may no longer be on screen.
   useEffect(() => setExpandedTaskId(null), [selected.key, taskSort, taskPage]);
@@ -196,6 +249,9 @@ function DashboardPage({
       <ScrollView
         // Freeze the scroll while a card is being dragged so the list stays put.
         scrollEnabled={!liftedId}
+        // Let a tap on a result / clear button register while the archive search
+        // keyboard is up, instead of being swallowed to dismiss it first.
+        keyboardShouldPersistTaps="handled"
         contentContainerStyle={styles.scrollContent}
         refreshControl={
           <RefreshControl
@@ -234,6 +290,58 @@ function DashboardPage({
                   <Text className="text-text">/ingest</Text> to file tasks, reminders and
                   subjects here.
                 </Text>
+              </View>
+            )}
+
+            {/* Archived — pages lifted off the pad by /archive, reopenable as temporary
+                pages. Sits above Tasks; local-pad only (Sandbox). */}
+            {showArchived && (
+              <View className="mb-6">
+                <SectionHeader
+                  icon={Archive}
+                  title="Archived"
+                  count={archivedPages.length}
+                  colors={colors}
+                />
+                {/* Compact search bar — filters the archive by title/body. */}
+                <View className="mb-2 flex-row items-center gap-2 rounded-xl border border-surface1 bg-surface px-3 py-2">
+                  <Search size={15} color={colors.faint} strokeWidth={2} />
+                  <TextInput
+                    value={archiveQuery}
+                    onChangeText={setArchiveQuery}
+                    placeholder="Search archived"
+                    placeholderTextColor={colors.faint}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    returnKeyType="search"
+                    className="flex-1 p-0 text-sm text-text"
+                  />
+                  {archiveQuery.length > 0 && (
+                    <Pressable
+                      onPress={() => setArchiveQuery('')}
+                      hitSlop={8}
+                      accessibilityRole="button"
+                      accessibilityLabel="Clear archive search">
+                      <X size={15} color={colors.faint} strokeWidth={2.5} />
+                    </Pressable>
+                  )}
+                </View>
+                {pagedArchived.length > 0 ? (
+                  <ArchivedList
+                    pages={pagedArchived}
+                    onOpen={onOpenArchived}
+                    colors={colors}
+                    page={safeArchivePage}
+                    pageCount={archivePageCount}
+                    onChangePage={setArchivePage}
+                  />
+                ) : (
+                  <View className="rounded-2xl border border-surface1 bg-surface px-3 py-5">
+                    <Text className="text-center text-xs text-muted">
+                      No archived pages match “{archiveQuery.trim()}”.
+                    </Text>
+                  </View>
+                )}
               </View>
             )}
 
