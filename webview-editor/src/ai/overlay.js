@@ -18,7 +18,8 @@ import { post } from '../bridge.js';
 import { findAiLine, rerunRunById, appendChatTurnById, isChatKind } from './marker.js';
 import { runLiveField, codeLiveField, viewLiveField, askLiveField } from '../state.js';
 import { mountAnswerView, unmountAnswerView } from './answerView.js';
-import { renderCodeItem } from './shared/transcript.js';
+import { mountCodeBlock, estimateCodeBlock } from './shared/transcript.js';
+import { createBlockList } from './shared/blockList.js';
 import { applyRunBadge } from './shared/badge.js';
 import { makeComposer } from './shared/composer.js';
 import { thinkingDots } from './shared/thinking.js';
@@ -164,9 +165,14 @@ function chatFoot(view, id) {
   });
 }
 
-// Tear down the nested markdown views (only /code mounts any).
+// Tear down the transcript's nested markdown views. /code owns them through a
+// virtualized block list; /chat mounts them directly into active.mdViews.
 function teardownMd() {
   if (!active) return;
+  if (active.blockList) {
+    active.blockList.destroy();
+    active.blockList = null;
+  }
   for (const v of active.mdViews) unmountAnswerView(v);
   active.mdViews = [];
   active.lastMd = null;
@@ -222,21 +228,37 @@ function renderRun(data) {
   if (growPre(active.log, data.out)) scrollBottomSoon(active.log);
 }
 
-// Render the /code transcript. Fast-path the hot case (the last assistant block
-// growing token-by-token) by appending the delta into its mounted markdown view;
-// any structural change (a new block, running→done) rebuilds the whole log.
+// Render the /code transcript through the same occlusion-virtualized block list
+// the card uses (shared/blockList), so the unbounded full-page log never mounts
+// more editors than the viewport needs. Fast-path the hot cases — the last block
+// growing token-by-token (grow) and freshly-streamed blocks (append) — and rebuild
+// only on a structural change (running→done, a cap-induced shrink, first paint).
 function renderCode(data, running) {
   const items = data.items || [];
-  const structural = !active.log || items.length !== active.count || (active.wasRunning && !running);
+  // A finished transcript, already built and unchanged: leave the virtualized log
+  // untouched rather than tearing it down and rebuilding on every transaction.
+  if (active.blockList && !active.wasRunning && !running && items.length === active.count) return;
+  const canAppend =
+    active.blockList && active.log && active.wasRunning && running && items.length >= active.count;
 
-  if (!structural && active.lastMd) {
+  // Case A — the streaming block grew.
+  if (canAppend && items.length === active.count) {
     const last = items[items.length - 1];
-    if (last && last.type === 'text') {
-      if (growMdView(active.lastMd, last.text || '')) scrollBottomSoon(active.log);
-      return;
+    if (last && last.type === 'text') active.blockList.growStreaming(last.text || '');
+    return;
+  }
+  // Case B — new block(s) appended.
+  if (canAppend && items.length > active.count) {
+    if (active.count === 0) {
+      const hint = active.log.querySelector('.cm-code-hint');
+      if (hint) hint.remove();
     }
+    active.blockList.appendFrom(items, active.count, running);
+    active.count = items.length;
+    return;
   }
 
+  // Full (re)build — first paint, or a structural change.
   teardownMd();
   let log = active.log;
   if (!log) {
@@ -244,22 +266,14 @@ function renderCode(data, running) {
     log.className = 'cm-code-log cm-ov-log';
     active.body.appendChild(log);
     active.log = log;
-  } else {
-    log.textContent = '';
   }
-  items.forEach((item, idx) => {
-    if (item.type === 'text') {
-      const box = document.createElement('div');
-      box.className = 'cm-code-text';
-      log.appendChild(box);
-      const streaming = running && idx === items.length - 1;
-      const mv = mountAnswerView(box, item.text || '', { trim: !streaming });
-      active.mdViews.push(mv);
-      if (streaming) active.lastMd = mv;
-    } else {
-      log.appendChild(renderCodeItem(item, items[idx - 1]));
-    }
+  const list = createBlockList({
+    log,
+    renderItem: mountCodeBlock,
+    estimateHeight: estimateCodeBlock,
   });
+  active.blockList = list;
+  list.build(items, running);
   if (!items.length && running) {
     const hint = document.createElement('div');
     hint.className = 'cm-code-hint';
@@ -267,7 +281,6 @@ function renderCode(data, running) {
     log.appendChild(hint);
   }
   active.count = items.length;
-  scrollBottomSoon(log);
 }
 
 // Render the /chat transcript. Fast-path the streaming case (the last turn's
@@ -498,6 +511,7 @@ export function openCardOverlay(view, obj) {
     foot: null,
     mdViews: [],
     lastMd: null,
+    blockList: null,
     count: -1,
     wasRunning: false,
     // View-overlay only: the live iframe and the URL it's currently showing, plus

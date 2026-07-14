@@ -150,6 +150,12 @@ export class AiCardWidget extends WidgetType {
   // running interval (the live timer) that must be cleared here.
   destroy(dom) {
     if (!dom) return;
+    // A /code card owns its transcript through a virtualized block list (which
+    // holds the nested markdown views); tear that down instead of _mdViews.
+    if (dom._blockList) {
+      dom._blockList.destroy();
+      dom._blockList = null;
+    }
     const views = dom._mdViews || (dom._mdView ? [dom._mdView] : []);
     for (const v of views) unmountAnswerView(v);
     dom._mdViews = null;

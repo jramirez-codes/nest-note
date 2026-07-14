@@ -1,5 +1,33 @@
 import { c } from '../../theme/palette.js';
+import { mountAnswerView } from '../answerView.js';
 import { renderFileView, renderDiffView, diffCounts, EYE } from './codeView.js';
+
+// Build one /code transcript block for the virtualized list (shared/blockList).
+// Assistant prose mounts a nested read-only markdown view (returned so it can be
+// torn down when the block scrolls out); everything else is a static row from
+// renderCodeItem. Used by the /code card body and its full-page overlay.
+export function mountCodeBlock(item, prev, streaming) {
+  if (item.type === 'text') {
+    const box = document.createElement('div');
+    box.className = 'cm-code-text';
+    // While streaming, skip the trailing trim so token appends stay a cheap
+    // end-insert (matches the old inline mount path).
+    const view = mountAnswerView(box, item.text || '', { trim: !streaming });
+    return { node: box, view };
+  }
+  return { node: renderCodeItem(item, prev), view: null };
+}
+
+// A cheap height guess (px) for a block that has never been mounted — used only
+// for a transcript restored from disk, since a live session mounts every block at
+// birth (bottom of the log, in view) and measures it before it scrolls away.
+export function estimateCodeBlock(item) {
+  if (item.type === 'tool') return 32;
+  const t = item.text || '';
+  const lines = t.split('\n').length + Math.ceil(t.length / 60);
+  if (item.type === 'user') return 24 + Math.min(lines, 12) * 22;
+  return 24 + Math.min(lines, 400) * 19;
+}
 
 // One-line summary of a tool's input for the compact call row (objects → JSON).
 function shortenInput(input) {

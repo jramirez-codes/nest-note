@@ -5,11 +5,11 @@ import { blockSelection } from '../../ui/events.js';
 import { post } from '../../bridge.js';
 import { updateAiMarker, deleteCardLine } from '../marker.js';
 import { openCardOverlay } from '../overlay.js';
-import { mountAnswerView } from '../answerView.js';
 import { applyRunBadge } from '../shared/badge.js';
 import { makeComposer } from '../shared/composer.js';
-import { renderCodeItem } from '../shared/transcript.js';
-import { growMdView, nearBottom, scrollBottomSoon } from '../shared/streamLog.js';
+import { mountCodeBlock, estimateCodeBlock } from '../shared/transcript.js';
+import { createBlockList } from '../shared/blockList.js';
+import { nearBottom, scrollBottomSoon } from '../shared/streamLog.js';
 
 /**
  * The /code agent card: a persistent Claude Code session in projects/<name>. The
@@ -90,35 +90,28 @@ export function renderCode(view, widget) {
 
     const log = document.createElement('div');
     log.className = 'cm-code-log';
-    // Assistant prose renders as markdown in a nested read-only view (same as the
-    // /ask card); user prompts, tool calls and results stay compact rows
-    // (renderCodeItem). Track every mounted view so destroy() can tear them down.
-    card._mdViews = [];
-    card._mdView = null;
-    items.forEach((item, idx) => {
-      if (item.type === 'text') {
-        const box = document.createElement('div');
-        box.className = 'cm-code-text';
-        log.appendChild(box);
-        // The last block, while the session streams, grows token-by-token; mount
-        // it untrimmed so updateCode's appends stay a cheap end-insert.
-        const streaming = running && idx === items.length - 1;
-        const mv = mountAnswerView(box, item.text || '', { trim: !streaming });
-        card._mdViews.push(mv);
-        if (streaming) card._mdView = mv;
-      } else {
-        log.appendChild(renderCodeItem(item, items[idx - 1]));
-      }
+    body.appendChild(log);
+
+    // Occlusion-virtualized transcript: only blocks near the viewport are mounted
+    // (see shared/blockList), so a long session never mounts hundreds of nested
+    // markdown editors at once. Assistant prose becomes a nested read-only view,
+    // everything else a compact row (mountCodeBlock). The streaming block is
+    // pinned mounted so token appends stay a cheap end-insert.
+    const list = createBlockList({
+      log,
+      renderItem: mountCodeBlock,
+      estimateHeight: estimateCodeBlock,
     });
+    list.build(items, running);
+    card._blockList = list;
+    card._codeLog = log;
+
     if (!items.length && running) {
       const hint = document.createElement('div');
       hint.className = 'cm-code-hint';
       hint.textContent = 'Session ready — send a message below.';
       log.appendChild(hint);
     }
-    body.appendChild(log);
-    card._codeLog = log;
-    scrollBottomSoon(log); // start pinned to the newest output
 
     if (running) body.appendChild(codeFoot(id));
     card.appendChild(body);
@@ -169,13 +162,13 @@ function codeFoot(id) {
 export function updateCode(dom, view, widget) {
   const obj = widget.obj;
   const prev = dom._codeSig;
-  const log = dom._codeLog;
+  const list = dom._blockList;
   const live = widget.live;
   const status = live ? live.status : obj.status || 'done';
   const items = live ? live.items : [];
   if (
     !prev ||
-    !log ||
+    !list ||
     prev.id !== obj.id ||
     !prev.open ||
     obj.open === false ||
@@ -189,50 +182,28 @@ export function updateCode(dom, view, widget) {
   const stick = nearBottom(scroller);
 
   // Case A — same block count: only the last (open assistant) block can have
-  // grown token-by-token; extend its mounted markdown view in place.
+  // grown token-by-token; extend its pinned streaming view in place. The block
+  // list keeps the inner log pinned to the bottom; we also keep the outer editor
+  // pinned if the reader was already there.
   if (items.length === prev.count) {
-    const md = dom._mdView;
     const last = items[items.length - 1];
-    if (!md || !last || last.type !== 'text') return false;
-    if (growMdView(md, last.text || '')) {
-      log.scrollTop = log.scrollHeight;
-      if (stick) scrollBottomSoon(scroller);
-    }
+    if (!last || last.type !== 'text' || !list.hasStreaming()) return false;
+    if (list.growStreaming(last.text || '') && stick) scrollBottomSoon(scroller);
     dom._codeSig = { id: obj.id, open: true, status: 'running', count: items.length };
     return true;
   }
 
   // Case B — new block(s) appended (a tool call/result, or a fresh prose block).
-  // The transcript only ever appends, so we mount just the new items onto the
-  // existing log; the composer and header DOM survive intact.
-  const prevLast = items[prev.count - 1];
-  if (dom._mdView && prevLast && prevLast.type === 'text') {
-    // The previously-streaming block is now closed — settle it on its final text.
-    growMdView(dom._mdView, prevLast.text || '');
-  }
-  dom._mdView = null;
+  // The transcript only ever appends, so the block list settles the previously-
+  // streaming block and mounts just the new items; the composer and header DOM
+  // survive intact.
   if (prev.count === 0) {
-    const hint = log.querySelector('.cm-code-hint');
+    const hint = dom._codeLog && dom._codeLog.querySelector('.cm-code-hint');
     if (hint) hint.remove();
   }
-  if (!dom._mdViews) dom._mdViews = [];
-  for (let idx = prev.count; idx < items.length; idx++) {
-    const item = items[idx];
-    if (item.type === 'text') {
-      const box = document.createElement('div');
-      box.className = 'cm-code-text';
-      log.appendChild(box);
-      const streaming = idx === items.length - 1; // running is guaranteed here
-      const mv = mountAnswerView(box, item.text || '', { trim: !streaming });
-      dom._mdViews.push(mv);
-      if (streaming) dom._mdView = mv;
-    } else {
-      log.appendChild(renderCodeItem(item, items[idx - 1]));
-    }
-  }
-  dom._codeSig = { id: obj.id, open: true, status: 'running', count: items.length };
-  log.scrollTop = log.scrollHeight;
+  list.appendFrom(items, prev.count, true);
   if (stick) scrollBottomSoon(scroller);
+  dom._codeSig = { id: obj.id, open: true, status: 'running', count: items.length };
   return true;
 }
 
