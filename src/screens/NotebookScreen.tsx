@@ -328,7 +328,6 @@ export default function NotebookScreen() {
             onLift={drag.lift}
             onRelease={drag.release}
             selectedNb={selectedNb}
-            onSelectNotebook={setSelectedNb}
           />
         );
       }

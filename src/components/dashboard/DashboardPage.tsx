@@ -9,7 +9,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { Folder, GitMerge, Inbox, Lightbulb, ListChecks } from 'lucide-react-native';
+import { GitMerge, Inbox, Lightbulb, ListChecks } from 'lucide-react-native';
 import { useTheme } from '../../theme/colors';
 import type { CardDragShared } from '../../hooks/useCardDrag';
 import { type DashboardCard } from '../../server/controllers/aiController';
@@ -22,7 +22,7 @@ import {
   TASK_PAGE_SIZE,
   type TaskSort,
 } from './cardModel';
-import { NotebookSwitcher, type NotebookOption } from './NotebookSwitcher';
+import { type NotebookOption } from './NotebookSwitcher';
 import {
   DraggableCard,
   IdeaCard,
@@ -44,10 +44,8 @@ interface DashboardPageProps {
   /** Notify the screen the drag ended. */
   onRelease: () => void;
   /** The notebook currently filling the pad: 'sandbox' (local) or a subject slug. Owned by
-   *  the screen so the switcher can swap the pad's pages, not just the dashboard's view. */
+   *  the screen (swapped via the header switcher), and read here to filter the cards shown. */
   selectedNb: string;
-  /** Switch the active notebook (drives both this dashboard and the pad's pages). */
-  onSelectNotebook: (key: string) => void;
 }
 
 /**
@@ -57,10 +55,10 @@ interface DashboardPageProps {
  * removed by pressing and holding, then dragging them up onto the header, which
  * turns into a delete target, so a delete is always deliberate.
  *
- * This component owns the dashboard's state and orchestration; the notebook picker
- * lives in ./dashboard/NotebookSwitcher, the card renderers in
- * ./dashboard/DashboardCards, and the sorting/formatting rules in
- * ./dashboard/cardModel.
+ * This component owns the dashboard's state and orchestration; the notebook is
+ * swapped from the header switcher (this page just reads `selectedNb` to filter),
+ * the card renderers live in ./dashboard/DashboardCards, and the sorting/formatting
+ * rules in ./dashboard/cardModel.
  */
 function DashboardPage({
   width,
@@ -69,7 +67,6 @@ function DashboardPage({
   onLift,
   onRelease,
   selectedNb,
-  onSelectNotebook,
 }: DashboardPageProps) {
   const colors = useTheme();
   const { state, error, loading, refreshing, busy, load, act, onToggle, onDismiss } =
@@ -207,17 +204,6 @@ function DashboardPage({
             tintColor={colors.muted}
           />
         }>
-        {/* Notebook switcher — the top-of-dashboard control to swap notebooks. */}
-        <View className="mb-5 z-10">
-          <SectionHeader icon={Folder} title="Subjects" count={nbOptions.length} colors={colors} />
-          <NotebookSwitcher
-            options={nbOptions}
-            selected={selected}
-            onSelect={onSelectNotebook}
-            colors={colors}
-          />
-        </View>
-
         {loading && !state ? (
           <View className="items-center py-10">
             <ActivityIndicator color={colors.muted} />
