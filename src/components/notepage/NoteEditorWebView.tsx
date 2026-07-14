@@ -34,6 +34,8 @@ interface NoteEditorWebViewProps {
   onSetTitle: (title: string) => void;
   /** Called when `/ingest` finishes filing this page — the page is then deleted. */
   onIngested: () => void;
+  /** Called when `/archive` finishes — the host lifts this page off the pad. */
+  onArchived?: () => void;
   /**
    * A wikilink (`[[slug::Title]]` / bare `[[Title]]`) was tapped: flip the pad to that page.
    * `slug` selects a subject notebook (empty = the current one); `title` picks the page.
@@ -81,6 +83,7 @@ export default function NoteEditorWebView({
   onChangeContent,
   onSetTitle,
   onIngested,
+  onArchived,
   onOpenPage,
   onWidgetExpandChange,
   readOnly = false,
@@ -134,6 +137,7 @@ export default function NoteEditorWebView({
           pageId,
           onChangeContent,
           onOpenPage,
+          onArchived,
           onWidgetExpandChange,
           setPairScan,
           setProjectDelete,
@@ -145,6 +149,7 @@ export default function NoteEditorWebView({
       hasTitle,
       onChangeContent,
       onOpenPage,
+      onArchived,
       onWidgetExpandChange,
       readOnly,
       notebookId,

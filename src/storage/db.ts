@@ -15,7 +15,7 @@ const DB_NAME = 'ainotepad.sqlite';
  * the schema changes; `PRAGMA user_version` (stored inside the file) records
  * how far a given device has migrated, so upgrades are applied exactly once.
  */
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 /**
  * The app is notebook-scoped from day one: every page belongs to a notebook.
@@ -58,6 +58,12 @@ export function tx(fn: (t: Transaction) => Promise<void>): Promise<void> {
   return getDb().transaction(fn);
 }
 
+/** Whether the `pages` table already has a column of the given name. */
+function pagesHasColumn(db: DB, column: string): boolean {
+  const info = db.executeSync('PRAGMA table_info(pages)');
+  return (info.rows ?? []).some(row => row.name === column);
+}
+
 /** Apply any schema migrations the open database has not seen yet. */
 function migrate(db: DB): void {
   // The base schema is fully idempotent (every statement is IF NOT EXISTS), so
@@ -72,9 +78,21 @@ function migrate(db: DB): void {
     db.executeSync(statement);
   }
 
-  // Reserved for future incremental migrations, which DO gate on the version:
-  //   const current = readUserVersion(db);
-  //   if (current < 2) { ...alter... }
+  // Incremental, self-healing migrations. Rather than gate purely on
+  // user_version (which can't tell a fresh DB — created by SCHEMA_V1 already
+  // carrying the column — apart from an upgraded one), each step checks the
+  // actual schema and applies only what's missing, so a partially-migrated or
+  // downgraded-then-upgraded file converges to the current shape.
+  //
+  // v2: `archived_at` on pages (0 = live on the pad, a timestamp = archived into
+  // the dashboard's Archived section). SCHEMA_V1's CREATE TABLE already includes
+  // it for fresh installs; existing pre-v2 tables get it added here.
+  if (!pagesHasColumn(db, 'archived_at')) {
+    db.executeSync(
+      `ALTER TABLE pages ADD COLUMN archived_at INTEGER NOT NULL DEFAULT 0`,
+    );
+  }
+
   db.executeSync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 }
 
@@ -106,6 +124,7 @@ const SCHEMA_V1 = [
     content     TEXT NOT NULL DEFAULT '',
     folder_id   TEXT NOT NULL DEFAULT '',
     tags        TEXT NOT NULL DEFAULT '',
+    archived_at INTEGER NOT NULL DEFAULT 0,
     created_at  INTEGER NOT NULL,
     updated_at  INTEGER NOT NULL,
     FOREIGN KEY (notebook_id) REFERENCES notebooks(id) ON DELETE CASCADE

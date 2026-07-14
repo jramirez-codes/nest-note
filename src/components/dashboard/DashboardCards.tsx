@@ -13,6 +13,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
+  FileText,
   Lightbulb,
   Sparkles,
   type LucideIcon,
@@ -20,6 +21,7 @@ import {
 import type { ThemeColors } from '../../theme/colors';
 import type { DashboardCard } from '../../server/controllers/aiController';
 import type { CardDragShared } from '../../hooks/useCardDrag';
+import { deriveTitle, type Note } from '../../types/note';
 import { prio, relDate, type TaskSort } from './cardModel';
 
 // Wraps a card in a long-press pan gesture: hold ~220ms to lift it, drag up onto
@@ -265,6 +267,65 @@ export function Pager({
         }`}>
         <ChevronRight size={16} color={colors.muted} strokeWidth={2.5} />
       </Pressable>
+    </View>
+  );
+}
+
+// A short date for the compact archived rows, e.g. "Jul 1" (drops the year and
+// time formatNoteDate carries — the row only needs a light recency cue).
+function shortDate(timestamp: number): string {
+  return new Date(timestamp).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
+// The Archived section's list: a compact, single-surface list of pages lifted off
+// the pad by /archive. Each is one dense line — a small page glyph, the title, a
+// short date, and a chevron — separated by hairlines, so a long archive stays
+// scannable without eating the dashboard. Paginated (like Tasks) via the shared
+// Pager at the foot of the surface. Tapping opens the page as a temporary,
+// editable page (see ArchivedPageOverlay).
+export function ArchivedList({
+  pages,
+  onOpen,
+  colors,
+  page,
+  pageCount,
+  onChangePage,
+}: {
+  /** The current page's slice of archived pages (the caller paginates). */
+  pages: Note[];
+  onOpen: (note: Note) => void;
+  colors: ThemeColors;
+  page: number;
+  pageCount: number;
+  onChangePage: (page: number) => void;
+}) {
+  return (
+    <View className="overflow-hidden rounded-2xl border border-surface1 bg-surface">
+      {pages.map((note, i) => {
+        const title = note.title.trim() || deriveTitle(note.content);
+        return (
+          <View key={note.id}>
+            {i > 0 && <View className="ml-9 h-px bg-surface1/60" />}
+            <Pressable
+              onPress={() => onOpen(note)}
+              accessibilityRole="button"
+              accessibilityLabel={`Open archived page: ${title}`}
+              className="flex-row items-center gap-2.5 px-3 py-2.5 active:bg-background">
+              <FileText size={15} color={colors.faint} strokeWidth={2} />
+              <Text numberOfLines={1} className="flex-1 text-sm text-text">
+                {title}
+              </Text>
+              <Text className="text-[11px] text-faint">{shortDate(note.updatedAt)}</Text>
+              <ChevronRight size={15} color={colors.faint} strokeWidth={2.5} />
+            </Pressable>
+          </View>
+        );
+      })}
+      {/* Renders nothing for a single page (see Pager). */}
+      <Pager page={page} pageCount={pageCount} onChange={onChangePage} colors={colors} />
     </View>
   );
 }

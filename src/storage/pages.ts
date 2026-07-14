@@ -38,15 +38,54 @@ export async function getPage(id: string): Promise<Note | null> {
   return row ? mapRow(row) : null;
 }
 
-/** All pages in a notebook, most recently updated first. */
+/**
+ * All *live* pages in a notebook (archived pages excluded), most recently
+ * updated first. Archived pages leave the pad entirely and are reached only
+ * through the dashboard's Archived section — see {@link listArchivedPages}.
+ */
 export async function listPages(notebookId: string): Promise<Note[]> {
   const result = await getDb().execute(
     `SELECT id, content, title, created_at, updated_at
-     FROM pages WHERE notebook_id = ?
+     FROM pages WHERE notebook_id = ? AND archived_at = 0
      ORDER BY updated_at DESC`,
     [notebookId],
   );
   return (result.rows ?? []).map(mapRow);
+}
+
+/**
+ * The archived pages of a notebook, most recently archived first. These have
+ * been lifted off the pad by `/archive`; the dashboard lists them and reopens
+ * one as a temporary editable page.
+ */
+export async function listArchivedPages(notebookId: string): Promise<Note[]> {
+  const result = await getDb().execute(
+    `SELECT id, content, title, created_at, updated_at
+     FROM pages WHERE notebook_id = ? AND archived_at != 0
+     ORDER BY archived_at DESC`,
+    [notebookId],
+  );
+  return (result.rows ?? []).map(mapRow);
+}
+
+/**
+ * Archive a page: lift it off the pad and into the dashboard's Archived
+ * section. `content` is persisted alongside the flag in one write — the caller
+ * (the editor bridge) passes the page's current text with the `/archive`
+ * command line already stripped, so the archived copy is authoritative and free
+ * of the race between the note list's optimistic content saves and this flag.
+ * The page's id, card payloads and recordings are all kept, so reopening it from
+ * the dashboard restores the page exactly.
+ */
+export async function archivePage(
+  id: string,
+  content: string,
+  archivedAt: number,
+): Promise<void> {
+  await getDb().execute(
+    'UPDATE pages SET content = ?, updated_at = ?, archived_at = ? WHERE id = ?',
+    [content, archivedAt, archivedAt, id],
+  );
 }
 
 /**
@@ -118,7 +157,7 @@ export async function searchPages(
     `SELECT p.id, p.content, p.created_at, p.updated_at
      FROM pages_fts
      JOIN pages p ON p.rowid = pages_fts.rowid
-     WHERE pages_fts MATCH ? AND p.notebook_id = ?
+     WHERE pages_fts MATCH ? AND p.notebook_id = ? AND p.archived_at = 0
      ORDER BY bm25(pages_fts, 10.0, 1.0)
      LIMIT ?`,
     [match, notebookId, limit],
