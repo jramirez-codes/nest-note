@@ -72,7 +72,7 @@ export default function NotebookScreen() {
   const subjectSlug = selectedNb === SANDBOX_KEY ? null : selectedNb;
   // Lazily-loaded pages for the selected subject notebook (empty in Sandbox mode). `ensure`
   // pulls a page + its neighbours; `bodies` holds whatever has been fetched so far.
-  const { stubs, bodies, ensure } = useNotebookPages(subjectSlug);
+  const { stubs, bodies, ensure, loading } = useNotebookPages(subjectSlug);
 
   // The notebook list + current entry for the header's switcher badge. `refresh` is
   // handed to the badge so it pulls a fresh list as its dropdown opens. When the list
@@ -118,6 +118,15 @@ export default function NotebookScreen() {
   // Set when the user adds a note, so the effect below flips to the new page
   // once it has been committed to the list.
   const pendingFlipToNewNote = useRef(false);
+  // Set when a notebook swap is made while the user is on the dashboard, so the
+  // swap effects below keep them on the dashboard of the new notebook rather than
+  // dropping them on its opening page. Cleared once the new notebook has settled.
+  const swapFromDashboardRef = useRef(false);
+  // Whether we've seen the swapped-to subject's index actually begin loading. The
+  // hook's `loading` flag lags a render (it flips inside the hook's own effect), so
+  // a subject reads `loading === false` for one render right after the swap — we must
+  // wait until we've observed the load start before treating a `false` as "settled".
+  const swapLoadSeenRef = useRef(false);
 
   // Drag-to-delete: shared values written by the dashboard's card gesture, read by
   // the header (the delete target) and the floating clone rendered here at the top
@@ -197,13 +206,33 @@ export default function NotebookScreen() {
   // Number of content pages (excludes the trailing dashboard) for the chrome + scrubber.
   const contentCount = subjectSlug ? stubs.length : notes.length;
 
-  // Swapping notebooks resets to the first page, so the reader lands on the new notebook's
-  // opening page (its Appendix / table of contents) rather than a stale index. While a
-  // subject's index is still loading, page 0 is the dashboard, which then becomes the
-  // Appendix once the stubs arrive — no second flip needed.
+  // Swapping notebooks while reading a page drops the reader on the new notebook's opening
+  // page (its Appendix / table of contents) rather than a stale index. While a subject's
+  // index is still loading, page 0 is the dashboard, which then becomes the Appendix once
+  // the stubs arrive — no second flip needed. A swap made *from* the dashboard is the
+  // exception: it keeps the reader on the dashboard (handled by the settle effect below),
+  // so skip the reset here in that case.
   useEffect(() => {
+    if (swapFromDashboardRef.current) return;
     pagerRef.current?.flipTo(0);
   }, [selectedNb]);
+
+  // Finish a swap made from the dashboard: keep the reader pinned to the trailing dashboard
+  // page of the new notebook until its pages have settled. A subject's index loads async, so
+  // the dashboard sits alone at page 0 momentarily, then moves to the end as the stubs
+  // arrive — re-flip to the last page each time the count changes, and release the pin once
+  // the index has loaded (or at once, in the synchronous Sandbox).
+  useEffect(() => {
+    if (!swapFromDashboardRef.current) return;
+    pagerRef.current?.flipTo(pages.length - 1);
+    // Sandbox settles synchronously; a subject settles once its index has loaded —
+    // loading goes false → true → false, and the flag lags a render, so only count a
+    // `false` as done after we've actually seen the load begin (see swapLoadSeenRef).
+    if (loading) swapLoadSeenRef.current = true;
+    if (!subjectSlug || (swapLoadSeenRef.current && !loading)) {
+      swapFromDashboardRef.current = false;
+    }
+  }, [subjectSlug, loading, pages.length]);
 
   // Keep the current subject page and its immediate neighbours fetched, so a swipe lands on
   // content that's already in hand. (The first/last pages are warmed by the hook on swap.)
@@ -215,6 +244,19 @@ export default function NotebookScreen() {
     }
     if (nums.length > 0) ensure(nums);
   }, [subjectSlug, stubs, currentIndex, ensure]);
+
+  // Swap the notebook filling the pad. If the user is on the dashboard (its trailing page)
+  // when they pick a new notebook, note that so the swap effects keep them on the dashboard
+  // of the new one; a swap made while reading a page turns to that notebook's opening page.
+  const selectNotebook = useCallback(
+    (key: string) => {
+      if (key === selectedNb) return;
+      swapFromDashboardRef.current = pages[currentIndexRef.current]?.kind === 'dashboard';
+      swapLoadSeenRef.current = false;
+      setSelectedNb(key);
+    },
+    [selectedNb, pages],
+  );
 
   const handleCreate = useCallback(() => {
     // A new note belongs to the local pad, so creating one returns to Sandbox.
@@ -463,7 +505,7 @@ export default function NotebookScreen() {
           <NotebookBadge
             options={nbOptions}
             selected={selectedNbOption}
-            onSelect={setSelectedNb}
+            onSelect={selectNotebook}
             onOpen={refreshNbOptions}
             colors={colors}
           />
