@@ -15,6 +15,7 @@ import type { CardDragShared } from '../../hooks/useCardDrag';
 import { type DashboardCard } from '../../server/controllers/aiController';
 import { useDashboardData } from './useDashboardData';
 import {
+  buildNotebookOptions,
   compareCards,
   compareTasksBy,
   humanizeKind,
@@ -135,25 +136,11 @@ function DashboardPage({
     [allServers],
   );
 
-  // The notebook picker's entries: the Sandbox (the local pad, which also rolls up every
-  // notebook's cards), then one per subject server, each tagged with its own open-task
-  // count (a card belongs to a notebook via its `source` slug).
-  const nbOptions = useMemo<NotebookOption[]>(() => {
-    const tasksFor = (name: string) =>
-      allCards.filter(c => c.source === name && c.kind === 'task' && !c.done).length;
-    const opts: NotebookOption[] = [
-      {
-        key: 'sandbox',
-        label: 'Sandbox',
-        kind: 'local',
-        tasks: allCards.filter(c => c.kind === 'task' && !c.done).length,
-      },
-    ];
-    for (const s of allServers) {
-      opts.push({ key: s.name, label: s.title || s.name, summary: s.summary, kind: 'server', tasks: tasksFor(s.name) });
-    }
-    return opts;
-  }, [allCards, allServers]);
+  // The notebook picker's entries, shared with the header badge (see cardModel).
+  const nbOptions = useMemo<NotebookOption[]>(
+    () => buildNotebookOptions(allCards, allServers),
+    [allCards, allServers],
+  );
 
   // The chosen notebook, falling back to the Sandbox if the selection vanished (e.g. its
   // subject was merged away since it was picked).

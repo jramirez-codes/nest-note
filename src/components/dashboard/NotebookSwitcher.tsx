@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Modal,
   Pressable,
@@ -6,6 +6,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import {
@@ -65,12 +66,131 @@ function HighlightedLabel({ text, query }: { text: string; query: string }) {
   );
 }
 
+/** Where the dropdown card floats — absolute window coords, computed by each trigger. */
+interface MenuPosition {
+  top: number;
+  left: number;
+  width: number;
+}
+
+/**
+ * The floating dropdown shared by both triggers (the dashboard's full switcher and
+ * the header's compact badge): a search field that autocompletes the notebook list,
+ * over a full-screen scrim that dismisses on an outside tap. Anchored at `position`
+ * (window coords) inside a transparent Modal so it floats over scrolling content and
+ * gets native keyboard handling. Positioning is left to the caller so the same menu
+ * can hang left-aligned under a wide control or right-aligned under a small badge.
+ */
+function NotebookDropdown({
+  visible,
+  onClose,
+  position,
+  options,
+  selected,
+  onSelect,
+  colors,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  position: MenuPosition;
+  options: NotebookOption[];
+  selected: NotebookOption;
+  onSelect: (key: string) => void;
+  colors: ThemeColors;
+}) {
+  const [query, setQuery] = useState('');
+  // Start each opening from a clean search, so a stale query never hides the list.
+  useEffect(() => {
+    if (visible) setQuery('');
+  }, [visible]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return options;
+    return options.filter(o => o.label.toLowerCase().includes(q));
+  }, [options, query]);
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
+      {/* Full-screen scrim: a tap anywhere outside the card dismisses the menu. */}
+      <Pressable className="flex-1" style={styles.scrim} onPress={onClose}>
+        <View
+          style={[
+            styles.dropdownAnchor,
+            { top: position.top, left: position.left, width: position.width },
+          ]}>
+          {/* Inner Pressable swallows taps so they don't reach the scrim. */}
+          <Pressable
+            onPress={() => {}}
+            className="overflow-hidden rounded-2xl border border-surface1 bg-surface">
+            {/* Search field. */}
+            <View className="flex-row items-center gap-2 border-b border-surface1 px-3 py-2.5">
+              <Search size={16} color={colors.faint} strokeWidth={2} />
+              <TextInput
+                autoFocus
+                value={query}
+                onChangeText={setQuery}
+                placeholder="Search notebooks…"
+                placeholderTextColor={colors.faint}
+                className="flex-1 p-0 text-sm text-text"
+                returnKeyType="done"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            </View>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              style={styles.dropdownList}
+              contentContainerStyle={styles.dropdownListContent}>
+              {filtered.length === 0 ? (
+                <Text className="px-3 py-4 text-center text-sm text-muted">No notebooks match.</Text>
+              ) : (
+                filtered.map(o => {
+                  const RowIcon = nbIcon(o.kind);
+                  const isSel = o.key === selected.key;
+                  return (
+                    <Pressable
+                      key={o.key}
+                      onPress={() => {
+                        onSelect(o.key);
+                        onClose();
+                      }}
+                      className="flex-row items-center px-2.5 py-2.5 active:bg-surface1/50">
+                      <View className="mr-3 h-8 w-8 items-center justify-center rounded-lg bg-background">
+                        <RowIcon size={16} color={isSel ? colors.accent : colors.muted} strokeWidth={2} />
+                      </View>
+                      <View className="flex-1 pr-2">
+                        <HighlightedLabel text={o.label} query={query} />
+                        <Text className="mt-0.5 text-xs text-muted" numberOfLines={1}>
+                          {nbSubtitle(o)}
+                        </Text>
+                      </View>
+                      {o.kind === 'local' && (
+                        <View className="mr-2 rounded-full bg-overlay0/30 px-2 py-0.5">
+                          <Text className="text-[10px] font-semibold uppercase tracking-wide text-muted">
+                            Local
+                          </Text>
+                        </View>
+                      )}
+                      {isSel && <Check size={16} color={colors.accent} strokeWidth={2.5} />}
+                    </Pressable>
+                  );
+                })
+              )}
+            </ScrollView>
+          </Pressable>
+        </View>
+      </Pressable>
+    </Modal>
+  );
+}
+
 /**
  * The notebook picker pinned to the top of the dashboard: a tap-to-open control
  * showing the current notebook, and a dropdown with a search field that
  * autocompletes the notebook list as the user types. The dropdown is anchored
- * under the trigger (measured in window coords) inside a transparent Modal, so it
- * floats cleanly over the scrolling content and gets native keyboard handling.
+ * under the trigger (measured in window coords) so it floats cleanly over the
+ * scrolling content and gets native keyboard handling.
  */
 export function NotebookSwitcher({
   options,
@@ -85,23 +205,16 @@ export function NotebookSwitcher({
 }) {
   const triggerRef = useRef<View>(null);
   const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState('');
-  const [anchor, setAnchor] = useState({ x: 0, y: 0, width: 0, height: 0 });
+  const [position, setPosition] = useState<MenuPosition>({ top: 0, left: 0, width: 0 });
 
   const openMenu = useCallback(() => {
     triggerRef.current?.measureInWindow((x, y, width, height) => {
-      setAnchor({ x, y, width, height });
-      setQuery('');
+      // Left-aligned, matching the trigger's own width.
+      setPosition({ top: y + height + 6, left: x, width });
       setOpen(true);
     });
   }, []);
   const close = useCallback(() => setOpen(false), []);
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return options;
-    return options.filter(o => o.label.toLowerCase().includes(q));
-  }, [options, query]);
 
   const TriggerIcon = nbIcon(selected.kind);
 
@@ -127,77 +240,93 @@ export function NotebookSwitcher({
         <ChevronDown size={20} color={colors.faint} strokeWidth={2} />
       </Pressable>
 
-      <Modal visible={open} transparent animationType="fade" onRequestClose={close} statusBarTranslucent>
-        {/* Full-screen scrim: a tap anywhere outside the card dismisses the menu. */}
-        <Pressable className="flex-1" style={styles.scrim} onPress={close}>
-          <View
-            style={[
-              styles.dropdownAnchor,
-              { top: anchor.y + anchor.height + 6, left: anchor.x, width: anchor.width },
-            ]}>
-            {/* Inner Pressable swallows taps so they don't reach the scrim. */}
-            <Pressable
-              onPress={() => {}}
-              className="overflow-hidden rounded-2xl border border-surface1 bg-surface">
-              {/* Search field. */}
-              <View className="flex-row items-center gap-2 border-b border-surface1 px-3 py-2.5">
-                <Search size={16} color={colors.faint} strokeWidth={2} />
-                <TextInput
-                  autoFocus
-                  value={query}
-                  onChangeText={setQuery}
-                  placeholder="Search notebooks…"
-                  placeholderTextColor={colors.faint}
-                  className="flex-1 p-0 text-sm text-text"
-                  returnKeyType="done"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-              </View>
-              <ScrollView
-                keyboardShouldPersistTaps="handled"
-                style={styles.dropdownList}
-                contentContainerStyle={styles.dropdownListContent}>
-                {filtered.length === 0 ? (
-                  <Text className="px-3 py-4 text-center text-sm text-muted">No notebooks match.</Text>
-                ) : (
-                  filtered.map(o => {
-                    const RowIcon = nbIcon(o.kind);
-                    const isSel = o.key === selected.key;
-                    return (
-                      <Pressable
-                        key={o.key}
-                        onPress={() => {
-                          onSelect(o.key);
-                          close();
-                        }}
-                        className="flex-row items-center px-2.5 py-2.5 active:bg-surface1/50">
-                        <View className="mr-3 h-8 w-8 items-center justify-center rounded-lg bg-background">
-                          <RowIcon size={16} color={isSel ? colors.accent : colors.muted} strokeWidth={2} />
-                        </View>
-                        <View className="flex-1 pr-2">
-                          <HighlightedLabel text={o.label} query={query} />
-                          <Text className="mt-0.5 text-xs text-muted" numberOfLines={1}>
-                            {nbSubtitle(o)}
-                          </Text>
-                        </View>
-                        {o.kind === 'local' && (
-                          <View className="mr-2 rounded-full bg-overlay0/30 px-2 py-0.5">
-                            <Text className="text-[10px] font-semibold uppercase tracking-wide text-muted">
-                              Local
-                            </Text>
-                          </View>
-                        )}
-                        {isSel && <Check size={16} color={colors.accent} strokeWidth={2.5} />}
-                      </Pressable>
-                    );
-                  })
-                )}
-              </ScrollView>
-            </Pressable>
-          </View>
-        </Pressable>
-      </Modal>
+      <NotebookDropdown
+        visible={open}
+        onClose={close}
+        position={position}
+        options={options}
+        selected={selected}
+        onSelect={onSelect}
+        colors={colors}
+      />
+    </>
+  );
+}
+
+// The badge's dropdown is a fixed, comfortable width rather than the tiny pill's,
+// clamped to the screen with this much breathing room on either edge.
+const BADGE_MENU_WIDTH = 264;
+const SCREEN_MARGIN = 12;
+
+/**
+ * A compact pill that names the current notebook and opens the same searchable
+ * dropdown to swap it — the header's counterpart to the dashboard's full
+ * NotebookSwitcher. Sized to sit inline in the page-title row (where the note
+ * count used to be); its dropdown is right-aligned under the pill so a badge near
+ * the screen's right edge never spills off it.
+ */
+export function NotebookBadge({
+  options,
+  selected,
+  onSelect,
+  onOpen,
+  colors,
+}: {
+  options: NotebookOption[];
+  selected: NotebookOption;
+  onSelect: (key: string) => void;
+  /** Called as the menu opens, so the owner can refresh the notebook list first. */
+  onOpen?: () => void;
+  colors: ThemeColors;
+}) {
+  const triggerRef = useRef<View>(null);
+  const { width: screenWidth } = useWindowDimensions();
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<MenuPosition>({ top: 0, left: 0, width: BADGE_MENU_WIDTH });
+
+  const openMenu = useCallback(() => {
+    onOpen?.();
+    triggerRef.current?.measureInWindow((x, y, width, height) => {
+      const menuWidth = Math.min(BADGE_MENU_WIDTH, screenWidth - SCREEN_MARGIN * 2);
+      // Right-align the menu's right edge to the pill's, then clamp inside the screen.
+      const rightAligned = x + width - menuWidth;
+      const left = Math.max(
+        SCREEN_MARGIN,
+        Math.min(rightAligned, screenWidth - menuWidth - SCREEN_MARGIN),
+      );
+      setPosition({ top: y + height + 6, left, width: menuWidth });
+      setOpen(true);
+    });
+  }, [onOpen, screenWidth]);
+  const close = useCallback(() => setOpen(false), []);
+
+  const TriggerIcon = nbIcon(selected.kind);
+
+  return (
+    <>
+      <Pressable
+        ref={triggerRef}
+        onPress={openMenu}
+        accessibilityRole="button"
+        accessibilityLabel={`Notebook: ${selected.label}. Tap to switch notebooks.`}
+        hitSlop={6}
+        className="max-w-[168px] flex-row items-center gap-1.5 rounded-full border border-surface1 bg-surface py-1 pl-2.5 pr-2 active:opacity-80">
+        <TriggerIcon size={12} color={colors.accent} strokeWidth={2.25} />
+        <Text numberOfLines={1} className="shrink text-xs font-semibold text-text">
+          {selected.label}
+        </Text>
+        <ChevronDown size={13} color={colors.faint} strokeWidth={2.25} />
+      </Pressable>
+
+      <NotebookDropdown
+        visible={open}
+        onClose={close}
+        position={position}
+        options={options}
+        selected={selected}
+        onSelect={onSelect}
+        colors={colors}
+      />
     </>
   );
 }

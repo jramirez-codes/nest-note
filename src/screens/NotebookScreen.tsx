@@ -25,9 +25,11 @@ import PaperPager from '../components/notepage/PaperPager';
 import type { PaperPagerHandle } from '../components/notepage/PaperPager';
 import ServerStatusDot from '../components/ServerStatusDot';
 import VirtualNotePage from '../components/notepage/VirtualNotePage';
+import { NotebookBadge, type NotebookOption } from '../components/dashboard/NotebookSwitcher';
 import { useCardDrag } from '../hooks/useCardDrag';
 import { DEFAULT_NOTEBOOK_ID } from '../storage/db';
 import { useNotes } from '../hooks/useNotes';
+import { useNotebookOptions } from '../hooks/useNotebookOptions';
 import { useNotebookPages } from '../hooks/useNotebookPages';
 import type { NotePage as NotebookPageStub } from '../server/controllers/aiController';
 import type { Note } from '../types/note';
@@ -71,6 +73,23 @@ export default function NotebookScreen() {
   // Lazily-loaded pages for the selected subject notebook (empty in Sandbox mode). `ensure`
   // pulls a page + its neighbours; `bodies` holds whatever has been fetched so far.
   const { stubs, bodies, ensure } = useNotebookPages(subjectSlug);
+
+  // The notebook list + current entry for the header's switcher badge. `refresh` is
+  // handed to the badge so it pulls a fresh list as its dropdown opens. When the list
+  // hasn't loaded (or the selection isn't in it yet, e.g. a wikilink jumped to a
+  // not-yet-fetched subject), fall back to a minimal entry so the badge still names
+  // the current notebook.
+  const { options: nbOptions, refresh: refreshNbOptions } = useNotebookOptions();
+  const selectedNbOption = useMemo<NotebookOption>(
+    () =>
+      nbOptions.find(o => o.key === selectedNb) ?? {
+        key: selectedNb,
+        label: selectedNb === SANDBOX_KEY ? 'Sandbox' : selectedNb,
+        kind: selectedNb === SANDBOX_KEY ? 'local' : 'server',
+        tasks: 0,
+      },
+    [nbOptions, selectedNb],
+  );
 
   const pagerRef = useRef<PaperPagerHandle>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -442,16 +461,13 @@ export default function NotebookScreen() {
               </Pressable>
             )}
           </View>
-          <Text className="text-xs text-faint">
-            {contentCount}{' '}
-            {subjectSlug
-              ? contentCount === 1
-                ? 'page'
-                : 'pages'
-              : contentCount === 1
-                ? 'note'
-                : 'notes'}
-          </Text>
+          <NotebookBadge
+            options={nbOptions}
+            selected={selectedNbOption}
+            onSelect={setSelectedNb}
+            onOpen={refreshNbOptions}
+            colors={colors}
+          />
         </View>
       </Animated.View>
 

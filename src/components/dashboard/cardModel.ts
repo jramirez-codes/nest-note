@@ -4,7 +4,8 @@
  * easy to find and reason about on their own.
  */
 import { mocha } from '../../theme/catppuccin';
-import type { DashboardCard } from '../../server/controllers/aiController';
+import type { DashboardCard, DashboardServer } from '../../server/controllers/aiController';
+import type { NotebookOption } from './NotebookSwitcher';
 
 // Priority ranks so a higher-urgency card sorts first. Unknown strings fall to
 // the middle (normal) so a novel priority never crashes the sort.
@@ -95,6 +96,39 @@ export const compareTasksBy = (sort: TaskSort): typeof compareTasks =>
 
 // Tasks per page in the Tasks card's pager.
 export const TASK_PAGE_SIZE = 5;
+
+/**
+ * The notebook picker's entries, derived from dashboard state: the Sandbox (the local
+ * pad, which rolls up every notebook's open tasks) first, then one per subject server,
+ * each tagged with its own open-task count (a card belongs to a notebook via `source`).
+ * Shared by the dashboard's full switcher and the header's compact badge so both render
+ * the exact same list.
+ */
+export function buildNotebookOptions(
+  cards: DashboardCard[],
+  servers: DashboardServer[],
+): NotebookOption[] {
+  const tasksFor = (name: string) =>
+    cards.filter(c => c.source === name && c.kind === 'task' && !c.done).length;
+  const opts: NotebookOption[] = [
+    {
+      key: 'sandbox',
+      label: 'Sandbox',
+      kind: 'local',
+      tasks: cards.filter(c => c.kind === 'task' && !c.done).length,
+    },
+  ];
+  for (const s of servers) {
+    opts.push({
+      key: s.name,
+      label: s.title || s.name,
+      summary: s.summary,
+      kind: 'server',
+      tasks: tasksFor(s.name),
+    });
+  }
+  return opts;
+}
 
 // Title-case a kind slug into a section heading, e.g. "reading-list" → "Reading
 // lists". Keeps unknown kinds presentable without any bespoke code.
