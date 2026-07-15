@@ -12,6 +12,7 @@ import TasksSection from './sections/TasksSection';
 import ArchivedSection from './sections/ArchivedSection';
 import CardGridSection from './sections/CardGridSection';
 import SuggestionsSection from './sections/SuggestionsSection';
+import ReorgSection from './sections/ReorgSection';
 import { EmptyState, ErrorState, InlineError, LoadingState } from './sections/DashboardStates';
 
 interface DashboardPageProps {
@@ -63,7 +64,7 @@ function DashboardPage({
   onOpenIdea,
 }: DashboardPageProps) {
   const colors = useTheme();
-  const { state, error, loading, refreshing, busy, load, act, onToggle, onDismiss } =
+  const { state, error, loading, refreshing, busy, load, act, actReorg, onToggle, onDismiss } =
     useDashboardData(isActive);
   // The card currently lifted, kept locally so only this page dims its source row
   // (the screen tracks its own copy for the floating clone).
@@ -87,6 +88,7 @@ function DashboardPage({
   const allServers = useMemo(() => state?.servers ?? [], [state]);
   const allCards = useMemo(() => state?.cards ?? [], [state]);
   const allSuggestions = state?.suggestions ?? [];
+  const allReorgs = state?.reorgs ?? [];
 
   // Maps a card's `source` slug to its notebook's display title, for the Tasks
   // list's subject badge — falls back to the slug itself, or "Sandbox" for cards
@@ -118,6 +120,8 @@ function DashboardPage({
     c => c.kind !== 'notification',
   );
   const suggestions = isSandbox ? allSuggestions : [];
+  // Reorg proposals show in the Sandbox aggregate and inside their own notebook's view.
+  const reorgs = isSandbox ? allReorgs : allReorgs.filter(r => r.subject === selected.key);
 
   // Split cards into their sections. Tasks are first-class; every other kind is
   // grouped by kind and rendered through the generic grid, so a brand-new kind
@@ -133,7 +137,8 @@ function DashboardPage({
   // Archived pages are a local-pad concept, so they only surface on the Sandbox
   // dashboard (subjects have no local pages of their own here).
   const showArchived = isSandbox && archivedPages.length > 0;
-  const nothingAtAll = cards.length === 0 && suggestions.length === 0 && !showArchived;
+  const nothingAtAll =
+    cards.length === 0 && suggestions.length === 0 && reorgs.length === 0 && !showArchived;
 
   // The drag wiring handed to every draggable card / section, built once so the
   // memoized sections aren't re-rendered by a fresh object each time.
@@ -203,6 +208,16 @@ function DashboardPage({
                 onOpenIdea={onOpenIdea}
               />
             ))}
+
+            {reorgs.length > 0 && (
+              <ReorgSection
+                reorgs={reorgs}
+                busy={busy}
+                act={actReorg}
+                titleFor={subjectTitleFor}
+                colors={colors}
+              />
+            )}
 
             {suggestions.length > 0 && (
               <SuggestionsSection suggestions={suggestions} busy={busy} act={act} colors={colors} />

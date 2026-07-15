@@ -285,15 +285,30 @@ function buildTalkPrompt(subject: string, question: string, context?: AskContext
     `subject="${subject}" to file it (it creates the notebook on first use if none exists yet). ` +
     'Keep this invisible to the user except a brief, natural mention when you file something. ' +
     'Do not file trivial chit-chat — only real content.\n\n' +
-    `If the user says they don't like how the existing "${subject}" notes are organized or ` +
-    'formatted, or asks you to clean them up, restructure them, or make them more digestible: ' +
-    `call ${subject}_notes to read the whole current notebook, then call ${subject}_rewrite with ` +
-    'a rewritten markdown body. Reorganize freely — regroup related facts under clear headings, ' +
-    'convert action items into `- [ ]` task checkboxes (`- [x]` for ones already done), turn ' +
-    'loose prose into lists where that reads better, fix grammar, and remove duplication. Preserve ' +
-    'every fact and its meaning — never invent or drop information. Briefly tell the user what you ' +
-    `changed. (${subject}_notes/${subject}_rewrite only exist once this subject's notebook has ` +
-    "been created — if they aren't available yet, say so instead of trying.)\n\n" +
+    `To read what's already filed, call ${subject}_notes (it returns every page, the Appendix ` +
+    `first). Note: ${subject}_notes/${subject}_rewrite/propose_reorg only exist once this ` +
+    "subject's notebook has been created — if they aren't available yet, say so instead of " +
+    'trying.\n\n' +
+    `Tidying a SINGLE page in place (fix grammar, tighten wording, dedupe within that one page): ` +
+    `read ${subject}_notes first, then call ${subject}_rewrite with the page's number or title ` +
+    'and its rewritten markdown. Preserve every fact — never invent or drop information — and ' +
+    'briefly say what you changed.\n\n' +
+    `Reorganizing the notebook's STRUCTURE is different and must be the user's to confirm, so do ` +
+    `NOT apply it yourself with ${subject}_rewrite. This covers combining, splitting, deleting, or ` +
+    `reordering pages, or any general "clean up / restructure the whole ${subject} notebook" ` +
+    'request. Instead:\n' +
+    `1. Call ${subject}_notes to read every page, INCLUDING the "Task Log" pages.\n` +
+    '2. The Task Log pages ("Task Log", "Task Log 2", … — the highest-numbered is the most ' +
+    'recent) are a live record of tasks already completed or dropped. Cross-reference them and ' +
+    'REMOVE from the content pages any item the Task Log shows is already done (e.g. a bug or ' +
+    'tweak still listed as "to fix" that the log records as Completed).\n' +
+    '3. Build the FULL intended set of content pages and call propose_reorg with ' +
+    `subject="${subject}", a one-line summary, and those pages (each {title, body}, in order). ` +
+    'Preserve every real fact; invent nothing.\n' +
+    '4. NEVER include, edit, delete, or reorder a Task Log page — it is a live database the ' +
+    'system preserves untouched. Do not put Task Log content in your proposed pages.\n' +
+    '5. Tell the user the reorganization is queued for them to confirm on the dashboard — you ' +
+    'have not changed anything yet.\n\n' +
     `This subject's dashboard tasks are also yours to manage here, live, as the user asks: ` +
     `call the orchestrator's list_cards with source="${subject}" to see what already exists ` +
     'before creating or changing anything. To add a task, call upsert_card with kind="task", ' +

@@ -263,6 +263,11 @@ func rewritePageIn(notesDir, target, content string) (string, error) {
 	if !found {
 		num = nextPageNum(pages)
 	}
+	// A Task Log page is a live database of dismissed tasks — never let a rewrite edit
+	// or clobber one (whether targeted by its number or its "Task Log"/"Task Log N" title).
+	if _, isLog := taskLogSeq(title); isLog {
+		return "", fmt.Errorf("the %q page is a protected task log and cannot be rewritten", title)
+	}
 	if err := os.MkdirAll(notesDir, 0o755); err != nil {
 		return "", err
 	}
@@ -638,6 +643,22 @@ func main() {
 		Handler: suggestMerge,
 	})
 	s.AddTool(mcpx.Tool{
+		Name:        "propose_reorg",
+		Description: "Propose a reorganization of a subject notebook's pages (combine, split, delete, reorder pages, and drop items the Task Log shows are already done). This does NOT apply anything — it drops a proposal the user approves in the dashboard, then the server rewrites the pages. Read <subject>_notes FIRST so nothing is lost. Pass the FULL intended set of content pages in order as 'pages' (each {title, body}); the server replaces the notebook's current content pages with exactly these. NEVER include a \"Task Log\" (or \"Task Log N\") page — those are a live database the server preserves untouched; the server ignores any Task Log page you pass. Preserve every real fact; invent nothing.",
+		InputSchema: mcpx.ObjectSchema(map[string]any{
+			"subject": map[string]any{"type": "string", "description": "the subject notebook slug to reorganize"},
+			"summary": map[string]any{"type": "string", "description": "one short line describing the reorganization, shown on the confirm card"},
+			"pages": map[string]any{"type": "array", "items": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"title": map[string]any{"type": "string", "description": "the page's title"},
+					"body":  map[string]any{"type": "string", "description": "the page's full markdown body"},
+				},
+			}, "description": "the full intended set of content pages, in order (never a Task Log page)"},
+		}, []string{"subject", "pages"}),
+		Handler: proposeReorg,
+	})
+	s.AddTool(mcpx.Tool{
 		Name:        "list_capabilities",
 		Description: "List existing capability servers, subjects trending toward their own server, and any queued creations or consolidations.",
 		InputSchema: mcpx.ObjectSchema(nil, nil),
@@ -708,6 +729,7 @@ func subjectsPath() string      { return filepath.Join(stateDir, "subjects.json"
 func requestsDir() string       { return filepath.Join(stateDir, "requests") }
 func consolidationsDir() string { return filepath.Join(stateDir, "consolidations") }
 func suggestionsDir() string    { return filepath.Join(stateDir, "suggestions") }
+func reorgsDir() string         { return filepath.Join(stateDir, "reorgs") }
 
 // The notebook layout, mirrored from the Go server's notebook.go: a subject folder
 // under mcp/<slug>/ holds notes/ (a folder of "#N (Title).md" pages), notebook.json
@@ -1026,6 +1048,58 @@ func suggestMerge(args map[string]any) (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("suggested merging %s into %q; the user can approve it in the dashboard.", strings.Join(from, ", "), into), nil
+}
+
+// proposeReorg drops a page-reorganization proposal for a subject notebook, which the
+// user approves in the dashboard (the trusted Go server then rewrites the pages). It
+// never touches anything itself. The proposal is the FULL intended set of content
+// pages; any Task Log page passed in is dropped here (defence in depth — the server's
+// apply preserves the real Task Log pages untouched regardless).
+func proposeReorg(args map[string]any) (string, error) {
+	subject := slug(fmt.Sprintf("%v", args["subject"]))
+	if subject == "" {
+		return "no subject given.", nil
+	}
+	if mcpDir == "" {
+		return "no mcp dir configured.", nil
+	}
+	type reorgPage struct {
+		Title string %BT%json:"title"%BT%
+		Body  string %BT%json:"body"%BT%
+	}
+	var pages []reorgPage
+	if raw, ok := args["pages"].([]any); ok {
+		for _, v := range raw {
+			m, ok := v.(map[string]any)
+			if !ok {
+				continue
+			}
+			title := strings.TrimSpace(fmt.Sprintf("%v", m["title"]))
+			body, _ := m["body"].(string)
+			if title == "" && strings.TrimSpace(body) == "" {
+				continue
+			}
+			// Never let a Task Log page be authored through a reorg — it is a live
+			// database only the dismissal path writes to.
+			if _, isLog := taskLogSeq(sanitizePageTitle(title)); isLog {
+				continue
+			}
+			pages = append(pages, reorgPage{Title: title, Body: body})
+		}
+	}
+	if len(pages) == 0 {
+		return "no content pages given to reorganize into.", nil
+	}
+	summary, _ := args["summary"].(string)
+	summary = strings.TrimSpace(summary)
+	os.MkdirAll(reorgsDir(), 0o755)
+	req := map[string]any{"subject": subject, "summary": summary, "pages": pages}
+	data, _ := json.MarshalIndent(req, "", "  ")
+	if err := os.WriteFile(filepath.Join(reorgsDir(), subject+".json"), append(data, '\n'), 0o644); err != nil {
+		return "", err
+	}
+	logActivity("Proposed reorganizing " + subject + " into " + strconv.Itoa(len(pages)) + " page(s)")
+	return fmt.Sprintf("proposed reorganizing %q into %d page(s); the user can approve it in the dashboard. Do not apply it yourself.", subject, len(pages)), nil
 }
 
 // validPriority normalizes a priority string, defaulting unknown/blank ones to

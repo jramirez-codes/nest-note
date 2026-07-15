@@ -44,12 +44,27 @@ export interface DashboardServer {
 /** One notebook's full detail from `GET /notebook?slug=x` (the lazy swap fetch). */
 export interface NotebookDetail extends DashboardServer {
   cards: DashboardCard[];
+  /** This notebook's pending reorg proposal (0 or 1). */
+  reorgs: DashboardReorg[];
 }
 
 export interface DashboardSuggestion {
   into: string;
   from: string[];
   reason: string;
+}
+
+/**
+ * A pending page-reorganization proposal for one notebook, raised by `/talk` (the
+ * orchestrator's propose_reorg tool). The user approves or dismisses it; `from_pages`
+ * → `to_pages` drives the confirm card's "N pages → M pages" summary (both counts
+ * exclude the Appendix and the protected Task Log pages, which a reorg never touches).
+ */
+export interface DashboardReorg {
+  subject: string;
+  summary: string;
+  from_pages: number;
+  to_pages: number;
 }
 
 /** Priority ranks, high→low, so the UI can sort without hard-coding the strings. */
@@ -82,7 +97,23 @@ export interface DashboardCard {
 export interface DashboardState {
   servers: DashboardServer[];
   suggestions: DashboardSuggestion[];
+  reorgs: DashboardReorg[];
   cards: DashboardCard[];
+}
+
+// Coerce a raw wire value into DashboardReorg[], defaulting each field so a malformed
+// entry can't crash the dashboard.
+function parseReorgs(raw: unknown): DashboardReorg[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((r): r is Record<string, unknown> => typeof r === 'object' && r !== null)
+    .map(r => ({
+      subject: String(r.subject ?? ''),
+      summary: String(r.summary ?? ''),
+      from_pages: typeof r.from_pages === 'number' ? r.from_pages : 0,
+      to_pages: typeof r.to_pages === 'number' ? r.to_pages : 0,
+    }))
+    .filter(r => r.subject !== '');
 }
 
 /**
@@ -137,6 +168,7 @@ async function requestNotebook(slug: string, metaOnly: boolean): Promise<Noteboo
     tools: Array.isArray(data.tools) ? data.tools : [],
     pages: Array.isArray(data.pages) ? data.pages : [],
     cards: Array.isArray(data.cards) ? data.cards : [],
+    reorgs: parseReorgs((data as { reorgs?: unknown }).reorgs),
   };
 }
 
@@ -238,6 +270,7 @@ export async function fetchDashboardState(): Promise<DashboardState> {
   return {
     servers: Array.isArray(data.servers) ? data.servers : [],
     suggestions: Array.isArray(data.suggestions) ? data.suggestions : [],
+    reorgs: parseReorgs(data.reorgs),
     cards: Array.isArray(data.cards) ? data.cards : [],
   };
 }
@@ -268,6 +301,18 @@ export async function applyDashboardAction(action: {
   from?: string[];
 }): Promise<void> {
   return postAction(action);
+}
+
+/**
+ * Apply ('reorg') or discard ('reorg-dismiss') a notebook's pending page-reorganization
+ * proposal. 'reorg' rewrites the notebook's content pages server-side (leaving its Task
+ * Log pages untouched); 'reorg-dismiss' just drops the proposal.
+ */
+export async function applyReorgAction(
+  subject: string,
+  action: 'reorg' | 'reorg-dismiss',
+): Promise<void> {
+  return postAction({ action, subject });
 }
 
 /**
