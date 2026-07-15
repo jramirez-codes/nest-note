@@ -215,6 +215,18 @@ const extensions = [
     // (streamed output/transcript arrive as non-doc transactions), and let it
     // close itself if its card was deleted.
     refreshOpenOverlay(u.view);
+    // A doc change that didn't come from __dictate itself — e.g. tapping a
+    // slash-command completion while the mic is still running mid-utterance —
+    // leaves dictRange pointing at stale offsets (the tap shifted the doc out
+    // from under it). Abandon it so the next chunk starts a fresh span at
+    // wherever the tap left the caret, instead of overwriting the wrong text.
+    if (
+      u.docChanged &&
+      dictRange &&
+      !u.transactions.some(tr => tr.isUserEvent('input.type.dictation'))
+    ) {
+      dictRange = null;
+    }
   }),
 ];
 
@@ -263,6 +275,9 @@ window.__setDoc = function (text) {
 // — but the soft keyboard is SUPPRESSED via inputmode="none" on the content DOM,
 // so it never covers the note. The same suppression follows the user into a card
 // composer input (see onDictFocusIn), where dictation is routed instead.
+//
+// Saying "system command" as the first words spoken on a fresh line doubles as
+// typing "/": see VOICE_COMMAND_RE below, near __dictate.
 let dictating = false;
 let dictRange = null;
 // The in-progress utterance span inside a focused card composer input:
@@ -295,6 +310,21 @@ function onDictFocusIn(e) {
   if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) suppressKeyboard(el);
 }
 
+// Do exactly what pressing Enter where the caret sits would: a focused card
+// composer (/chat, /run, /code) submits its box; the note body fires off a slash
+// command line (aiCommandOnEnter) or, on any other line, drops a newline the same
+// way typing Enter would (continueMarkup for lists/quotes, else a plain newline).
+// Shared by the mic-off handoff (__dictateActive) and the spoken "system new
+// line" command, so both routes behave identically.
+function enterAtCaret() {
+  const input = activeComposerInput();
+  if (input) {
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', cancelable: true }));
+  } else if (!view.state.readOnly) {
+    aiCommandOnEnter(view) || continueMarkup(view) || insertNewlineAndIndent(view);
+  }
+}
+
 // RN toggles this around a whole dictation session (not per recognizer restart).
 // On: focus the editor with the keyboard suppressed, so the caret is visible and
 // steerable while the mic runs. Off: restore normal typing everywhere and drop
@@ -309,17 +339,9 @@ window.__dictateActive = function (on) {
     if (!view.state.readOnly) view.focus();
   } else {
     // The user just tapped the mic off — hand off exactly like they'd pressed
-    // Enter where the caret sits: a focused card composer (/chat, /run, /code)
-    // submits its box; the note body either fires off a slash command line
-    // (aiCommandOnEnter) or, on any other line, just drops a newline, same as
-    // typing Enter there would (continueMarkup for lists/quotes, else a plain
-    // newline).
-    const input = activeComposerInput();
-    if (input) {
-      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', cancelable: true }));
-    } else if (!view.state.readOnly) {
-      aiCommandOnEnter(view) || continueMarkup(view) || insertNewlineAndIndent(view);
-    }
+    // Enter where the caret sits (submit a composer, fire a slash command, or
+    // drop a newline).
+    enterAtCaret();
     document.removeEventListener('focusin', onDictFocusIn);
     restoreKeyboard(view.contentDOM);
     for (const el of document.querySelectorAll(
@@ -342,14 +364,45 @@ function dictateIntoInput(el, t, isFinal) {
     inputDict = { el, start: at, len: 0 };
   }
   const { start, len } = inputDict;
-  const insert = isFinal ? t + ' ' : t;
+  // "system new line" submits the composer, mirroring the spoken Enter in the
+  // note body: suppress the phrase so it never lands in the box, then dispatch a
+  // real Enter once the chunk is final so the composer's own submit handler runs.
+  const isBreak = VOICE_BREAK_RE.test(t);
+  const insert = isBreak ? '' : isFinal ? t + ' ' : t;
   el.value = el.value.slice(0, start) + insert + el.value.slice(start + len);
   const caret = start + insert.length;
   el.setSelectionRange(caret, caret);
   el.dispatchEvent(new Event('input', { bubbles: true }));
-  if (isFinal) inputDict = null;
-  else inputDict.len = t.length;
+  if (isFinal) {
+    inputDict = null;
+    if (isBreak) {
+      el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', cancelable: true }));
+    }
+  } else {
+    inputDict.len = insert.length;
+  }
 }
+
+// Saying "system command" as the first words of a line stands in for typing "/"
+// — e.g. "system command code" becomes "/code", opening the exact same
+// slash-command menu a typed "/code" would (see slashCommandSource in
+// ai/commands.js). Only armed for an utterance that begins at column 0 (mirrors
+// slashCommandSource's own trigger spot); spoken mid-sentence it's left as plain
+// text. Matches as soon as "command" is a whole word (word-boundary, so
+// "commander…" is never mistaken for it) — pattern re-evaluated against the full
+// utterance on every partial, so it self-corrects the same way ordinary
+// dictation already flickers as the recognizer's guess improves.
+const VOICE_COMMAND_RE = /^system\s+command\b\s*/i;
+
+// Saying "system new line" as its own utterance is the spoken Enter key: it
+// runs enterAtCaret(), so on a slash-command line it fires the command, inside a
+// focused card composer (/chat, /run, /code) it submits the box, and on any
+// other line it just drops a newline to continue dictation fresh — no reaching
+// for the keyboard. The phrase itself is suppressed (never typed into the note or
+// box). Anchored at ^ (like VOICE_COMMAND_RE) so it only triggers as a discrete
+// command, not when the words land mid-sentence; re-evaluated on every partial so
+// it self-corrects as the recognizer's guess firms up.
+const VOICE_BREAK_RE = /^system\s+new\s+line\b\s*/i;
 
 window.__dictate = function (text, isFinal) {
   const t = text ?? '';
@@ -364,22 +417,42 @@ window.__dictate = function (text, isFinal) {
   if (view.state.readOnly) return;
   if (!dictRange) {
     const at = view.state.selection.main.from;
-    dictRange = { from: at, to: at };
+    const atLineStart = at === view.state.doc.lineAt(at).from;
+    dictRange = { from: at, to: at, cmdCandidate: atLineStart };
   }
+  let insert = dictRange.cmdCandidate ? t.replace(VOICE_COMMAND_RE, '/') : t;
+  // "system new line" is an action, not text — strip it to nothing so the
+  // spoken phrase never shows, and fire the Enter handoff once the chunk is
+  // final (below). Keeping insert empty on partials also lets the earlier "system"
+  // / "system new" guesses flicker away as the recognizer converges.
+  const isBreak = VOICE_BREAK_RE.test(insert);
+  if (isBreak) insert = insert.replace(VOICE_BREAK_RE, '');
+  // Tagged as ordinary typing so CodeMirror's own activateOnTyping machinery
+  // opens the slash-command menu the instant `insert` starts with "/" — the
+  // same path a manually-typed "/" goes through, no separate startCompletion
+  // call needed. The distinct sub-event lets the updateListener above tell our
+  // own dispatches apart from a completion pick or any other outside edit.
   view.dispatch({
-    changes: { from: dictRange.from, to: dictRange.to, insert: t },
-    selection: { anchor: dictRange.from + t.length },
+    changes: { from: dictRange.from, to: dictRange.to, insert },
+    selection: { anchor: dictRange.from + insert.length },
     scrollIntoView: true,
+    userEvent: 'input.type.dictation',
   });
   if (isFinal) {
-    const end = dictRange.from + t.length;
+    dictRange = null;
+    if (isBreak) {
+      // Spoken Enter: submit the slash command on this line, or drop a newline.
+      enterAtCaret();
+      return;
+    }
+    const end = view.state.selection.main.from;
     view.dispatch({
       changes: { from: end, insert: ' ' },
       selection: { anchor: end + 1 },
+      userEvent: 'input.type.dictation',
     });
-    dictRange = null;
   } else {
-    dictRange.to = dictRange.from + t.length;
+    dictRange.to = dictRange.from + insert.length;
   }
 };
 
