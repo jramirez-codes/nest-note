@@ -17,6 +17,11 @@ type Injector = (js: string) => void;
 
 let active: Injector | null = null;
 
+// Whether a dictation session is currently live. Held here (not just in the hook)
+// so that when the user swipes to a different note mid-session, the incoming
+// editor can be re-armed into the keyboard-suppressed dictation mode on register.
+let dictationLive = false;
+
 /**
  * Mark `inject` as the active editor's channel. Returns an unregister function
  * that only clears the slot if it still points at this same injector, so a late
@@ -25,9 +30,22 @@ let active: Injector | null = null;
  */
 export function registerActiveEditor(inject: Injector): () => void {
   active = inject;
+  // A swap mid-dictation: arm the newly-active editor so its caret shows and the
+  // keyboard stays suppressed, matching the page the user just left.
+  if (dictationLive) injectIntoActiveEditor('window.__dictateActive(true);');
   return () => {
     if (active === inject) active = null;
   };
+}
+
+/**
+ * Toggle dictation mode on the active editor (focus + soft-keyboard suppression),
+ * and remember it so page swaps re-arm the incoming editor. Driven by useDictation
+ * at the start/end of a session.
+ */
+export function setDictationLive(on: boolean): void {
+  dictationLive = on;
+  injectIntoActiveEditor(`window.__dictateActive(${on ? 'true' : 'false'});`);
 }
 
 /** Whether an editable note is on screen to receive dictation right now. */

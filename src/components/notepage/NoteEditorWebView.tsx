@@ -206,10 +206,15 @@ export default function NoteEditorWebView({
   // ever arrive.
   useEffect(() => () => onWidgetExpandChange?.(false), [onWidgetExpandChange]);
 
-  // Drop focus (and dismiss the keyboard) when swiped away from.
+  // Drop focus (and dismiss the keyboard) when swiped away from. Also end any
+  // dictation focus-mode on this page: if the mic is still live the user is being
+  // carried to another note (which re-arms itself on register), so this page must
+  // not keep its caret focused or its soft keyboard suppressed once we return.
   useEffect(() => {
     if (!isActive) {
-      ref.current?.injectJavaScript('document.activeElement?.blur(); true;');
+      ref.current?.injectJavaScript(
+        'window.__dictateActive && window.__dictateActive(false); document.activeElement?.blur(); true;',
+      );
     }
   }, [isActive]);
 
@@ -232,7 +237,12 @@ export default function NoteEditorWebView({
   useEffect(() => {
     if (!isActive) return;
     const sub = Keyboard.addListener('keyboardDidHide', () => {
-      ref.current?.injectJavaScript('document.activeElement?.blur(); true;');
+      // Route through the editor's guard: it blurs on a normal keyboard hide, but
+      // NOT while dictating (where focus is held on purpose with the keyboard
+      // suppressed, so blurring would kill the visible caret).
+      ref.current?.injectJavaScript(
+        'window.__onKeyboardHide ? window.__onKeyboardHide() : document.activeElement?.blur(); true;',
+      );
     });
     return () => sub.remove();
   }, [isActive]);

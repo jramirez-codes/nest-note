@@ -23,7 +23,7 @@
  * (avoiding ERROR_RECOGNIZER_BUSY on the immediate re-listen).
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert } from 'react-native';
+import { Alert, Keyboard } from 'react-native';
 import {
   start,
   stop as stopRecognizer,
@@ -36,8 +36,12 @@ import {
   type SpeechResult,
   type SpeechError,
 } from '@dbkable/react-native-speech-to-text';
-import { injectIntoActiveEditor, hasActiveEditor } from '../components/notepage/activeEditor';
-import { acquireWakeLock, releaseWakeLock } from '../native/wakeLock';
+import {
+  injectIntoActiveEditor,
+  hasActiveEditor,
+  setDictationLive,
+} from '../components/notepage/activeEditor';
+import { acquireWakeLock, releaseWakeLock, setScreenAwake } from '../native/wakeLock';
 
 /** Locale handed to the recognizer. */
 const LANGUAGE = 'en-US';
@@ -81,18 +85,22 @@ export function useDictation(): Dictation {
   // this ref keeps take/drop balanced no matter which stop path fires.
   const holdingWakeLockRef = useRef(false);
 
-  // Keep the CPU awake for the whole session so the recognizer isn't starved by a
-  // screen timeout or Doze. Idempotent: only the 0 -> 1 / 1 -> 0 edges hit native.
+  // Keep the device awake for the whole session: the CPU wake lock so the recognizer
+  // isn't starved by a screen timeout or Doze, and the display held on so the note
+  // the user is dictating into doesn't dim out from under them. Idempotent: only the
+  // 0 -> 1 / 1 -> 0 edges hit native.
   const takeWakeLock = useCallback(() => {
     if (holdingWakeLockRef.current) return;
     holdingWakeLockRef.current = true;
     acquireWakeLock();
+    setScreenAwake(true);
   }, []);
 
   const dropWakeLock = useCallback(() => {
     if (!holdingWakeLockRef.current) return;
     holdingWakeLockRef.current = false;
     releaseWakeLock();
+    setScreenAwake(false);
   }, []);
 
   const clearRestart = useCallback(() => {
@@ -109,7 +117,9 @@ export function useDictation(): Dictation {
       dropWakeLock();
       setDictating(false);
       stopRecognizer().catch(() => {});
-      injectIntoActiveEditor('window.__dictateEnd();');
+      // End the session on the editor: restore the soft keyboard, drop focus-mode,
+      // and abandon any in-progress span (__dictateActive(false) resets it).
+      setDictationLive(false);
       if (reason) Alert.alert('Speech to text', reason);
     },
     [clearRestart, dropWakeLock],
@@ -211,6 +221,11 @@ export function useDictation(): Dictation {
       // Hold the CPU awake before the mic goes live; hardStop drops it on any exit.
       takeWakeLock();
       setDictating(true);
+      // Put the editor into dictation mode (visible, steerable caret with the soft
+      // keyboard suppressed) and dismiss any keyboard that's already up, so it
+      // doesn't sit over the note while the user speaks.
+      setDictationLive(true);
+      Keyboard.dismiss();
       await start({ language: LANGUAGE });
     } catch {
       hardStop('Could not start dictation.');
