@@ -215,6 +215,18 @@ const extensions = [
     // (streamed output/transcript arrive as non-doc transactions), and let it
     // close itself if its card was deleted.
     refreshOpenOverlay(u.view);
+    // A doc change that didn't come from __dictate itself — e.g. tapping a
+    // slash-command completion while the mic is still running mid-utterance —
+    // leaves dictRange pointing at stale offsets (the tap shifted the doc out
+    // from under it). Abandon it so the next chunk starts a fresh span at
+    // wherever the tap left the caret, instead of overwriting the wrong text.
+    if (
+      u.docChanged &&
+      dictRange &&
+      !u.transactions.some(tr => tr.isUserEvent('input.type.dictation'))
+    ) {
+      dictRange = null;
+    }
   }),
 ];
 
@@ -263,6 +275,9 @@ window.__setDoc = function (text) {
 // — but the soft keyboard is SUPPRESSED via inputmode="none" on the content DOM,
 // so it never covers the note. The same suppression follows the user into a card
 // composer input (see onDictFocusIn), where dictation is routed instead.
+//
+// Saying "command" as the first word spoken on a fresh line doubles as typing
+// "/": see VOICE_COMMAND_RE below, near __dictate.
 let dictating = false;
 let dictRange = null;
 // The in-progress utterance span inside a focused card composer input:
@@ -351,6 +366,17 @@ function dictateIntoInput(el, t, isFinal) {
   else inputDict.len = t.length;
 }
 
+// Saying "command" as the first word of a line stands in for typing "/" — e.g.
+// "command code" becomes "/code", opening the exact same slash-command menu a
+// typed "/code" would (see slashCommandSource in ai/commands.js). Only armed
+// for an utterance that begins at column 0 (mirrors slashCommandSource's own
+// trigger spot); "command" spoken mid-sentence is left as plain text. Matches
+// as soon as "command" is a whole word (word-boundary, so "commander…" is
+// never mistaken for it) — pattern re-evaluated against the full utterance on
+// every partial, so it self-corrects the same way ordinary dictation already
+// flickers as the recognizer's guess improves.
+const VOICE_COMMAND_RE = /^command\b\s*/i;
+
 window.__dictate = function (text, isFinal) {
   const t = text ?? '';
   // Working inside a widget? Route the transcript into that input, not the note.
@@ -364,22 +390,31 @@ window.__dictate = function (text, isFinal) {
   if (view.state.readOnly) return;
   if (!dictRange) {
     const at = view.state.selection.main.from;
-    dictRange = { from: at, to: at };
+    const atLineStart = at === view.state.doc.lineAt(at).from;
+    dictRange = { from: at, to: at, cmdCandidate: atLineStart };
   }
+  const insert = dictRange.cmdCandidate ? t.replace(VOICE_COMMAND_RE, '/') : t;
+  // Tagged as ordinary typing so CodeMirror's own activateOnTyping machinery
+  // opens the slash-command menu the instant `insert` starts with "/" — the
+  // same path a manually-typed "/" goes through, no separate startCompletion
+  // call needed. The distinct sub-event lets the updateListener above tell our
+  // own dispatches apart from a completion pick or any other outside edit.
   view.dispatch({
-    changes: { from: dictRange.from, to: dictRange.to, insert: t },
-    selection: { anchor: dictRange.from + t.length },
+    changes: { from: dictRange.from, to: dictRange.to, insert },
+    selection: { anchor: dictRange.from + insert.length },
     scrollIntoView: true,
+    userEvent: 'input.type.dictation',
   });
   if (isFinal) {
-    const end = dictRange.from + t.length;
+    const end = dictRange.from + insert.length;
     view.dispatch({
       changes: { from: end, insert: ' ' },
       selection: { anchor: end + 1 },
+      userEvent: 'input.type.dictation',
     });
     dictRange = null;
   } else {
-    dictRange.to = dictRange.from + t.length;
+    dictRange.to = dictRange.from + insert.length;
   }
 };
 
