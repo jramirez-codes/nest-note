@@ -246,6 +246,47 @@ window.__setDoc = function (text) {
   });
 };
 
+// --- Speech-to-text dictation -----------------------------------------------
+// The footer mic streams the recognizer's transcript in through these. `text` is
+// the running transcript of the *current* utterance: partial results overwrite
+// the same span in place (dictRange tracks it) so a growing phrase doesn't pile
+// up, and the final result commits the span and drops a trailing space before
+// the next utterance starts a fresh run at the caret. Inserts at the selection
+// but never calls view.focus(), so dictating doesn't raise the soft keyboard.
+let dictRange = null;
+window.__dictate = function (text, isFinal) {
+  // Subject-notebook pages are read-only; never mutate them (also guards a race
+  // where the mic is still delivering as the user swipes onto a read-only page).
+  if (view.state.readOnly) return;
+  const t = text ?? '';
+  if (!dictRange) {
+    const at = view.state.selection.main.from;
+    dictRange = { from: at, to: at };
+  }
+  view.dispatch({
+    changes: { from: dictRange.from, to: dictRange.to, insert: t },
+    selection: { anchor: dictRange.from + t.length },
+    scrollIntoView: true,
+  });
+  if (isFinal) {
+    const end = dictRange.from + t.length;
+    view.dispatch({
+      changes: { from: end, insert: ' ' },
+      selection: { anchor: end + 1 },
+    });
+    dictRange = null;
+  } else {
+    dictRange.to = dictRange.from + t.length;
+  }
+};
+
+// RN calls this when a recognition session ends (a pause, an error, or the user
+// tapping the mic off): abandon the in-progress utterance span so the next chunk
+// of speech starts a fresh insertion at wherever the caret is then.
+window.__dictateEnd = function () {
+  dictRange = null;
+};
+
 // RN calls this on load with every externalized card body for the page (one
 // bundled batch, keyed by id — see NoteEditorWebView), decoded into payloadField
 // so cards render their transcript/output/answer without any per-card round trip.

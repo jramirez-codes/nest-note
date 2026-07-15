@@ -29,6 +29,7 @@ import VirtualNotePage from '../components/notepage/VirtualNotePage';
 import { NotebookBadge, type NotebookOption } from '../components/dashboard/NotebookSwitcher';
 import { useArchivedPages } from '../hooks/useArchivedPages';
 import { useCardDrag } from '../hooks/useCardDrag';
+import { useDictation } from '../hooks/useDictation';
 import { DEFAULT_NOTEBOOK_ID } from '../storage/db';
 import { useNotes } from '../hooks/useNotes';
 import { useNotebookOptions } from '../hooks/useNotebookOptions';
@@ -231,6 +232,17 @@ export default function NotebookScreen() {
 
   // Number of content pages (excludes the trailing dashboard) for the chrome + scrubber.
   const contentCount = subjectSlug ? stubs.length : notes.length;
+
+  // Footer speech-to-text. The mic dictates into the on-screen note, so it's
+  // disabled with nowhere to write: on the trailing dashboard, or on a subject
+  // notebook (whose pages are read-only server pulls). Auto-stop if the user
+  // navigates onto one of those while the mic is live.
+  const { dictating, toggle: toggleDictation, stop: stopDictation } = useDictation();
+  const onDashboard = currentIndex >= contentCount;
+  const dictationDisabled = onDashboard || !!subjectSlug;
+  useEffect(() => {
+    if (dictationDisabled && dictating) stopDictation();
+  }, [dictationDisabled, dictating, stopDictation]);
 
   // Swapping notebooks while reading a page drops the reader on the new notebook's opening
   // page (its Appendix / table of contents) rather than a stale index. While a subject's
@@ -618,6 +630,9 @@ export default function NotebookScreen() {
               onPressProgress={goToPreviousPage}
               scrubWidth={width}
               onScrub={handleScrub}
+              dictating={dictating}
+              dictationDisabled={dictationDisabled}
+              onToggleDictation={toggleDictation}
             />
           </View>
         </View>
