@@ -134,6 +134,58 @@ export function buildNotebookOptions(
   return opts;
 }
 
+// The Markdown scaffold an idea card's body follows: four sections Claude fills in
+// from the notes (see the orchestrator's upsert_card guidance). Shared here so the
+// preview extractor and any future editor seed reference one definition.
+export const IDEA_TEMPLATE = '## Problem\n\n## Idea\n\n## Project plan\n\n## Next steps\n';
+
+// The idea grid's per-card preview: the first non-empty line under the body's
+// "## Problem" section, so a card surfaces the problem it frames rather than the
+// literal "## Problem" heading. Falls back to the first non-heading, non-empty line
+// (for an idea that skipped the template), or '' when there's nothing to show.
+export function ideaPreview(body?: string): string {
+  if (!body) return '';
+  const lines = body.split('\n');
+  const problemAt = lines.findIndex(l => /^#{1,6}\s+problem\b/i.test(l.trim()));
+  if (problemAt >= 0) {
+    for (let i = problemAt + 1; i < lines.length; i++) {
+      const t = lines[i].trim();
+      if (/^#{1,6}\s/.test(t)) break; // hit the next section without any content
+      if (t) return t.replace(/^[-*+]\s+/, '');
+    }
+  }
+  const first = lines.map(l => l.trim()).find(l => l && !/^#{1,6}\s/.test(l));
+  return first ? first.replace(/^[-*+]\s+/, '') : '';
+}
+
+// Roll a set of cards up into their distinct tags with a count each, ordered most-used
+// first then alphabetically — the source for the Ideas section's tag filter bar. Tags
+// are matched case-insensitively but reported in their first-seen spelling.
+export interface TagCount {
+  tag: string;
+  count: number;
+}
+export function tagCounts(cards: DashboardCard[]): TagCount[] {
+  const byKey = new Map<string, TagCount>();
+  for (const c of cards) {
+    for (const raw of c.tags ?? []) {
+      const tag = raw.trim();
+      if (!tag) continue;
+      const key = tag.toLowerCase();
+      const existing = byKey.get(key);
+      if (existing) existing.count++;
+      else byKey.set(key, { tag, count: 1 });
+    }
+  }
+  return [...byKey.values()].sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
+}
+
+// True when a card carries `tag` (case-insensitive) — the predicate behind the tag filter.
+export function cardHasTag(card: DashboardCard, tag: string): boolean {
+  const want = tag.toLowerCase();
+  return (card.tags ?? []).some(t => t.trim().toLowerCase() === want);
+}
+
 // Title-case a kind slug into a section heading, e.g. "reading-list" → "Reading
 // lists". Keeps unknown kinds presentable without any bespoke code.
 export function humanizeKind(kind: string): string {

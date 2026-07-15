@@ -30,7 +30,17 @@ import type { ThemeColors } from '../../theme/colors';
 import type { DashboardCard } from '../../server/controllers/aiController';
 import type { CardDragShared } from '../../hooks/useCardDrag';
 import { deriveTitle, type Note } from '../../types/note';
-import { prio, relDate, type TaskSort } from './cardModel';
+import { ideaPreview, prio, relDate, type TaskSort } from './cardModel';
+
+// The bundle of drag callbacks + shared values every draggable card needs. The
+// dashboard builds this once and spreads it onto each card / section, so the wiring
+// travels as a single prop instead of four.
+export interface CardDragProps {
+  drag: CardDragShared;
+  onLift: (c: DashboardCard) => void;
+  onDrop: (c: DashboardCard) => void;
+  onRelease: () => void;
+}
 
 // Wraps a card in a long-press pan gesture: hold ~220ms to lift it, drag up onto
 // the header (which turns into the delete target, tracked by comparing the finger's
@@ -43,12 +53,8 @@ export function DraggableCard({
   onDrop,
   onRelease,
   children,
-}: {
+}: CardDragProps & {
   card: DashboardCard;
-  drag: CardDragShared;
-  onLift: (c: DashboardCard) => void;
-  onDrop: (c: DashboardCard) => void;
-  onRelease: () => void;
   children: React.ReactNode;
 }) {
   const pan = useMemo(
@@ -410,29 +416,67 @@ export function ArchivedList({
 }
 
 // The generic card, used for ideas and — as the graceful fallback — any unknown
-// kind. A compact grid tile with a colored top accent bar, a kind glyph, and the
-// title. This is what makes the engine scalable: emit a novel kind and it renders.
-export function IdeaCard({ card, dimmed }: { card: DashboardCard; dimmed: boolean }) {
+// kind. A compact grid tile: a tinted priority chip carrying the kind glyph, a small
+// priority label, the title, a preview line drawn from the body's "## Problem"
+// section, and the card's tags as chips (overflow collapses to "+n"). Tapping it
+// opens the card as a full read-only page (see onPress → IdeaPageOverlay). This is
+// what makes the engine scalable: emit a novel kind and it renders.
+export function IdeaCard({
+  card,
+  dimmed,
+  onPress,
+}: {
+  card: DashboardCard;
+  dimmed: boolean;
+  onPress?: (card: DashboardCard) => void;
+}) {
   const p = prio(card.priority);
   const KindIcon = card.kind === 'idea' ? Lightbulb : Sparkles;
+  const preview = ideaPreview(card.body);
+  const tags = card.tags ?? [];
+  const shown = tags.slice(0, 2);
+  const extra = tags.length - shown.length;
   return (
-    <View
+    <Pressable
+      onPress={() => onPress?.(card)}
+      disabled={!onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`Open idea: ${card.title}`}
       collapsable={false}
       className={`mb-3 w-[48%] overflow-hidden rounded-2xl border border-surface1 bg-surface p-3 ${
         dimmed ? 'opacity-30' : ''
       }`}>
-      <View className={`absolute left-0 right-0 top-0 h-1 ${p.pip}`} />
-      <View className="mt-1">
-        <KindIcon size={16} color={p.hex} strokeWidth={2} />
+      {/* Top row: priority as a tinted glyph chip (left) + a small label (right). */}
+      <View className="flex-row items-center justify-between">
+        <View className={`h-8 w-8 items-center justify-center rounded-xl ${p.chip}`}>
+          <KindIcon size={16} color={p.hex} strokeWidth={2} />
+        </View>
+        <View className="flex-row items-center gap-1">
+          <View className={`h-1.5 w-1.5 rounded-full ${p.pip}`} />
+          <Text className={`text-[9px] font-bold uppercase tracking-wide ${p.text}`}>{p.label}</Text>
+        </View>
       </View>
-      <Text className="mt-1.5 text-sm font-semibold text-text" numberOfLines={3}>
+      <Text className="mt-2 text-sm font-semibold text-text" numberOfLines={2}>
         {card.title}
       </Text>
-      {!!card.body && (
+      {!!preview && (
         <Text className="mt-1 text-xs text-muted" numberOfLines={2}>
-          {card.body}
+          {preview}
         </Text>
       )}
-    </View>
+      {tags.length > 0 && (
+        <View className="mt-2 flex-row flex-wrap items-center gap-1.5">
+          {shown.map(t => (
+            <View
+              key={t}
+              className="flex-row items-center rounded-full bg-surface1/60 px-2 py-0.5">
+              <Text className="text-[10px] font-bold text-faint">#</Text>
+              <Text className="text-[10px] font-semibold text-muted">{t}</Text>
+            </View>
+          ))}
+          {extra > 0 && <Text className="text-[10px] font-semibold text-faint">+{extra}</Text>}
+        </View>
+      )}
+    </Pressable>
   );
 }

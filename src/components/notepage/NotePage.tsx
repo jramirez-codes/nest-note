@@ -22,6 +22,9 @@ interface NotePageProps {
   onWidgetExpandChange?: (expanded: boolean) => void;
   /** Notebook this page lives in — /record clips are bucketed by notebook + page id. */
   notebookId: string;
+  /** Render the page read-only (no caret, no edits) — used for server-owned pages
+   *  like an idea card opened from the dashboard, which Claude authors. */
+  readOnly?: boolean;
 }
 
 /**
@@ -42,6 +45,7 @@ function NotePage({
   onOpenPage,
   onWidgetExpandChange,
   notebookId,
+  readOnly = false,
 }: NotePageProps) {
   const handleChangeContent = useCallback(
     (content: string) => onChangeContent(note.id, content),
@@ -77,6 +81,7 @@ function NotePage({
           onWidgetExpandChange={onWidgetExpandChange}
           notebookId={notebookId}
           pageId={note.id}
+          readOnly={readOnly}
         />
       </KeyboardAvoidingView>
     </View>

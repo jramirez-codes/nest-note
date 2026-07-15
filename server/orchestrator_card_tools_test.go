@@ -2,8 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -142,5 +144,74 @@ func TestOrchestratorCardTools(t *testing.T) {
 	notFoundMsg := textOf(t, out, 2)
 	if !strings.Contains(notFoundMsg, "no card found") {
 		t.Fatalf("dismiss_card on an unknown id should say so, got: %s", notFoundMsg)
+	}
+}
+
+// TestOrchestratorIdeaTags drives the generated orchestrator's upsert_card tags
+// handling for idea cards — the field the dashboard's tag filter reads. It proves
+// tags fold case-insensitive duplicates (keeping the first spelling), survive a
+// re-file that omits the field, and clear when an explicit empty array is passed.
+func TestOrchestratorIdeaTags(t *testing.T) {
+	if testing.Short() {
+		t.Skip("scaffold runs go build; skipped in -short")
+	}
+	root := t.TempDir()
+	mcpDir := filepath.Join(root, "mcp")
+	stateDir := filepath.Join(root, "orchestrator", "state")
+	if _, err := scaffoldRoot(root, 4); err != nil {
+		t.Fatalf("scaffoldRoot failed: %v", err)
+	}
+	orchBin := filepath.Join(root, "orchestrator", "bin", "orchestrator")
+
+	run := func(in string) {
+		t.Helper()
+		cmd := exec.Command(orchBin, "-mcp-dir", mcpDir, "-state-dir", stateDir, "-threshold", "4")
+		cmd.Stdin = strings.NewReader(in)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("orchestrator run failed: %v\n%s", err, out)
+		}
+	}
+	handshake := rpcLine(t, 1, "initialize", map[string]any{"protocolVersion": "2025-06-18"}) +
+		rpcLine(t, 0, "notifications/initialized", nil)
+
+	const ideaID = "idea-offline-sync"
+	readTags := func() []string {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(mcpDir, "labs", "cards", ideaID+".json"))
+		if err != nil {
+			t.Fatalf("read idea card: %v", err)
+		}
+		var c dashCard
+		if err := json.Unmarshal(data, &c); err != nil {
+			t.Fatalf("unmarshal idea card: %v", err)
+		}
+		return c.Tags
+	}
+
+	// File an idea with tags, including a case-variant duplicate that must fold to one.
+	run(handshake + cardCall(t, 2, "upsert_card", map[string]any{
+		"kind": "idea", "title": "Offline sync", "priority": "normal", "source": "labs",
+		"id": ideaID, "tags": []any{"ux", "Sync", "sync"},
+		"body": "## Problem\nNotes stall offline.\n## Idea\nQueue locally.",
+	}))
+	if got := readTags(); !reflect.DeepEqual(got, []string{"ux", "Sync"}) {
+		t.Fatalf("tags should fold case-insensitive dupes keeping first spelling, got: %v", got)
+	}
+
+	// Re-file the same idea WITHOUT a tags field — the existing tags must survive.
+	run(handshake + cardCall(t, 2, "upsert_card", map[string]any{
+		"kind": "idea", "title": "Offline sync", "priority": "high", "source": "labs", "id": ideaID,
+	}))
+	if got := readTags(); !reflect.DeepEqual(got, []string{"ux", "Sync"}) {
+		t.Fatalf("re-filing without a tags field should keep the existing tags, got: %v", got)
+	}
+
+	// Re-file with an explicit empty array — the tags are cleared.
+	run(handshake + cardCall(t, 2, "upsert_card", map[string]any{
+		"kind": "idea", "title": "Offline sync", "priority": "high", "source": "labs",
+		"id": ideaID, "tags": []any{},
+	}))
+	if got := readTags(); len(got) != 0 {
+		t.Fatalf("an explicit empty tags array should clear the tags, got: %v", got)
 	}
 }

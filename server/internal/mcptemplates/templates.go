@@ -567,6 +567,7 @@ type card struct {
 	Date      string         %BT%json:"date,omitempty"%BT%
 	Title     string         %BT%json:"title"%BT%
 	Body      string         %BT%json:"body,omitempty"%BT%
+	Tags      []string       %BT%json:"tags,omitempty"%BT%
 	Payload   map[string]any %BT%json:"payload,omitempty"%BT%
 	Done      bool           %BT%json:"done"%BT%
 	Dismissed bool           %BT%json:"dismissed"%BT%
@@ -644,13 +645,14 @@ func main() {
 	})
 	s.AddTool(mcpx.Tool{
 		Name:        "upsert_card",
-		Description: "Create or update a dashboard card from the notes, or from a conversation about an existing subject (e.g. during /talk). Use kind=\"task\" for action items the user must do (with a due date if one is stated). Set priority as an honest urgency judgment: urgent, high, normal, or low. Idempotent: omit id and the same title+kind always maps to the same card, so re-running /ingest — or editing the same task again later — updates rather than duplicates. Call list_cards first to avoid making a near-duplicate of an existing card, or to find the id of a task the user wants changed. Pass done=true/false to mark a task complete or reopen it. Note: kind=\"notification\" is retired — do not use it; file a task instead.",
+		Description: "Create or update a dashboard card from the notes, or from a conversation about an existing subject (e.g. during /talk). Use kind=\"task\" for action items the user must do (with a due date if one is stated). Use kind=\"idea\" for a proposal, feature, or thought worth keeping — for an idea, structure the body as Markdown with these four sections, filling in what the notes support:\\n## Problem\\n## Idea\\n## Project plan\\n## Next steps\\nand attach 1–4 short lowercase tags (e.g. ux, sync, ai) so it can be filtered on the dashboard. Set priority as an honest urgency (for an idea, how promising/pressing it is): urgent, high, normal, or low. Idempotent: omit id and the same title+kind always maps to the same card, so re-running /ingest — or revisiting the same idea later — updates rather than duplicates (omitting tags on a re-file keeps the existing ones). Call list_cards first to avoid a near-duplicate, or to find the id of a card the user wants changed. Pass done=true/false to mark a task complete or reopen it. Note: kind=\"notification\" is retired — do not use it; file a task instead.",
 		InputSchema: mcpx.ObjectSchema(map[string]any{
-			"kind":     map[string]any{"type": "string", "description": "task, or any future kind (notification is retired)"},
+			"kind":     map[string]any{"type": "string", "description": "task, idea, or any future kind (notification is retired)"},
 			"title":    map[string]any{"type": "string", "description": "short one-line card title"},
 			"priority": map[string]any{"type": "string", "description": "urgent | high | normal | low"},
 			"date":     map[string]any{"type": "string", "description": "optional ISO date (YYYY-MM-DD): due date for a task"},
-			"body":     map[string]any{"type": "string", "description": "optional extra detail or context"},
+			"body":     map[string]any{"type": "string", "description": "optional extra detail or context. For kind=\"idea\", the Markdown template body (## Problem / ## Idea / ## Project plan / ## Next steps)."},
+			"tags":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "optional freeform lowercase labels for filtering (best for ideas), e.g. [\"ux\",\"sync\"]. Omit on a re-file to keep the card's existing tags."},
 			"payload":  map[string]any{"type": "object", "description": "optional kind-specific extras, stored opaquely"},
 			"source":   map[string]any{"type": "string", "description": "optional subject slug the card came from"},
 			"id":       map[string]any{"type": "string", "description": "optional stable id; omit to derive one from title+kind"},
@@ -1104,6 +1106,24 @@ func upsertCard(args map[string]any) (string, error) {
 	if b, ok := args["done"].(bool); ok {
 		done = b
 	}
+	// Tags are the freeform labels a card (chiefly an idea) is filed under, powering
+	// the dashboard's tag filter. An absent "tags" key keeps whatever the previous
+	// version had, so re-ingesting a card without restating its tags never strips
+	// them; an explicit array (even empty) replaces them. Dupes are folded
+	// case-insensitively while keeping each tag's first-seen spelling.
+	tags := prev.Tags
+	if raw, ok := args["tags"].([]any); ok {
+		tags = []string{}
+		seen := map[string]bool{}
+		for _, v := range raw {
+			t := strings.TrimSpace(fmt.Sprintf("%v", v))
+			if t == "" || seen[strings.ToLower(t)] {
+				continue
+			}
+			seen[strings.ToLower(t)] = true
+			tags = append(tags, t)
+		}
+	}
 	c := card{
 		ID:        id,
 		Kind:      kind,
@@ -1111,6 +1131,7 @@ func upsertCard(args map[string]any) (string, error) {
 		Date:      strings.TrimSpace(date),
 		Title:     title,
 		Body:      strings.TrimSpace(body),
+		Tags:      tags,
 		Payload:   payload,
 		Done:      done,
 		Dismissed: prev.Dismissed,

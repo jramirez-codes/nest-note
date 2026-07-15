@@ -17,8 +17,10 @@ import Animated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../theme/colors';
 import DashboardPage from '../components/dashboard/DashboardPage';
+import type { DashboardCard } from '../server/controllers/aiController';
 import DeleteDragOverlay from '../components/modals/DeleteDragOverlay';
 import ArchivedPageOverlay from '../components/notepage/ArchivedPageOverlay';
+import IdeaPageOverlay from '../components/notepage/IdeaPageOverlay';
 import NoteHeader from '../components/notepage/NoteHeader';
 import NotePage from '../components/notepage/NotePage';
 import PageIndicator from '../components/notepage/PageIndicator';
@@ -82,6 +84,11 @@ export default function NotebookScreen() {
   // notebook, so they're keyed off the default notebook regardless of which subject
   // is being read.
   const archive = useArchivedPages(DEFAULT_NOTEBOOK_ID);
+
+  // A card (an idea) opened from the dashboard as a full read-only page, or null.
+  // Lives here (like the archived page above) so it can be presented full-screen
+  // over the whole pad.
+  const [openIdea, setOpenIdea] = useState<DashboardCard | null>(null);
 
   // `/archive` fired on a pad note: the editor bridge already persisted the archived
   // copy, so just lift the note off the pad and refresh the dashboard's Archived list.
@@ -410,6 +417,7 @@ export default function NotebookScreen() {
             selectedNb={selectedNb}
             archivedPages={archive.archived}
             onOpenArchived={archive.openArchived}
+            onOpenIdea={setOpenIdea}
           />
         );
       }
@@ -664,6 +672,12 @@ export default function NotebookScreen() {
             handleOpenPage(slug, title);
           }}
         />
+      )}
+
+      {/* A card (an idea) opened from the dashboard, shown full-screen and read-only
+          over the pad — Claude owns the content, so it's viewed, not edited here. */}
+      {openIdea && (
+        <IdeaPageOverlay card={openIdea} width={width} onClose={() => setOpenIdea(null)} />
       )}
     </View>
   );

@@ -37,6 +37,26 @@ export interface AskContext {
   turns?: { q?: string; a?: string }[];
 }
 
+// Prepended to every /ask + /chat run so a plain chat doubles as a brainstorming
+// surface: Claude answers normally, but when the user wants an idea kept it files
+// one as a dashboard idea card (the orchestrator MCP is always attached server-side,
+// so upsert_card is available). Deliberately conservative — it captures on an
+// explicit "save this"/"add as an idea" or a clearly-settled keeper, NOT on ordinary
+// questions — so a normal chat never litters the dashboard with cards.
+const IDEA_CAPTURE =
+  'You are chatting with the user — often to think out loud and brainstorm. Answer ' +
+  'normally and conversationally. When the user asks you to save, keep, capture, or ' +
+  '"add as an idea" something from the conversation — or clearly settles on an idea ' +
+  "worth keeping — file it on their dashboard by calling the orchestrator's upsert_card " +
+  'tool with kind="idea": a short title, an honest priority (urgent | high | normal | ' +
+  'low), 1–4 short lowercase tags for filtering (e.g. ux, sync, ai), and a Markdown ' +
+  'body with the sections "## Problem", "## Idea", "## Project plan", and "## Next ' +
+  "steps\" filled in from what you discussed (leave a section empty when it wasn't " +
+  'covered). If the chat is clearly about one subject, set source to its lowercase ' +
+  'slug. Reuse the same card id to refine an idea instead of duplicating it. Do NOT ' +
+  'file cards for ordinary questions — only when an idea is worth keeping — and confirm ' +
+  'in one short line when you do.\n\n';
+
 // Each run is a fresh `claude -p` (no server-side session), so a follow-up must
 // carry its own context: fold the prior exchange(s) into the prompt Claude
 // receives. The card still shows only the raw follow-up question.
@@ -47,13 +67,15 @@ function buildPrompt(question: string, context?: AskContext): string {
       .map(t => `User: ${t.q}\n\nAssistant: ${t.a || ''}`)
       .join('\n\n');
     return (
+      IDEA_CAPTURE +
       `You are continuing a conversation. Here is the conversation so far:\n\n` +
       `${history}\n\n` +
       `Now answer this follow-up:\n\n${question}`
     );
   }
-  if (!context || !context.q) return question;
+  if (!context || !context.q) return IDEA_CAPTURE + question;
   return (
+    IDEA_CAPTURE +
     `You are continuing a conversation. Earlier you were asked:\n\n${context.q}\n\n` +
     (context.a ? `You answered:\n\n${context.a}\n\n` : '') +
     `Now answer this follow-up:\n\n${question}`
@@ -280,7 +302,14 @@ function buildTalkPrompt(subject: string, question: string, context?: AskContext
     'that same card\'s id. To mark one done or reopen it, call upsert_card with that id and ' +
     'done=true/false. To remove one entirely (the user says delete/drop/cancel it), call ' +
     'dismiss_card with its id. Do this quietly and confirm briefly in your reply — do not ask ' +
-    'the user to go to the dashboard to make a change they already asked you for in words.\n\n';
+    'the user to go to the dashboard to make a change they already asked you for in words.\n\n' +
+    'Ideas work the same way: when the user shares a genuine idea, proposal, or feature worth ' +
+    `keeping about ${subject} (a thought to revisit, not an action item), file it with ` +
+    'upsert_card kind="idea", structuring the body as Markdown with the sections "## Problem", ' +
+    '"## Idea", "## Project plan", and "## Next steps" (fill in what was said, leave a section ' +
+    'empty when it wasn\'t covered), attaching 1–4 short lowercase tags for filtering and an ' +
+    'honest priority. Confirm briefly, and reuse a card id to update an idea rather than ' +
+    'duplicating it.\n\n';
   const turns = context?.turns?.filter(t => t.q);
   if (turns && turns.length) {
     const history = turns.map(t => `User: ${t.q}\n\nAssistant: ${t.a || ''}`).join('\n\n');
@@ -344,7 +373,14 @@ function buildIngestPrompt(pageText: string): string {
     'needs to do, attaching a date when a due date is stated. Set priority ' +
     '(urgent | high | normal | low) as an honest urgency judgment, and set source to ' +
     'the subject slug the card came from. Only make cards for genuine tasks — not ' +
-    'for every note.\n\n' +
+    'for every note.\n' +
+    '6. Capture any genuine idea, proposal, or feature worth keeping (a thought to ' +
+    'revisit later — not an action item) as a card with upsert_card kind="idea": ' +
+    'structure the body as Markdown with the sections "## Problem", "## Idea", ' +
+    '"## Project plan", and "## Next steps", filling in what the notes support and ' +
+    "leaving a section empty when the notes don't cover it; attach 1–4 short " +
+    'lowercase tags for filtering (e.g. ux, sync, ai); set source to the subject ' +
+    'slug and an honest priority. Only for real ideas — not every passing musing.\n\n' +
     'When finished, reply with a single short line summarizing what you filed and ' +
     'where. Do not ask questions.\n\n<notes>\n' +
     pageText +

@@ -84,6 +84,7 @@ type dashCard struct {
 	Date      string         `json:"date,omitempty"`
 	Title     string         `json:"title"`
 	Body      string         `json:"body,omitempty"`
+	Tags      []string       `json:"tags,omitempty"`
 	Payload   map[string]any `json:"payload,omitempty"`
 	Done      bool           `json:"done"`
 	Dismissed bool           `json:"dismissed"`

@@ -69,6 +69,8 @@ export interface DashboardCard {
   date?: string;
   title: string;
   body?: string;
+  /** Freeform lowercase labels for filtering (chiefly on idea cards). */
+  tags?: string[];
   payload?: Record<string, unknown>;
   done?: boolean;
   dismissed?: boolean;
