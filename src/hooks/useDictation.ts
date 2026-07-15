@@ -51,9 +51,26 @@ const LANGUAGE = 'en-US';
  *  continuous. */
 const RESTART_DELAY_MS = 350;
 
-/** After this many recognizer errors with no result in between, give up instead
- *  of restarting into the same failure forever (e.g. a persistent busy/server). */
-const MAX_CONSECUTIVE_ERRORS = 4;
+/** Backstop for a session that goes silent with no callback at all. The restart
+ *  loop is driven by the recognizer's end/result/error events; if a session ever
+ *  ends without emitting any of them (a swallowed timeout on an old build, or the
+ *  platform recognizer simply hanging), nothing re-listens and the mic goes stale.
+ *  If this long since the last sign of life while we still want the mic on, force a
+ *  re-listen. Comfortably longer than a normal silence-gap-plus-restart so it never
+ *  fires mid-session — partial results keep poking it while the user is speaking. */
+const WATCHDOG_MS = 8000;
+
+/** Ceiling on the error backoff. After an error we wait before re-listening, and
+ *  that wait grows with each consecutive error (RESTART_DELAY_MS × 2ⁿ) so we stop
+ *  hammering a recognizer that keeps failing — a burst of ERROR_RECOGNIZER_BUSY /
+ *  ERROR_CLIENT (the audio device not yet released after a rapid restart) or a
+ *  flaky network recognizer settles instead of tripping an instant give-up. */
+const MAX_BACKOFF_MS = 4000;
+
+/** Give up (and tell the user) only if errors keep coming for this long with no
+ *  successful result in between — a genuinely broken session, not a transient blip.
+ *  Time-based, not a raw count, so backed-off retries get a fair chance to recover. */
+const ERROR_GIVEUP_MS = 20000;
 
 /** Errors that mean this device/session can never dictate — stop and tell the
  *  user, rather than restarting into the same failure forever. */
@@ -78,8 +95,14 @@ export function useDictation(): Dictation {
   const wantOnRef = useRef(false);
   // Pending debounced restart, so an end-then-final pair coalesces into one.
   const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Consecutive recognizer errors since the last result — a runaway-loop backstop.
+  // Watchdog that force-restarts a session which stalled without any callback.
+  const watchdogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Consecutive recognizer errors since the last result — drives the restart
+  // backoff and (with errorSinceRef) the give-up window.
   const errorCountRef = useRef(0);
+  // When the current run of consecutive errors began (ms epoch), or 0 if the last
+  // event was a success. Used to give up only after errors persist for a while.
+  const errorSinceRef = useRef(0);
   // Whether we currently hold a CPU wake-lock share. One share per dictation
   // session (not per recognizer restart), released once however the session ends —
   // this ref keeps take/drop balanced no matter which stop path fires.
@@ -110,10 +133,18 @@ export function useDictation(): Dictation {
     }
   }, []);
 
+  const clearWatchdog = useCallback(() => {
+    if (watchdogTimerRef.current) {
+      clearTimeout(watchdogTimerRef.current);
+      watchdogTimerRef.current = null;
+    }
+  }, []);
+
   const hardStop = useCallback(
     (reason?: string) => {
       wantOnRef.current = false;
       clearRestart();
+      clearWatchdog();
       dropWakeLock();
       setDictating(false);
       stopRecognizer().catch(() => {});
@@ -122,8 +153,27 @@ export function useDictation(): Dictation {
       setDictationLive(false);
       if (reason) Alert.alert('Speech to text', reason);
     },
-    [clearRestart, dropWakeLock],
+    [clearRestart, clearWatchdog, dropWakeLock],
   );
+
+  // Latest scheduleRestart, so the watchdog can re-listen without a useCallback
+  // cycle (scheduleRestart arms the watchdog; the watchdog restarts).
+  const scheduleRestartRef = useRef<() => void>(() => {});
+
+  // (Re)start the stall watchdog. Armed on every sign of life from the recognizer
+  // (any result/end/error) and whenever a session is (re)started, so it counts down
+  // only during dead air. If it ever elapses while we still want the mic on, the
+  // session stalled without signalling an end — force a re-listen so the mic can't
+  // stay silently stuck. A no-op once the user has toggled off.
+  const armWatchdog = useCallback(() => {
+    clearWatchdog();
+    if (!wantOnRef.current) return;
+    watchdogTimerRef.current = setTimeout(() => {
+      watchdogTimerRef.current = null;
+      if (!wantOnRef.current) return;
+      scheduleRestartRef.current();
+    }, WATCHDOG_MS);
+  }, [clearWatchdog]);
 
   // Re-listen for the next phrase, debounced. Both the end event (which precedes
   // the final result) and the final result itself schedule this; coalescing means
@@ -133,13 +183,23 @@ export function useDictation(): Dictation {
   const scheduleRestart = useCallback(() => {
     if (!wantOnRef.current) return;
     clearRestart();
+    // Back off while errors are piling up so we don't hammer a busy/failing
+    // recognizer; snap back to the short gap as soon as a result clears the count.
+    const delay =
+      errorCountRef.current > 0
+        ? Math.min(RESTART_DELAY_MS * 2 ** errorCountRef.current, MAX_BACKOFF_MS)
+        : RESTART_DELAY_MS;
     restartTimerRef.current = setTimeout(() => {
       restartTimerRef.current = null;
       if (!wantOnRef.current) return;
       injectIntoActiveEditor('window.__dictateEnd();');
       start({ language: LANGUAGE }).catch(() => hardStop('Dictation stopped unexpectedly.'));
-    }, RESTART_DELAY_MS);
-  }, [clearRestart, hardStop]);
+      // Guard the freshly-started session too, so a restart that hears only
+      // silence (no callback) re-listens rather than going stale.
+      armWatchdog();
+    }, delay);
+  }, [clearRestart, hardStop, armWatchdog]);
+  scheduleRestartRef.current = scheduleRestart;
 
   // Wire the recognizer's streams once. The listeners read wantOnRef so they see
   // the current intent even after re-renders, so this never needs to re-subscribe.
@@ -147,6 +207,8 @@ export function useDictation(): Dictation {
     const onResult = addSpeechResultListener((r: SpeechResult) => {
       if (!wantOnRef.current) return;
       errorCountRef.current = 0;
+      errorSinceRef.current = 0; // a result clears the error run
+      armWatchdog(); // a live session — reset the stall timer
       const text = r.transcript ?? '';
       // A blank partial early in a phrase carries no text — skip it so we don't
       // open an empty utterance span.
@@ -163,11 +225,14 @@ export function useDictation(): Dictation {
     // here (the final still needs to replace it); just line up the restart, which
     // the pending final will re-coalesce so it runs after the text commits.
     const onEnd = addSpeechEndListener(() => {
-      if (wantOnRef.current) scheduleRestart();
+      if (!wantOnRef.current) return;
+      armWatchdog();
+      scheduleRestart();
     });
 
     const onError = addSpeechErrorListener((e: SpeechError) => {
       if (!wantOnRef.current) return;
+      if (__DEV__) console.warn(`[ainotepad] dictation recognizer error: ${e.code}`, e.message);
       if (FATAL_ERRORS.has(String(e.code))) {
         hardStop(
           e.code === SpeechErrorCode.PERMISSION_DENIED
@@ -177,10 +242,14 @@ export function useDictation(): Dictation {
         return;
       }
       // Transient (recognizer busy, a network blip). Native swallows no-match /
-      // speech-timeout, so anything here is a real hiccup: restart, but bail if
-      // they pile up with no successful result between them.
+      // speech-timeout, so anything here is a real hiccup: restart with backoff so
+      // we don't hammer it, and give up only if the failures keep coming for a
+      // sustained stretch with no successful result between them.
+      armWatchdog();
+      const now = Date.now();
+      if (errorSinceRef.current === 0) errorSinceRef.current = now;
       errorCountRef.current += 1;
-      if (errorCountRef.current > MAX_CONSECUTIVE_ERRORS) {
+      if (now - errorSinceRef.current > ERROR_GIVEUP_MS) {
         hardStop('Dictation keeps failing — stopped.');
         return;
       }
@@ -192,6 +261,7 @@ export function useDictation(): Dictation {
       onEnd.remove();
       onError.remove();
       clearRestart();
+      clearWatchdog();
       // Don't leave the mic hot — or the wake lock held — if the screen unmounts
       // mid-session (this path bypasses hardStop).
       dropWakeLock();
@@ -200,7 +270,7 @@ export function useDictation(): Dictation {
         stopRecognizer().catch(() => {});
       }
     };
-  }, [hardStop, scheduleRestart, clearRestart, dropWakeLock]);
+  }, [hardStop, scheduleRestart, armWatchdog, clearRestart, clearWatchdog, dropWakeLock]);
 
   const startDictation = useCallback(async () => {
     if (!hasActiveEditor()) {
@@ -217,6 +287,7 @@ export function useDictation(): Dictation {
         return;
       }
       errorCountRef.current = 0;
+      errorSinceRef.current = 0;
       wantOnRef.current = true;
       // Hold the CPU awake before the mic goes live; hardStop drops it on any exit.
       takeWakeLock();
@@ -227,10 +298,13 @@ export function useDictation(): Dictation {
       setDictationLive(true);
       Keyboard.dismiss();
       await start({ language: LANGUAGE });
+      // Guard the very first session too: if it produces no callback at all, the
+      // watchdog re-listens rather than letting the mic sit dead from the start.
+      armWatchdog();
     } catch {
       hardStop('Could not start dictation.');
     }
-  }, [hardStop, takeWakeLock]);
+  }, [hardStop, takeWakeLock, armWatchdog]);
 
   const toggle = useCallback(() => {
     if (wantOnRef.current) {
