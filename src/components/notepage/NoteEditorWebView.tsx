@@ -13,6 +13,7 @@ import { stopPlayback, onPlaybackEnded } from '../../server/controllers/audioCon
 import ConfirmDialog from '../modals/ConfirmDialog';
 import QrPairModal from '../modals/QrPairModal';
 import { handleEditorMessage } from './noteEditorBridge';
+import { registerActiveEditor } from './activeEditor';
 
 // react-native-webview@14's class-component typings resolve to `never` under
 // React 19's JSX types (RN 0.86), so re-type it as a normal component. Runtime
@@ -211,6 +212,15 @@ export default function NoteEditorWebView({
       ref.current?.injectJavaScript('document.activeElement?.blur(); true;');
     }
   }, [isActive]);
+
+  // Register this WebView as the footer mic's dictation target while it's the
+  // on-screen, editable page, so transcribed speech streams into it (see
+  // activeEditor + useDictation). Read-only subject pages never register, so
+  // dictation there no-ops instead of mutating an immutable page.
+  useEffect(() => {
+    if (!isActive || readOnly) return;
+    return registerActiveEditor(js => ref.current?.injectJavaScript(js));
+  }, [isActive, readOnly]);
 
   // Keep the editor's DOM focus in sync with the keyboard. When the user hides
   // the keyboard (system Back button, swipe-down) without leaving the note, the

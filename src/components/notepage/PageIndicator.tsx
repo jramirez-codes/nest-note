@@ -8,6 +8,8 @@ import {
   View,
 } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { Mic } from 'lucide-react-native';
+import { useTheme } from '../../theme/colors';
 
 interface PageIndicatorProps {
   /** Zero-based index of the active page, spanning notes then the new-note sheet. */
@@ -24,6 +26,13 @@ interface PageIndicatorProps {
   scrubWidth: number;
   /** Jump to a note page while the user scrubs the progress bubble. */
   onScrub: (index: number) => void;
+  /** Whether the speech-to-text mic is currently live. */
+  dictating: boolean;
+  /** Disable the mic (e.g. on the dashboard or a read-only subject page, where
+   *  there's no editable note to dictate into). */
+  dictationDisabled: boolean;
+  /** Toggle the speech-to-text mic on/off. */
+  onToggleDictation: () => void;
 }
 
 /** Displacement (px) from the press point before paging starts — a dead zone so
@@ -81,7 +90,11 @@ function PageIndicator({
   onPressProgress,
   scrubWidth,
   onScrub,
+  dictating,
+  dictationDisabled,
+  onToggleDictation,
 }: PageIndicatorProps) {
+  const colors = useTheme();
   const onDashboard = currentIndex >= noteCount;
   // On a note the bar tracks the current page; on the dashboard it previews the
   // page a tap would return to, so the bubble shows where you're headed.
@@ -351,6 +364,29 @@ function PageIndicator({
           }>
           Dashboard
         </Text>
+      </Pressable>
+
+      {/* Speech-to-text mic — starts/stops dictation into the active note. Sits
+          next to the Dashboard bubble; disabled (dimmed, non-interactive) when
+          there's no editable note to dictate into (the dashboard, or a read-only
+          subject page). Accent-filled while live so it reads as "recording". */}
+      <Pressable
+        onPress={dictationDisabled ? undefined : onToggleDictation}
+        disabled={dictationDisabled}
+        accessibilityRole="button"
+        accessibilityLabel={dictating ? 'Stop dictation' : 'Start dictation'}
+        accessibilityState={{ disabled: dictationDisabled, selected: dictating }}
+        hitSlop={8}
+        className={
+          'h-9 w-9 items-center justify-center rounded-full ' +
+          (dictating ? 'bg-accent' : 'bg-surface') +
+          (dictationDisabled ? ' opacity-40' : ' active:opacity-70')
+        }>
+        <Mic
+          size={16}
+          strokeWidth={2.5}
+          color={dictating ? colors.background : colors.faint}
+        />
       </Pressable>
     </View>
   );

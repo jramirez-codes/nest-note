@@ -17,6 +17,16 @@
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
 
+    <!-- Speech-to-text dictation (footer mic). Android 11+ (API 30) package
+         visibility hides the speech recognition service unless we declare an
+         intent query for it, so without this isAvailable()/start() fail on
+         modern devices even though RECORD_AUDIO is granted. -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
+
     <application
       android:name=".MainApplication"
       android:label="@string/app_name"
