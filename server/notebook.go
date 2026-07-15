@@ -345,6 +345,66 @@ func mergeNotebookPages(mcpDir, from, into string) error {
 	return rebuildAppendix(mcpDir, into)
 }
 
+// reorgPage is one proposed content page in a reorg proposal: a title and the full
+// markdown body it should hold. It mirrors the JSON the orchestrator's propose_reorg
+// tool writes under state/reorgs/<subject>.json.
+type reorgPage struct {
+	Title string `json:"title"`
+	Body  string `json:"body"`
+}
+
+// applyReorg replaces a notebook's content pages with the proposed set `pages`, in the
+// given order (numbered #1..#N), while preserving every Task Log page — a live database
+// of dismissed tasks — untouched and keeping them as the notebook's last pages. Any
+// proposed page whose title is a Task Log title is skipped: Task Log content only ever
+// comes from the dismissal path, never a reorg. Rebuilds the Appendix and bumps
+// updated_at. slug must already be validSlug.
+func applyReorg(mcpDir, slug string, pages []reorgPage) error {
+	dir := notesDirFor(mcpDir, slug)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	// Drop every current content page file, but keep the Appendix (#0) and every Task
+	// Log page exactly as they are on disk.
+	for _, p := range listPages(mcpDir, slug) {
+		if p.Num == appendixNum {
+			continue
+		}
+		if _, isLog := taskLogSeq(p.Title); isLog {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, p.File)); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	// Write the proposed pages as #1..#N. A Task Log title in the proposal is skipped so
+	// a reorg can never author a fake log page (proposeReorg already strips these; this
+	// is the server-side guarantee).
+	num := 1
+	for _, pg := range pages {
+		title := sanitizePageTitle(pg.Title)
+		if _, isLog := taskLogSeq(title); isLog {
+			continue
+		}
+		body := pg.Body
+		if !strings.HasSuffix(body, "\n") {
+			body += "\n"
+		}
+		if err := os.WriteFile(filepath.Join(dir, pageFileName(num, title)), []byte(body), 0o644); err != nil {
+			return err
+		}
+		num++
+	}
+	// Slide the preserved Task Log pages to sit after the new content pages, in order.
+	if err := pushTaskLogPagesAfter(mcpDir, slug, num-1, listPages(mcpDir, slug)); err != nil {
+		return err
+	}
+	if err := rebuildAppendix(mcpDir, slug); err != nil {
+		return err
+	}
+	return touchNotebook(mcpDir, slug, "")
+}
+
 // seedOrchestratorNotebook makes mcp/orchestrator a viewable, data-only notebook: a
 // manifest, an About page, and an Appendix — but deliberately no generated query
 // server (that name belongs to the real orchestrator MCP). Idempotent: identity and

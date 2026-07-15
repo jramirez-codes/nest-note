@@ -1,15 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   applyDashboardAction,
+  applyReorgAction,
   completeCard,
   dismissCard,
   fetchDashboardState,
   getCachedDashboardState,
   setCachedDashboardState,
   type DashboardCard,
+  type DashboardReorg,
   type DashboardState,
   type DashboardSuggestion,
 } from '../../server/controllers/aiController';
+
+// Busy-map key for a reorg action, namespaced so a reorg's subject slug can't collide
+// with a card id or a merge suggestion's `into` slug in the shared busy map.
+const reorgKey = (subject: string) => `reorg:${subject}`;
 
 /**
  * DashboardPage's data layer: fetching/caching the dashboard state and the three
@@ -127,6 +133,27 @@ export function useDashboardData(isActive: boolean) {
     [load],
   );
 
+  // Apply or dismiss a notebook's pending page-reorganization proposal. Mirrors `act`:
+  // drop the proposal locally either way, and on apply refetch (the notebook's pages
+  // were just rewritten server-side, so counts and the pad's pages need reconciling).
+  const actReorg = useCallback(
+    async (r: DashboardReorg, action: 'reorg' | 'reorg-dismiss') => {
+      setBusy(b => ({ ...b, [reorgKey(r.subject)]: true }));
+      try {
+        await applyReorgAction(r.subject, action);
+        setState(prev =>
+          prev ? { ...prev, reorgs: prev.reorgs.filter(x => x.subject !== r.subject) } : prev,
+        );
+        if (action === 'reorg') load('refresh');
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setBusy(b => ({ ...b, [reorgKey(r.subject)]: false }));
+      }
+    },
+    [load],
+  );
+
   // Toggle a task's done state with an optimistic flip, reverted if the write fails.
   const onToggle = useCallback(
     (card: DashboardCard) => {
@@ -153,5 +180,5 @@ export function useDashboardData(isActive: boolean) {
     [withOptimisticUpdate],
   );
 
-  return { state, error, loading, refreshing, busy, load, act, onToggle, onDismiss };
+  return { state, error, loading, refreshing, busy, load, act, actReorg, onToggle, onDismiss };
 }

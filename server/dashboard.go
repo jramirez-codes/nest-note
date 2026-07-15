@@ -93,10 +93,94 @@ type dashCard struct {
 	UpdatedAt string         `json:"updated_at"`
 }
 
+// dashReorg is a pending page-reorganization proposal for one notebook, dropped by the
+// orchestrator's propose_reorg tool. The user approves or dismisses it in the dashboard;
+// FromPages/ToPages give the confirm card a "N pages → M pages" summary (both counts
+// exclude the Appendix and the protected Task Log pages).
+type dashReorg struct {
+	Subject   string `json:"subject"`
+	Summary   string `json:"summary"`
+	FromPages int    `json:"from_pages"`
+	ToPages   int    `json:"to_pages"`
+}
+
 type dashState struct {
 	Servers     []dashServer     `json:"servers"`
 	Suggestions []dashSuggestion `json:"suggestions"`
+	Reorgs      []dashReorg      `json:"reorgs"`
 	Cards       []dashCard       `json:"cards"`
+}
+
+// reorgProposal is the on-disk shape of state/reorgs/<subject>.json: the target subject,
+// a one-line summary, and the full intended set of content pages.
+type reorgProposal struct {
+	Subject string      `json:"subject"`
+	Summary string      `json:"summary"`
+	Pages   []reorgPage `json:"pages"`
+}
+
+// loadReorg reads a notebook's pending reorg proposal, if any.
+func loadReorg(stateDir, subject string) (reorgProposal, bool) {
+	data, err := os.ReadFile(filepath.Join(stateDir, "reorgs", subject+".json"))
+	if err != nil {
+		return reorgProposal{}, false
+	}
+	var p reorgProposal
+	if json.Unmarshal(data, &p) != nil {
+		return reorgProposal{}, false
+	}
+	if p.Subject == "" {
+		p.Subject = subject
+	}
+	return p, true
+}
+
+// contentPageCount counts a notebook's content pages, excluding the Appendix and every
+// Task Log page — the pages a reorg actually replaces.
+func contentPageCount(mcpDir, slug string) int {
+	n := 0
+	for _, p := range listPages(mcpDir, slug) {
+		if p.Num == appendixNum {
+			continue
+		}
+		if _, isLog := taskLogSeq(p.Title); isLog {
+			continue
+		}
+		n++
+	}
+	return n
+}
+
+// toDashReorg turns an on-disk proposal into the dashboard's view, computing the current
+// content-page count for the "N pages → M pages" confirm summary.
+func toDashReorg(mcpDir string, p reorgProposal) dashReorg {
+	return dashReorg{
+		Subject:   p.Subject,
+		Summary:   p.Summary,
+		FromPages: contentPageCount(mcpDir, p.Subject),
+		ToPages:   len(p.Pages),
+	}
+}
+
+// readReorgs collects every pending reorg proposal under stateDir/reorgs, as the
+// dashboard's view, sorted by subject.
+func readReorgs(mcpDir, stateDir string) []dashReorg {
+	out := []dashReorg{}
+	entries, err := os.ReadDir(filepath.Join(stateDir, "reorgs"))
+	if err != nil {
+		return out
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		subject := strings.TrimSuffix(e.Name(), ".json")
+		if p, ok := loadReorg(stateDir, subject); ok {
+			out = append(out, toDashReorg(mcpDir, p))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Subject < out[j].Subject })
+	return out
 }
 
 // rootDirs derives the mcp and orchestrator-state directories from -root, matching
@@ -118,7 +202,7 @@ func stateHandler(token, root string) http.HandlerFunc {
 			return
 		}
 		mcpDir, stateDir := rootDirs(root)
-		state := dashState{Servers: []dashServer{}, Suggestions: []dashSuggestion{}, Cards: []dashCard{}}
+		state := dashState{Servers: []dashServer{}, Suggestions: []dashSuggestion{}, Reorgs: []dashReorg{}, Cards: []dashCard{}}
 
 		// One dashServer per notebook (folder with a manifest), plus that notebook's
 		// own cards — cards now live under each notebook, not in a global queue.
@@ -150,6 +234,8 @@ func stateHandler(token, root string) http.HandlerFunc {
 			sort.Slice(state.Suggestions, func(i, j int) bool { return state.Suggestions[i].Into < state.Suggestions[j].Into })
 		}
 
+		state.Reorgs = readReorgs(mcpDir, stateDir)
+
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(state)
 	}
@@ -165,6 +251,9 @@ func stateHandler(token, root string) http.HandlerFunc {
 type notebookDetail struct {
 	dashServer
 	Cards []dashCard `json:"cards"`
+	// Reorgs holds this notebook's pending reorg proposal (0 or 1), so the notebook view
+	// can show the same confirm card the Sandbox does.
+	Reorgs []dashReorg `json:"reorgs"`
 }
 
 func notebookHandler(token, root string) http.HandlerFunc {
@@ -182,12 +271,15 @@ func notebookHandler(token, root string) http.HandlerFunc {
 			http.Error(w, "bad slug", http.StatusBadRequest)
 			return
 		}
-		mcpDir, _ := rootDirs(root)
+		mcpDir, stateDir := rootDirs(root)
 		if !isNotebook(mcpDir, slug) {
 			http.Error(w, "notebook not found", http.StatusNotFound)
 			return
 		}
-		detail := notebookDetail{dashServer: readDashServer(mcpDir, slug), Cards: []dashCard{}}
+		detail := notebookDetail{dashServer: readDashServer(mcpDir, slug), Cards: []dashCard{}, Reorgs: []dashReorg{}}
+		if p, ok := loadReorg(stateDir, slug); ok {
+			detail.Reorgs = append(detail.Reorgs, toDashReorg(mcpDir, p))
+		}
 		// The cheap index form: keep the page list (num/title/file) but drop the bodies,
 		// which the phone fetches lazily per page via /page.
 		if r.URL.Query().Get("meta") != "" {
@@ -260,11 +352,12 @@ func actionHandler(token, root string) http.HandlerFunc {
 			return
 		}
 		var req struct {
-			Action string   `json:"action"`
-			Into   string   `json:"into"`
-			From   []string `json:"from"`
-			ID     string   `json:"id"`
-			Source string   `json:"source"` // optional notebook slug the card lives under
+			Action  string   `json:"action"`
+			Into    string   `json:"into"`
+			From    []string `json:"from"`
+			ID      string   `json:"id"`
+			Source  string   `json:"source"`  // optional notebook slug the card lives under
+			Subject string   `json:"subject"` // notebook slug a reorg action targets
 		}
 		if json.NewDecoder(r.Body).Decode(&req) != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
@@ -308,6 +401,29 @@ func actionHandler(token, root string) http.HandlerFunc {
 				writeOK(w)
 				return
 			}
+		case "reorg", "reorg-dismiss":
+			// A page-reorganization proposal is keyed on its notebook slug. "reorg"
+			// applies it now (pure notes/*.md rewriting — no next-run drain needed),
+			// preserving the notebook's Task Log pages; "reorg-dismiss" just discards it.
+			if !validSlug(req.Subject) {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			reoPath := filepath.Join(stateDir, "reorgs", req.Subject+".json")
+			if req.Action == "reorg" {
+				p, ok := loadReorg(stateDir, req.Subject)
+				if !ok {
+					http.Error(w, "reorg not found", http.StatusNotFound)
+					return
+				}
+				if err := applyReorg(mcpDir, req.Subject, p.Pages); err != nil {
+					http.Error(w, "reorg failed", http.StatusInternalServerError)
+					return
+				}
+			}
+			os.Remove(reoPath)
+			writeOK(w)
+			return
 		}
 
 		if !validSlug(req.Into) {
