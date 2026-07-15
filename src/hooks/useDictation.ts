@@ -37,6 +37,7 @@ import {
   type SpeechError,
 } from '@dbkable/react-native-speech-to-text';
 import { injectIntoActiveEditor, hasActiveEditor } from '../components/notepage/activeEditor';
+import { acquireWakeLock, releaseWakeLock } from '../native/wakeLock';
 
 /** Locale handed to the recognizer. */
 const LANGUAGE = 'en-US';
@@ -75,6 +76,24 @@ export function useDictation(): Dictation {
   const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Consecutive recognizer errors since the last result — a runaway-loop backstop.
   const errorCountRef = useRef(0);
+  // Whether we currently hold a CPU wake-lock share. One share per dictation
+  // session (not per recognizer restart), released once however the session ends —
+  // this ref keeps take/drop balanced no matter which stop path fires.
+  const holdingWakeLockRef = useRef(false);
+
+  // Keep the CPU awake for the whole session so the recognizer isn't starved by a
+  // screen timeout or Doze. Idempotent: only the 0 -> 1 / 1 -> 0 edges hit native.
+  const takeWakeLock = useCallback(() => {
+    if (holdingWakeLockRef.current) return;
+    holdingWakeLockRef.current = true;
+    acquireWakeLock();
+  }, []);
+
+  const dropWakeLock = useCallback(() => {
+    if (!holdingWakeLockRef.current) return;
+    holdingWakeLockRef.current = false;
+    releaseWakeLock();
+  }, []);
 
   const clearRestart = useCallback(() => {
     if (restartTimerRef.current) {
@@ -87,12 +106,13 @@ export function useDictation(): Dictation {
     (reason?: string) => {
       wantOnRef.current = false;
       clearRestart();
+      dropWakeLock();
       setDictating(false);
       stopRecognizer().catch(() => {});
       injectIntoActiveEditor('window.__dictateEnd();');
       if (reason) Alert.alert('Speech to text', reason);
     },
-    [clearRestart],
+    [clearRestart, dropWakeLock],
   );
 
   // Re-listen for the next phrase, debounced. Both the end event (which precedes
@@ -162,13 +182,15 @@ export function useDictation(): Dictation {
       onEnd.remove();
       onError.remove();
       clearRestart();
-      // Don't leave the mic hot if the screen unmounts mid-session.
+      // Don't leave the mic hot — or the wake lock held — if the screen unmounts
+      // mid-session (this path bypasses hardStop).
+      dropWakeLock();
       if (wantOnRef.current) {
         wantOnRef.current = false;
         stopRecognizer().catch(() => {});
       }
     };
-  }, [hardStop, scheduleRestart, clearRestart]);
+  }, [hardStop, scheduleRestart, clearRestart, dropWakeLock]);
 
   const startDictation = useCallback(async () => {
     if (!hasActiveEditor()) {
@@ -186,12 +208,14 @@ export function useDictation(): Dictation {
       }
       errorCountRef.current = 0;
       wantOnRef.current = true;
+      // Hold the CPU awake before the mic goes live; hardStop drops it on any exit.
+      takeWakeLock();
       setDictating(true);
       await start({ language: LANGUAGE });
     } catch {
       hardStop('Could not start dictation.');
     }
-  }, [hardStop]);
+  }, [hardStop, takeWakeLock]);
 
   const toggle = useCallback(() => {
     if (wantOnRef.current) {

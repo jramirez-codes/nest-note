@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import com.ainotepad.power.WakeLockManager
 
 /**
  * A minimal foreground service whose only job is to hold a microphone-typed
@@ -22,6 +23,11 @@ import android.os.IBinder
  */
 class RecorderService : Service() {
 
+  // Whether this service currently holds a share of the shared wake lock, so the
+  // service contributes exactly one share no matter how many times onStartCommand
+  // is (re)delivered, and hands it back once in onDestroy.
+  private var holdingWakeLock = false
+
   override fun onBind(intent: Intent?): IBinder? = null
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -31,9 +37,24 @@ class RecorderService : Service() {
     } else {
       startForeground(NOTIF_ID, notification)
     }
+    // Keep the CPU awake (screen free to sleep) so a backgrounded recording keeps
+    // encoding through Doze. The lock is shared/ref-counted (WakeLockManager); take
+    // our one share here and release it in onDestroy.
+    if (!holdingWakeLock) {
+      WakeLockManager.acquire(this)
+      holdingWakeLock = true
+    }
     // If the process is killed mid-recording we don't want a zombie service
     // silently restarting the mic, so don't redeliver.
     return START_NOT_STICKY
+  }
+
+  override fun onDestroy() {
+    if (holdingWakeLock) {
+      WakeLockManager.release()
+      holdingWakeLock = false
+    }
+    super.onDestroy()
   }
 
   private fun buildNotification(): Notification {

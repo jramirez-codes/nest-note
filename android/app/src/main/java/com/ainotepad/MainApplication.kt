@@ -8,6 +8,7 @@ import com.facebook.react.ReactNativeApplicationEntryPoint.loadReactNative
 import com.facebook.react.defaults.DefaultReactHost.getDefaultReactHost
 import com.ainotepad.secure.AiNotepadSecurePackage
 import com.ainotepad.recorder.AiNotepadRecorderPackage
+import com.ainotepad.power.AiNotepadWakeLockPackage
 
 class MainApplication : Application(), ReactApplication {
 
@@ -21,6 +22,8 @@ class MainApplication : Application(), ReactApplication {
           add(AiNotepadSecurePackage())
           // Likewise the in-app audio recorder module (/record card).
           add(AiNotepadRecorderPackage())
+          // Shared CPU wake lock for JS-driven features (speech-to-text).
+          add(AiNotepadWakeLockPackage())
         },
     )
   }
