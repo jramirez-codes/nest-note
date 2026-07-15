@@ -1,6 +1,11 @@
 import { EditorView, keymap } from '@codemirror/view';
 import { EditorState, Prec, Compartment } from '@codemirror/state';
-import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
+import {
+  defaultKeymap,
+  history,
+  historyKeymap,
+  insertNewlineAndIndent,
+} from '@codemirror/commands';
 import {
   markdown,
   markdownLanguage,
@@ -303,6 +308,18 @@ window.__dictateActive = function (on) {
     suppressKeyboard(activeComposerInput()); // a composer may already be focused
     if (!view.state.readOnly) view.focus();
   } else {
+    // The user just tapped the mic off — hand off exactly like they'd pressed
+    // Enter where the caret sits: a focused card composer (/chat, /run, /code)
+    // submits its box; the note body either fires off a slash command line
+    // (aiCommandOnEnter) or, on any other line, just drops a newline, same as
+    // typing Enter there would (continueMarkup for lists/quotes, else a plain
+    // newline).
+    const input = activeComposerInput();
+    if (input) {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', cancelable: true }));
+    } else if (!view.state.readOnly) {
+      aiCommandOnEnter(view) || continueMarkup(view) || insertNewlineAndIndent(view);
+    }
     document.removeEventListener('focusin', onDictFocusIn);
     restoreKeyboard(view.contentDOM);
     for (const el of document.querySelectorAll(
