@@ -5,7 +5,13 @@
  * state and hands cards down.
  */
 import React, { useCallback, useMemo, useState } from 'react';
-import { type LayoutChangeEvent, Pressable, Text, View } from 'react-native';
+import {
+  type LayoutChangeEvent,
+  Pressable,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
 import {
@@ -15,7 +21,9 @@ import {
   Clock,
   FileText,
   Lightbulb,
+  Search,
   Sparkles,
+  X,
   type LucideIcon,
 } from 'lucide-react-native';
 import type { ThemeColors } from '../../theme/colors';
@@ -283,13 +291,16 @@ function shortDate(timestamp: number): string {
   });
 }
 
-// The Archived section's list: a compact, single-surface list of pages lifted off
-// the pad by /archive. Each is one dense line — a small page glyph, the title, a
-// short date, and a chevron — separated by hairlines. Like the Tasks box it holds
-// a FIXED height of `pageSize` rows (measured from the first row so it tracks the
-// live font scale), so a partial last page doesn't shrink it, and it's paginated
-// via the shared Pager at the foot of the surface. Tapping opens the page as a
-// temporary, editable page (see ArchivedPageOverlay).
+// The Archived section: one cohesive card for the pages lifted off the pad by
+// /archive. A search field is the card's HEADER bar (filters by title/body),
+// above a hairline; the body is a compact list — each row a dense line (page
+// glyph, title, short date, chevron) separated by hairlines — held at a FIXED
+// height of `pageSize` rows (measured from the first row so it tracks the live
+// font scale) so a partial last page doesn't shrink it; and the shared Pager is
+// the footer. The `pages` handed in are the already-filtered, already-paginated
+// slice — an empty slice with a live query shows the "no matches" state in the
+// same fixed body, so the header (and card) never jumps. Tapping a row opens the
+// page as a temporary, editable page (see ArchivedPageOverlay).
 export function ArchivedList({
   pages,
   onOpen,
@@ -298,57 +309,95 @@ export function ArchivedList({
   pageCount,
   pageSize,
   onChangePage,
+  query,
+  onQueryChange,
 }: {
-  /** The current page's slice of archived pages (the caller paginates). */
+  /** The current page's slice of archived pages (the caller filters + paginates). */
   pages: Note[];
   onOpen: (note: Note) => void;
   colors: ThemeColors;
   page: number;
   pageCount: number;
-  /** Rows per page — the box is fixed to this many rows' height. */
+  /** Rows per page — the body is fixed to this many rows' height. */
   pageSize: number;
   onChangePage: (page: number) => void;
+  /** The search header's current query and its setter (owned by DashboardPage). */
+  query: string;
+  onQueryChange: (query: string) => void;
 }) {
   // One collapsed row's height, measured from the first row (which has no divider
-  // above it), so the fixed box height tracks the live font scale. Latched to the
-  // first measurement so it stays stable page to page.
+  // above it), so the fixed body height tracks the live font scale. Latched to the
+  // first measurement so it stays stable page to page and through the empty state.
   const [rowHeight, setRowHeight] = useState<number | null>(null);
   const handleFirstRowLayout = useCallback((e: LayoutChangeEvent) => {
     const height = e.nativeEvent.layout.height;
     setRowHeight(prev => prev ?? height);
   }, []);
 
+  // Fixed body height: `pageSize` rows + 1px per hairline divider between them.
+  const bodyHeight = rowHeight ? rowHeight * pageSize + (pageSize - 1) : undefined;
+
   return (
     <View className="overflow-hidden rounded-2xl border border-surface1 bg-surface">
-      <View
-        style={
-          // Fixed, not max — the box holds this height even on a page with fewer
-          // than `pageSize` rows, so it doesn't resize page to page. +1px per
-          // hairline divider between rows (there's none above the first row).
-          rowHeight ? { height: rowHeight * pageSize + (pageSize - 1) } : undefined
-        }>
-        {pages.map((note, i) => {
-          const title = note.title.trim() || deriveTitle(note.content);
-          return (
-            <View key={note.id} onLayout={i === 0 ? handleFirstRowLayout : undefined}>
-              {i > 0 && <View className="ml-9 h-px bg-surface1/60" />}
-              <Pressable
-                onPress={() => onOpen(note)}
-                accessibilityRole="button"
-                accessibilityLabel={`Open archived page: ${title}`}
-                className="flex-row items-center gap-2.5 px-3 py-2.5 active:bg-background">
-                <FileText size={15} color={colors.faint} strokeWidth={2} />
-                <Text numberOfLines={1} className="flex-1 text-sm text-text">
-                  {title}
-                </Text>
-                <Text className="text-[11px] text-faint">{shortDate(note.updatedAt)}</Text>
-                <ChevronRight size={15} color={colors.faint} strokeWidth={2.5} />
-              </Pressable>
-            </View>
-          );
-        })}
+      {/* Header bar: the search field, reading as the top of the archive card. */}
+      <View className="flex-row items-center gap-2 border-b border-surface1 px-3 py-2.5">
+        <Search size={15} color={colors.faint} strokeWidth={2} />
+        <TextInput
+          value={query}
+          onChangeText={onQueryChange}
+          placeholder="Search archived"
+          placeholderTextColor={colors.faint}
+          autoCapitalize="none"
+          autoCorrect={false}
+          returnKeyType="search"
+          className="flex-1 p-0 text-sm text-text"
+        />
+        {query.length > 0 && (
+          <Pressable
+            onPress={() => onQueryChange('')}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Clear archive search">
+            <X size={15} color={colors.faint} strokeWidth={2.5} />
+          </Pressable>
+        )}
       </View>
-      {/* Always shown (even at one page) so the page number + arrows stay visible. */}
+
+      {/* Body: the fixed-height row list, or the no-matches notice in its place. */}
+      {pages.length > 0 ? (
+        <View style={bodyHeight ? { height: bodyHeight } : undefined}>
+          {pages.map((note, i) => {
+            const title = note.title.trim() || deriveTitle(note.content);
+            return (
+              <View key={note.id} onLayout={i === 0 ? handleFirstRowLayout : undefined}>
+                {i > 0 && <View className="ml-9 h-px bg-surface1/60" />}
+                <Pressable
+                  onPress={() => onOpen(note)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Open archived page: ${title}`}
+                  className="flex-row items-center gap-2.5 px-3 py-2.5 active:bg-background">
+                  <FileText size={15} color={colors.faint} strokeWidth={2} />
+                  <Text numberOfLines={1} className="flex-1 text-sm text-text">
+                    {title}
+                  </Text>
+                  <Text className="text-[11px] text-faint">{shortDate(note.updatedAt)}</Text>
+                  <ChevronRight size={15} color={colors.faint} strokeWidth={2.5} />
+                </Pressable>
+              </View>
+            );
+          })}
+        </View>
+      ) : (
+        <View
+          className="items-center justify-center px-4 py-8"
+          style={bodyHeight ? { height: bodyHeight } : undefined}>
+          <Text numberOfLines={2} className="text-center text-xs text-muted">
+            No archived pages match “{query.trim()}”.
+          </Text>
+        </View>
+      )}
+
+      {/* Footer: always shown (even at one page) so the page number + arrows stay. */}
       <Pager
         page={page}
         pageCount={pageCount}

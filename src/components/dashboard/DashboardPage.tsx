@@ -7,18 +7,9 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
-import {
-  Archive,
-  GitMerge,
-  Inbox,
-  Lightbulb,
-  ListChecks,
-  Search,
-  X,
-} from 'lucide-react-native';
+import { Archive, GitMerge, Inbox, Lightbulb, ListChecks } from 'lucide-react-native';
 import { useTheme } from '../../theme/colors';
 import type { CardDragShared } from '../../hooks/useCardDrag';
 import type { Note } from '../../types/note';
@@ -303,46 +294,19 @@ function DashboardPage({
                   count={archivedPages.length}
                   colors={colors}
                 />
-                {/* Compact search bar — filters the archive by title/body. */}
-                <View className="mb-2 flex-row items-center gap-2 rounded-xl border border-surface1 bg-surface px-3 py-2">
-                  <Search size={15} color={colors.faint} strokeWidth={2} />
-                  <TextInput
-                    value={archiveQuery}
-                    onChangeText={setArchiveQuery}
-                    placeholder="Search archived"
-                    placeholderTextColor={colors.faint}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    returnKeyType="search"
-                    className="flex-1 p-0 text-sm text-text"
-                  />
-                  {archiveQuery.length > 0 && (
-                    <Pressable
-                      onPress={() => setArchiveQuery('')}
-                      hitSlop={8}
-                      accessibilityRole="button"
-                      accessibilityLabel="Clear archive search">
-                      <X size={15} color={colors.faint} strokeWidth={2.5} />
-                    </Pressable>
-                  )}
-                </View>
-                {pagedArchived.length > 0 ? (
-                  <ArchivedList
-                    pages={pagedArchived}
-                    onOpen={onOpenArchived}
-                    colors={colors}
-                    page={safeArchivePage}
-                    pageCount={archivePageCount}
-                    pageSize={ARCHIVE_PAGE_SIZE}
-                    onChangePage={setArchivePage}
-                  />
-                ) : (
-                  <View className="rounded-2xl border border-surface1 bg-surface px-3 py-5">
-                    <Text className="text-center text-xs text-muted">
-                      No archived pages match “{archiveQuery.trim()}”.
-                    </Text>
-                  </View>
-                )}
+                {/* One cohesive card: the search field is its header, the filtered/
+                    paginated rows its body, and the pager its footer. */}
+                <ArchivedList
+                  pages={pagedArchived}
+                  onOpen={onOpenArchived}
+                  colors={colors}
+                  page={safeArchivePage}
+                  pageCount={archivePageCount}
+                  pageSize={ARCHIVE_PAGE_SIZE}
+                  onChangePage={setArchivePage}
+                  query={archiveQuery}
+                  onQueryChange={setArchiveQuery}
+                />
               </View>
             )}
 
