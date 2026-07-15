@@ -23,6 +23,8 @@ interface WakeLockModule {
   acquire(): Promise<void>;
   /** Give back a share taken by acquire(). */
   release(): Promise<void>;
+  /** Hold the display awake (FLAG_KEEP_SCREEN_ON) while true. */
+  setKeepScreenOn(enabled: boolean): Promise<void>;
 }
 
 const Native = NativeModules.AiNotepadWakeLock as WakeLockModule | undefined;
@@ -35,4 +37,15 @@ export function acquireWakeLock(): void {
 /** Release a share taken by {@link acquireWakeLock}. Safe to no-op / over-call. */
 export function releaseWakeLock(): void {
   Native?.release().catch(() => {});
+}
+
+/**
+ * Keep the display from timing out (true) or let it sleep again (false). This is
+ * separate from the CPU wake lock above: the partial lock keeps the CPU alive but
+ * lets the screen sleep, so a feature that wants the screen to stay lit while the
+ * user is looking at it — speech-to-text dictation — asks for it here too. Only
+ * takes effect while the app is foreground. Safe to no-op.
+ */
+export function setScreenAwake(enabled: boolean): void {
+  Native?.setKeepScreenOn(enabled).catch(() => {});
 }

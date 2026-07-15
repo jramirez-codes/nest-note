@@ -251,14 +251,100 @@ window.__setDoc = function (text) {
 // the running transcript of the *current* utterance: partial results overwrite
 // the same span in place (dictRange tracks it) so a growing phrase doesn't pile
 // up, and the final result commits the span and drops a trailing space before
-// the next utterance starts a fresh run at the caret. Inserts at the selection
-// but never calls view.focus(), so dictating doesn't raise the soft keyboard.
+// the next utterance starts a fresh run at the caret.
+//
+// While a session is live (__dictateActive(true)) the editor is FOCUSED so its
+// caret is visible and a tap repositions it — the user steers where speech lands
+// — but the soft keyboard is SUPPRESSED via inputmode="none" on the content DOM,
+// so it never covers the note. The same suppression follows the user into a card
+// composer input (see onDictFocusIn), where dictation is routed instead.
+let dictating = false;
 let dictRange = null;
+// The in-progress utterance span inside a focused card composer input:
+// { el, start, len }. Mirrors dictRange but for a widget's <input>/<textarea>.
+let inputDict = null;
+
+// Suppress / restore the soft keyboard for a focusable element WITHOUT dropping
+// focus: inputmode="none" keeps the caret and taps working but stops Android from
+// raising Gboard. CM doesn't manage this attribute, so setting it directly sticks.
+function suppressKeyboard(el) {
+  if (el) el.setAttribute('inputmode', 'none');
+}
+function restoreKeyboard(el) {
+  if (el) el.removeAttribute('inputmode');
+}
+
+// The focused card composer input (/chat, /run, /code box), if any — the target
+// for dictation and keyboard suppression when the user is working inside a widget
+// rather than the note body. The editor's own content DOM is a div, not matched.
+function activeComposerInput() {
+  const el = document.activeElement;
+  return el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') ? el : null;
+}
+
+// While dictating, any composer input the user taps into should also come up
+// keyboard-free (caret shows, dictation flows in, no Gboard). focusin catches
+// composers created lazily after the session began.
+function onDictFocusIn(e) {
+  const el = e.target;
+  if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) suppressKeyboard(el);
+}
+
+// RN toggles this around a whole dictation session (not per recognizer restart).
+// On: focus the editor with the keyboard suppressed, so the caret is visible and
+// steerable while the mic runs. Off: restore normal typing everywhere and drop
+// any in-progress span. Idempotent; also re-armed on page swaps (see activeEditor
+// registerActiveEditor) and cleared when a page is swiped away (NoteEditorWebView).
+window.__dictateActive = function (on) {
+  dictating = !!on;
+  if (dictating) {
+    document.addEventListener('focusin', onDictFocusIn);
+    suppressKeyboard(view.contentDOM);
+    suppressKeyboard(activeComposerInput()); // a composer may already be focused
+    if (!view.state.readOnly) view.focus();
+  } else {
+    document.removeEventListener('focusin', onDictFocusIn);
+    restoreKeyboard(view.contentDOM);
+    for (const el of document.querySelectorAll(
+      'input[inputmode="none"], textarea[inputmode="none"]',
+    )) {
+      restoreKeyboard(el);
+    }
+    dictRange = null;
+    inputDict = null;
+  }
+};
+
+// Stream one transcript chunk into a focused card composer input, mirroring the
+// note-body behaviour: partials overwrite the same span, the final commits it
+// with a trailing space. Setting .value + firing `input` keeps the composer's own
+// submit (which reads input.value) in sync.
+function dictateIntoInput(el, t, isFinal) {
+  if (!inputDict || inputDict.el !== el) {
+    const at = el.selectionStart ?? el.value.length;
+    inputDict = { el, start: at, len: 0 };
+  }
+  const { start, len } = inputDict;
+  const insert = isFinal ? t + ' ' : t;
+  el.value = el.value.slice(0, start) + insert + el.value.slice(start + len);
+  const caret = start + insert.length;
+  el.setSelectionRange(caret, caret);
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  if (isFinal) inputDict = null;
+  else inputDict.len = t.length;
+}
+
 window.__dictate = function (text, isFinal) {
+  const t = text ?? '';
+  // Working inside a widget? Route the transcript into that input, not the note.
+  const input = activeComposerInput();
+  if (input) {
+    dictateIntoInput(input, t, isFinal);
+    return;
+  }
   // Subject-notebook pages are read-only; never mutate them (also guards a race
   // where the mic is still delivering as the user swipes onto a read-only page).
   if (view.state.readOnly) return;
-  const t = text ?? '';
   if (!dictRange) {
     const at = view.state.selection.main.from;
     dictRange = { from: at, to: at };
@@ -285,6 +371,15 @@ window.__dictate = function (text, isFinal) {
 // of speech starts a fresh insertion at wherever the caret is then.
 window.__dictateEnd = function () {
   dictRange = null;
+  inputDict = null;
+};
+
+// RN calls this whenever the soft keyboard hides (see NoteEditorWebView). Blur the
+// editor so the next tap reliably re-raises the keyboard — EXCEPT while dictating,
+// where we deliberately keep focus (caret visible, keyboard suppressed) and any
+// "hide" is our own doing, not the user asking to leave the note.
+window.__onKeyboardHide = function () {
+  if (!dictating) document.activeElement?.blur();
 };
 
 // RN calls this on load with every externalized card body for the page (one
