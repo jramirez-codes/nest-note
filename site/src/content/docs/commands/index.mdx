@@ -1,0 +1,54 @@
+---
+title: All commands
+description: Every slash command, what it does, and what it needs.
+sidebar:
+  order: 0
+  label: Overview
+---
+
+Type a slash command on its own line in any note and press **Enter**. The line
+becomes a live **card** that streams its result in place and is persisted in
+the note's markdown.
+
+There are **15** commands. Source of truth:
+`webview-editor/src/ai/commands.js`.
+
+## Quick reference
+
+| Command          | What it does                                                                     | Needs                    |
+| ---------------- | -------------------------------------------------------------------------------- | ------------------------ |
+| `/ask`           | Ask Claude a question — the answer streams into a card                           | Server                   |
+| `/chat`          | Start a conversation with Claude — reply in the card to keep the thread           | Server                   |
+| `/clean`         | Clean up & reorganize the whole page                                             | Server                   |
+| `/search`        | Search your notebooks — `/search QUERY`                                          | — *(offline)*            |
+| `/code`          | Start a Claude Code agent in a project on the paired laptop                       | `-allow-code`            |
+| `/run`           | Run a shell command inside a project — `/run PROJECT <cmd>`                       | `-allow-exec`            |
+| `/delete`        | Delete a project folder on the paired laptop — `/delete PROJECT`                  | `-allow-code`            |
+| `/view`          | Preview a localhost dev server — `/view PORT`                                     | `-allow-view`            |
+| `/record`        | Record microphone audio — keeps going in the background                           | — *(on-device)*          |
+| `/talk`          | Chat about a subject — `/talk SUBJECT <message>`                                  | Server + `-root`         |
+| `/ingest`        | File this page into your dashboard, then clear the page                           | Server                   |
+| `/archive`       | Archive this page into the dashboard's Archived section                           | — *(on-device)*          |
+| `/agg-tasks`     | Sweep a subject's notebook for action items, file one task card per item          | Server + `-root`         |
+| `/pair`          | Pair a device by QR code or payload                                              | —                        |
+| `/update-server` | Pull, rebuild and restart the Go server on the paired laptop                       | Server                   |
+
+## Grouped by what they do
+
+- **[Writing](./writing.md)** — `/ask`, `/chat`, `/clean`, `/search`
+- **[Projects & the laptop](./projects.md)** — `/code`, `/run`, `/delete`,
+  `/view`. **All gated behind capability flags that are off by default.**
+- **[Capture](./capture.md)** — `/record`, `/talk`
+- **[Dashboard](./dashboard.md)** — `/ingest`, `/archive`, `/agg-tasks`
+- **[Admin](./admin.md)** — `/pair`, `/update-server`
+
+## How cards behave
+
+Cards are hoisted into a long-lived **run registry**, so a running command
+survives swiping between pages or swapping notebooks. Come back later and the
+output is still streaming.
+
+Bulky card bodies — a `/code` transcript, `/run` output, a `/clean` backup —
+are stored in a separate `card_payloads` table rather than inline in the page
+markdown, because the page's full markdown crosses the WebView bridge on every
+keystroke. See [storage](../architecture/storage.md).

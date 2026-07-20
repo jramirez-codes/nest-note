@@ -1,0 +1,75 @@
+name: Deploy site to GitHub Pages
+
+# Builds site/ (Astro + Starlight) and publishes it to GitHub Pages.
+#
+# ONE-TIME MANUAL SETUP: repo Settings -> Pages -> Source must be set to
+# "GitHub Actions". Until that is done the deploy job fails with a confusing
+# "Pages site not found" error.
+
+on:
+  push:
+    branches: [main]
+    # Only rebuild when the site or this workflow changes — app, server and
+    # editor commits shouldn't trigger a docs deploy.
+    paths:
+      - 'site/**'
+      - '.github/workflows/site.yml'
+      # The site's theme is generated from the app's palette, so a palette
+      # change must republish even though it lives outside site/.
+      - 'src/theme/catppuccin.js'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write # required by actions/deploy-pages
+
+# Never cancel a half-finished Pages deploy — that can wedge the environment.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          # Astro 7 requires >= 22.12.0.
+          node-version: 22
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Check generated theme is in sync
+        # Regenerates catppuccin.generated.css from src/theme/catppuccin.js and
+        # fails if the committed copy differs — so a palette change can't
+        # silently diverge from what the site ships.
+        run: npm run check:theme
+
+      - name: Build
+        # Also runs starlight-links-validator; a broken internal link fails here.
+        run: npm run build
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

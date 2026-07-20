@@ -1,0 +1,56 @@
+---
+/**
+ * Renders the prerequisite callout for a page, driven by frontmatter.
+ *
+ * Reads `requiresServer` / `requiresFlag` off the current page's frontmatter
+ * (see src/content.config.ts) rather than taking props, so a page declares its
+ * prerequisites once as data and every page words them identically. That
+ * matters most for the `-allow-*` flags: an out-of-date capability warning is
+ * a security problem, not a typo.
+ *
+ * Usage in any .mdx page, directly under the frontmatter:
+ *
+ *     import Requires from '../../components/Requires.astro';
+ *
+ *     <Requires />
+ */
+import { Aside } from '@astrojs/starlight/components';
+
+const data = (Astro.locals as any).starlightRoute?.entry?.data ?? {};
+const requiresServer: boolean = data.requiresServer ?? false;
+const requiresFlags: string[] = data.requiresFlag ?? [];
+
+const FLAG_RISK: Record<string, string> = {
+  'allow-exec':
+    'it runs arbitrary shell commands as your user account, gated only by the pinned tunnel and the bearer token',
+  'allow-code':
+    'it runs a Claude Code agent with every tool auto-accepted (bypassPermissions) — full code execution as your user account',
+  'allow-view':
+    'it serves each previewed dev server over cleartext HTTP to anyone on your LAN',
+};
+---
+
+{
+  (requiresServer || requiresFlags.length > 0) && (
+    <Aside
+      type={requiresFlags.length > 0 ? 'caution' : 'note'}
+      title="Prerequisites"
+    >
+      <ul>
+        {requiresServer && (
+          <li>
+            A <strong>paired companion server</strong>. These commands do
+            nothing on an unpaired device — the rest of the pad still works
+            offline.
+          </li>
+        )}
+        {requiresFlags.map(flag => (
+          <li>
+            The server must be started with <code>-{flag}</code>, which is{' '}
+            <strong>off by default</strong> because {FLAG_RISK[flag]}.
+          </li>
+        ))}
+      </ul>
+    </Aside>
+  )
+}

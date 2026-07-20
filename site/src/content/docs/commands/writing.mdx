@@ -1,0 +1,74 @@
+---
+title: Writing
+description: The commands that help you write — ask, chat, clean and search.
+sidebar:
+  order: 1
+requiresServer: true
+---
+
+import Requires from '../../../components/Requires.astro';
+
+<Requires />
+
+These are the commands you'll use most, and — apart from `/search` — the only
+ones that work with **no capability flags enabled at all**. A plain
+`go run .` is enough.
+
+## `/ask`
+
+> Ask Claude a question — the answer streams into a card.
+
+```text
+/ask what's the difference between a rebase and a merge
+```
+
+One question, one answer. The response streams into a collapsible card and is
+persisted in the note's markdown, so it's there when you come back.
+
+## `/chat`
+
+> Start a conversation with Claude — reply in the card to keep the thread.
+
+```text
+/chat help me plan the storage migration
+```
+
+Like `/ask`, but the card stays interactive. Replying inside it continues the
+same thread rather than starting a fresh one — use this when you expect
+follow-ups.
+
+## `/clean`
+
+> Clean up & reorganize the whole page — add guidance after.
+
+```text
+/clean
+/clean project ideas
+```
+
+Rewrites the **entire page**: tidies structure, fixes formatting, and sets an
+AI-generated title. Anything after the command is treated as guidance for how
+to organize it.
+
+:::note[`/clean` sets the page title]
+Titles are otherwise derived from content and never stored. The title `/clean`
+sets is a real stored field, and it is deliberately **not** overwritten when
+you later edit the page — otherwise fixing a typo would silently discard it.
+
+The pre-clean version of the page is kept as a card payload, so the rewrite
+isn't a one-way door.
+:::
+
+## `/search`
+
+> Search your notebooks — pick a result to jump straight to that page.
+
+```text
+/search fts5
+```
+
+:::tip[This one works offline]
+`/search` queries the on-device SQLite FTS5 index. It needs no server, no
+network, and no flags. Results are ranked with `bm25(title 10×, content 1×)`,
+so a title match outweighs a body match.
+:::

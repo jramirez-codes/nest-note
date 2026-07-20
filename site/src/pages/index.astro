@@ -1,0 +1,589 @@
+---
+/**
+ * Landing page.
+ *
+ * A concrete route in src/pages/ takes precedence over Starlight's catch-all,
+ * so this fully owns `/`. It deliberately does NOT use the Starlight layout —
+ * docs chrome (sidebar, pagination, breadcrumbs) is wrong for a landing page.
+ *
+ * Every href/src goes through withBase(). See src/lib/url.ts.
+ */
+import { Image } from 'astro:assets';
+import logo from '../assets/logo.png';
+import { withBase } from '../lib/url';
+
+const REPO = 'https://github.com/jramirez-codes/ai-notepad';
+
+const padFeatures = [
+  {
+    title: 'Swipe between pages',
+    body: 'Each note is a full-screen page. Swipe left or right to move through the pad — no file browser, no note list.',
+  },
+  {
+    title: 'Tap the blank sheet',
+    body: 'The last page is always blank. Tapping it starts a new note. That is the entire navigation model.',
+  },
+  {
+    title: 'Live-preview markdown',
+    body: 'Syntax marks hide to render clean text and reveal again on the line you are editing — and markdown stays the stored format.',
+  },
+];
+
+const commands = [
+  { cmd: '/ask', detail: 'Ask Claude a question — the answer streams into a card' },
+  { cmd: '/code', detail: 'Start a Claude Code agent in a project on the paired laptop' },
+  { cmd: '/run', detail: 'Run a shell command inside a project; output streams live' },
+  { cmd: '/view', detail: 'Mirror a localhost dev server into a card' },
+  { cmd: '/talk', detail: 'Chat about a subject — notes stay updated as you talk' },
+];
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ainotepad — a markdown notepad you flip through page by page</title>
+    <meta
+      name="description"
+      content="A markdown notepad you flip through page by page. Live-preview markdown on your phone, with an optional AI layer that runs entirely on your own laptop."
+    />
+    <link rel="icon" href={withBase('/favicon.svg')} type="image/svg+xml" />
+    <script is:inline>
+      // Match whatever theme the docs are using. Starlight persists the user's
+      // choice under `starlight-theme`; without this, toggling to light in the
+      // docs and clicking the logo would snap back to dark here.
+      try {
+        const stored = localStorage.getItem('starlight-theme');
+        if (stored === 'light' || stored === 'dark') {
+          document.documentElement.dataset.theme = stored;
+        }
+      } catch {}
+    </script>
+  </head>
+
+  <body>
+    <header class="nav">
+      <a class="brand" href={withBase('/')}>
+        <Image src={logo} alt="" width={28} height={28} />
+        <span>ainotepad</span>
+      </a>
+      <nav>
+        <a href={withBase('/introduction/')}>Docs</a>
+        <a href={withBase('/commands/')}>Commands</a>
+        <a href={REPO} rel="noopener">GitHub</a>
+      </nav>
+    </header>
+
+    <main>
+      <!-- 1. Hero -->
+      <section class="hero">
+        <Image src={logo} alt="ainotepad" width={72} height={72} class="hero-logo" />
+        <h1>A markdown notepad you flip through <em>page by page</em>.</h1>
+        <p class="lede">
+          Live-preview markdown on your phone. An optional AI layer that runs
+          entirely on your own laptop.
+        </p>
+        <div class="cta">
+          <a class="btn primary" href={withBase('/introduction/')}>Read the docs</a>
+          <a class="btn" href={withBase('/server/setup/')}>Self-host the server</a>
+        </div>
+        <p class="meta">
+          Android &amp; iOS · SQLite on-device · no accounts · build it yourself
+        </p>
+      </section>
+
+      <!-- 2. The pad -->
+      <section class="band">
+        <h2>It behaves like a physical pad</h2>
+        <div class="grid three">
+          {padFeatures.map(f => (
+            <article class="card">
+              <h3>{f.title}</h3>
+              <p>{f.body}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <!-- 3. It's just markdown, and it's yours -->
+      <section class="band split">
+        <div>
+          <h2>It's just markdown, and it's yours</h2>
+          <p>
+            No account. No cloud. No sync service. Everything lives in one
+            <code>ainotepad.sqlite</code> file on the device — notes, notebooks,
+            the full-text index, and everything else.
+          </p>
+          <p>
+            Search is a local FTS5 index. Titles are derived from content rather
+            than stored, so there is nothing to fall out of sync.
+          </p>
+          <p class="callout">
+            <strong>The server is optional.</strong> Without one paired, this is
+            a complete offline markdown pad — that's the intended fallback, not
+            a degraded mode.
+          </p>
+        </div>
+        <pre class="sample"><code># Thursday
+
+Ship the storage migration.
+
+- [x] FTS5 external-content index
+- [ ] backfill `card_payloads`
+
+/ask what does bm25 weight mean here</code></pre>
+      </section>
+
+      <!-- 4. Slash commands -->
+      <section class="band">
+        <h2>Type a slash command, get a live card</h2>
+        <p class="sub">
+          Commands stream their results in place, and keep running when you
+          swipe away.
+        </p>
+        <ul class="commands">
+          {commands.map(c => (
+            <li>
+              <code>{c.cmd}</code>
+              <span>{c.detail}</span>
+            </li>
+          ))}
+        </ul>
+        <p class="more">
+          <a href={withBase('/commands/')}>All 15 commands →</a>
+        </p>
+      </section>
+
+      <!-- 5. Your laptop is the backend -->
+      <section class="band split">
+        <div>
+          <h2>Your laptop is the backend</h2>
+          <p>
+            The AI features are backed by a small Go server you run yourself.
+            Your phone connects to it over a pinned-TLS, token-authenticated
+            tunnel — paired once by scanning a QR code.
+          </p>
+          <p>
+            There is no third party in that path. The model runs against your
+            own Claude Code CLI, with your own credentials, on your own machine.
+          </p>
+        </div>
+        <div class="chain">
+          <div class="node">Phone</div>
+          <div class="link">pinned TLS + token</div>
+          <div class="node">Your laptop</div>
+          <div class="link">local CLI</div>
+          <div class="node">Claude Code</div>
+        </div>
+      </section>
+
+      <!-- 6. Honest about what it can do -->
+      <section class="band">
+        <h2>Honest about what it can do</h2>
+        <p class="sub">
+          Three capability flags unlock the powerful commands. All three are
+          <strong>off by default</strong>, and each runs code as your user
+          account over the tunnel.
+        </p>
+        <div class="grid three">
+          <article class="card warn">
+            <h3><code>-allow-exec</code></h3>
+            <p>Runs arbitrary shell commands as you, gated only by the tunnel and token.</p>
+          </article>
+          <article class="card warn">
+            <h3><code>-allow-code</code></h3>
+            <p>Runs a coding agent with every tool auto-accepted. No per-tool confirmation.</p>
+          </article>
+          <article class="card warn">
+            <h3><code>-allow-view</code></h3>
+            <p>Serves previewed dev servers over cleartext HTTP to anyone on your LAN.</p>
+          </article>
+        </div>
+        <p class="more">
+          <a href={withBase('/server/security/')}>Read the security model →</a>
+        </p>
+      </section>
+
+      <!-- 7. Self-host it -->
+      <section class="band">
+        <h2>Self-host it</h2>
+        <p class="sub">
+          There is no app store listing. You build it, and you run it.
+        </p>
+        <pre class="steps"><code>git clone {REPO}.git
+cd ai-notepad && yarn install && yarn android
+
+cd server && go run . -root ~/ainotepad-data</code></pre>
+        <p class="more">
+          <a href={withBase('/start/install/')}>Full setup guide →</a>
+        </p>
+      </section>
+    </main>
+
+    <footer>
+      <div>
+        <a href={withBase('/introduction/')}>Documentation</a>
+        <a href={REPO} rel="noopener">Source</a>
+        <a href={withBase('/server/security/')}>Security</a>
+      </div>
+      <p>Not on any app store — build it yourself.</p>
+    </footer>
+
+    <!--
+      The palette is pulled in with an @import inside this page's own style
+      block rather than a top-level `import` of the same file.
+
+      Why: Starlight already loads catppuccin.generated.css via `customCss`, so
+      a module-level import from here gets deduplicated into Starlight's shared
+      CSS chunk — which this page does not link. The result builds cleanly and
+      renders completely unthemed, because the page references `--ctp-*` but
+      never defines them. It looks fine in `astro dev` (modules are served
+      individually) and only breaks in a production build.
+    -->
+    <style>
+      @import '../styles/catppuccin.generated.css';
+
+      :root {
+        --page: 68rem;
+      }
+
+      html {
+        background: var(--ctp-base);
+        color: var(--ctp-text);
+        font-family:
+          ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+        line-height: 1.6;
+        -webkit-text-size-adjust: 100%;
+      }
+
+      body {
+        margin: 0;
+      }
+
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.9em;
+      }
+
+      a {
+        color: var(--ctp-mauve);
+      }
+
+      /* --- Nav ------------------------------------------------------- */
+      .nav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        max-width: var(--page);
+        margin: 0 auto;
+        padding: 1.25rem 1.5rem;
+        flex-wrap: wrap;
+      }
+
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-weight: 600;
+        color: var(--ctp-text);
+        text-decoration: none;
+      }
+
+      .nav nav {
+        display: flex;
+        gap: 1.5rem;
+      }
+
+      .nav nav a {
+        color: var(--ctp-subtext0);
+        text-decoration: none;
+      }
+
+      .nav nav a:hover {
+        color: var(--ctp-text);
+      }
+
+      /* --- Layout ---------------------------------------------------- */
+      main {
+        max-width: var(--page);
+        margin: 0 auto;
+        padding: 0 1.5rem;
+      }
+
+      section {
+        padding: 4rem 0;
+        border-top: 1px solid var(--ctp-surface0);
+      }
+
+      .hero {
+        border-top: 0;
+        text-align: center;
+        padding: 3rem 0 4.5rem;
+      }
+
+      h1 {
+        font-size: clamp(2rem, 6vw, 3.25rem);
+        line-height: 1.1;
+        letter-spacing: -0.02em;
+        margin: 1.25rem 0 0;
+      }
+
+      h1 em {
+        font-style: normal;
+        color: var(--ctp-mauve);
+      }
+
+      h2 {
+        font-size: clamp(1.5rem, 3.5vw, 2rem);
+        letter-spacing: -0.01em;
+        margin: 0 0 0.75rem;
+      }
+
+      h3 {
+        font-size: 1rem;
+        margin: 0 0 0.5rem;
+      }
+
+      .lede {
+        font-size: 1.15rem;
+        color: var(--ctp-subtext0);
+        max-width: 34rem;
+        margin: 1rem auto 0;
+      }
+
+      .sub {
+        color: var(--ctp-subtext0);
+        max-width: 42rem;
+        margin: 0 0 2rem;
+      }
+
+      .meta {
+        color: var(--ctp-overlay0);
+        font-size: 0.875rem;
+        margin-top: 1.75rem;
+      }
+
+      /* --- Buttons --------------------------------------------------- */
+      .cta {
+        display: flex;
+        gap: 0.75rem;
+        justify-content: center;
+        flex-wrap: wrap;
+        margin-top: 2rem;
+      }
+
+      .btn {
+        display: inline-block;
+        padding: 0.7rem 1.4rem;
+        border-radius: 0.5rem;
+        border: 1px solid var(--ctp-surface1);
+        color: var(--ctp-text);
+        text-decoration: none;
+        font-weight: 500;
+        transition: border-color 0.15s ease, background-color 0.15s ease;
+      }
+
+      .btn:hover {
+        border-color: var(--ctp-mauve);
+      }
+
+      .btn.primary {
+        background: var(--ctp-mauve);
+        border-color: var(--ctp-mauve);
+        color: var(--ctp-base);
+      }
+
+      .btn.primary:hover {
+        background: var(--ctp-lavender);
+        border-color: var(--ctp-lavender);
+      }
+
+      /* --- Grids & cards --------------------------------------------- */
+      .grid {
+        display: grid;
+        gap: 1rem;
+      }
+
+      .grid.three {
+        grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+      }
+
+      .card {
+        background: var(--ctp-mantle);
+        border: 1px solid var(--ctp-surface0);
+        border-radius: 0.6rem;
+        padding: 1.25rem;
+      }
+
+      .card p {
+        margin: 0;
+        color: var(--ctp-subtext0);
+        font-size: 0.95rem;
+      }
+
+      .card.warn {
+        border-color: color-mix(in srgb, var(--ctp-peach) 35%, var(--ctp-surface0));
+      }
+
+      .card.warn h3 code {
+        color: var(--ctp-peach);
+      }
+
+      .split {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 2.5rem;
+        align-items: center;
+      }
+
+      .split p {
+        color: var(--ctp-subtext0);
+      }
+
+      .callout {
+        border-left: 3px solid var(--ctp-mauve);
+        padding-left: 1rem;
+        color: var(--ctp-text) !important;
+      }
+
+      /* --- Code samples ---------------------------------------------- */
+      pre {
+        background: var(--ctp-mantle);
+        border: 1px solid var(--ctp-surface1);
+        border-radius: 0.6rem;
+        padding: 1.25rem;
+        overflow-x: auto;
+        margin: 0;
+        font-size: 0.875rem;
+        line-height: 1.7;
+      }
+
+      .steps {
+        max-width: 44rem;
+      }
+
+      /* --- Command list ---------------------------------------------- */
+      .commands {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        border: 1px solid var(--ctp-surface0);
+        border-radius: 0.6rem;
+        overflow: hidden;
+      }
+
+      .commands li {
+        display: flex;
+        gap: 1rem;
+        align-items: baseline;
+        padding: 0.85rem 1.25rem;
+        background: var(--ctp-mantle);
+        flex-wrap: wrap;
+      }
+
+      .commands li + li {
+        border-top: 1px solid var(--ctp-surface0);
+      }
+
+      .commands code {
+        color: var(--ctp-mauve);
+        font-weight: 600;
+        min-width: 5rem;
+      }
+
+      .commands span {
+        color: var(--ctp-subtext0);
+        font-size: 0.95rem;
+      }
+
+      .more {
+        margin: 1.5rem 0 0;
+      }
+
+      .more a {
+        text-decoration: none;
+        font-weight: 500;
+      }
+
+      .more a:hover {
+        text-decoration: underline;
+      }
+
+      /* --- Chain diagram --------------------------------------------- */
+      .chain {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.5rem;
+        text-align: center;
+      }
+
+      .chain .node {
+        width: 100%;
+        padding: 0.85rem 1rem;
+        border: 1px solid var(--ctp-surface1);
+        border-radius: 0.5rem;
+        background: var(--ctp-mantle);
+        font-weight: 500;
+      }
+
+      .chain .link {
+        font-size: 0.8rem;
+        color: var(--ctp-overlay0);
+      }
+
+      .chain .link::before {
+        content: '↓ ';
+      }
+
+      /* --- Footer ---------------------------------------------------- */
+      footer {
+        max-width: var(--page);
+        margin: 0 auto;
+        padding: 2.5rem 1.5rem 4rem;
+        border-top: 1px solid var(--ctp-surface0);
+        color: var(--ctp-overlay0);
+        font-size: 0.9rem;
+      }
+
+      footer div {
+        display: flex;
+        gap: 1.5rem;
+        flex-wrap: wrap;
+        margin-bottom: 0.75rem;
+      }
+
+      footer a {
+        color: var(--ctp-subtext0);
+        text-decoration: none;
+      }
+
+      footer a:hover {
+        color: var(--ctp-text);
+      }
+
+      footer p {
+        margin: 0;
+      }
+
+      /* --- Responsive ------------------------------------------------- */
+      @media (max-width: 46rem) {
+        .split {
+          grid-template-columns: 1fr;
+          gap: 1.75rem;
+        }
+
+        section {
+          padding: 3rem 0;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          transition: none !important;
+        }
+      }
+    </style>
+  </body>
+</html>

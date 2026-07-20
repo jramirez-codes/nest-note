@@ -1,0 +1,83 @@
+/*
+ * Starlight theme mapping. HAND-WRITTEN — edit this file, not the generated one.
+ *
+ * Maps Starlight's `--sl-color-*` variables onto the Catppuccin custom
+ * properties emitted by ./catppuccin.generated.css.
+ *
+ * Note there is only ONE mapping block, not one per theme. The `--ctp-*`
+ * variables are already flavor-scoped by the generated file (Mocha under
+ * `[data-theme='dark']`, Latte under `[data-theme='light']`), and Catppuccin's
+ * flavors are designed so the same role occupies the same slot in each — so a
+ * single mapping flips correctly in both directions. `--ctp-crust` is the
+ * furthest-from-text extreme in both flavors; it's just dark in one and light
+ * in the other.
+ */
+
+:root {
+  /* --- Accent -------------------------------------------------------- */
+  --sl-color-accent-low: color-mix(in srgb, var(--ctp-mauve) 22%, var(--ctp-base));
+  --sl-color-accent: var(--ctp-role-accent);
+  --sl-color-accent-high: var(--ctp-lavender);
+
+  /* --- Gray ramp ----------------------------------------------------- *
+   * Ordered from nearest-to-text to nearest-to-background. Both flavors
+   * define all of these, so the ramp inverts automatically.              */
+  --sl-color-white: var(--ctp-text);
+  --sl-color-gray-1: var(--ctp-subtext1);
+  --sl-color-gray-2: var(--ctp-subtext0);
+  --sl-color-gray-3: var(--ctp-overlay1);
+  --sl-color-gray-4: var(--ctp-overlay0);
+  --sl-color-gray-5: var(--ctp-surface1);
+  --sl-color-gray-6: var(--ctp-surface0);
+  --sl-color-black: var(--ctp-crust);
+
+  /* --- Surfaces ------------------------------------------------------ */
+  --sl-color-bg: var(--ctp-role-background);
+  --sl-color-bg-nav: var(--ctp-mantle);
+  --sl-color-bg-sidebar: var(--ctp-mantle);
+  --sl-color-bg-inline-code: var(--ctp-role-surface);
+  --sl-color-bg-accent: var(--ctp-role-accent);
+
+  /* --- Text ---------------------------------------------------------- *
+   * Body text uses the full-strength role rather than Starlight's default
+   * gray-2, which is a touch low-contrast against Mocha's base.          */
+  --sl-color-text: var(--ctp-role-text);
+  --sl-color-text-accent: var(--ctp-role-accent);
+  --sl-color-text-invert: var(--ctp-crust);
+
+  /* --- Lines --------------------------------------------------------- */
+  --sl-color-hairline: var(--ctp-role-border);
+  --sl-color-hairline-light: var(--ctp-surface1);
+  --sl-color-hairline-shade: var(--ctp-crust);
+
+  /* --- Asides -------------------------------------------------------- */
+  --sl-color-asides-text-accent: var(--ctp-role-accent);
+  --sl-color-green: var(--ctp-green);
+  --sl-color-orange: var(--ctp-peach);
+  --sl-color-red: var(--ctp-role-danger);
+  --sl-color-blue: var(--ctp-blue);
+  --sl-color-purple: var(--ctp-mauve);
+}
+
+/*
+ * Typography. Starlight's defaults are good; these are small corrections for
+ * a docs site that leans heavily on inline code and long prose lines.
+ */
+:root {
+  --sl-content-width: 48rem;
+}
+
+/* Inline code: the default is loud when it appears several times per sentence,
+   which it does constantly here (flag names, file paths, slash commands). */
+:not(pre) > code {
+  border: 1px solid var(--ctp-role-border);
+  border-radius: 0.25rem;
+  padding: 0.125em 0.375em;
+  font-size: 0.9em;
+  color: var(--ctp-role-text);
+}
+
+/* Fenced blocks get the recessed treatment the app uses for the same thing. */
+.expressive-code .frame pre {
+  border-color: var(--ctp-role-code-block-border);
+}

@@ -1,0 +1,93 @@
+---
+title: Projects & the laptop
+description: The commands that run code on your paired laptop — code, run, delete and view.
+sidebar:
+  order: 2
+requiresServer: true
+requiresFlag:
+  - allow-code
+  - allow-exec
+  - allow-view
+---
+
+import Requires from '../../../components/Requires.astro';
+
+<Requires />
+
+These four commands are documented together because they share one
+prerequisite: **each executes something on your laptop as your user account**,
+and each is off until you explicitly turn it on.
+
+If you haven't read [the security model](../server/security.md), read it before
+enabling any of these.
+
+## `/code`
+
+> Start a Claude Code agent in a project on the paired laptop — chat, watch its
+> tools run.
+
+```text
+/code my-api
+```
+
+Starts a **persistent, multi-turn** Claude Code agent in `projects/my-api`
+(under the server's `-root`). The card shows the agent's tool calls as they
+happen, and the session survives swiping away and coming back.
+
+:::danger[Every tool is auto-accepted]
+`-allow-code` runs the agent in `bypassPermissions` mode — there is no per-tool
+confirmation prompt. Anything the agent decides to do, it does: writing files,
+running commands, installing packages.
+
+That is the entire point of the feature, and the entire risk of it. Enable it
+only for a laptop you fully trust with a phone you fully control.
+:::
+
+## `/run`
+
+> Run a shell command inside a project on the paired laptop — output streams
+> live into a terminal card.
+
+```text
+/run my-api npm test
+```
+
+Note the signature: **`/run PROJECT <cmd>`**. The first argument is the project
+directory, not part of the command. Output streams into a terminal-styled card
+as it's produced.
+
+Requires `-allow-exec`, which is the most direct capability of the three: it is
+a shell, and its only gate is the pinned tunnel plus the bearer token.
+
+## `/delete`
+
+> Delete a project folder on the paired laptop — asks to confirm, then removes
+> it.
+
+```text
+/delete my-api
+```
+
+Removes `projects/my-api` from the laptop. The card asks for confirmation
+first. This is a real recursive delete on your filesystem — there is no trash
+bin.
+
+## `/view`
+
+> Preview a web page from a localhost dev server on the paired laptop.
+
+```text
+/view 5173
+```
+
+Loads `http://localhost:5173` from the laptop into an iframe card, live. Handy
+for glancing at a dev server from the couch.
+
+:::caution[The only unauthenticated surface]
+`-allow-view` opens an on-demand reverse proxy that serves the previewed dev
+server over **cleartext HTTP to anyone on your LAN** — outside the pinned
+tunnel, with no token.
+
+Everything else here is protected by the tunnel. This isn't. Treat it as
+"anyone on this Wi-Fi can see my dev server."
+:::

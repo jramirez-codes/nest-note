@@ -41,6 +41,16 @@ local.properties
 *.aab
 dist/
 
+# Astro (site/) — content-collection type cache, regenerated on every build
+#
+.astro/
+
+# Companion server runtime artifacts. update-restart.log records /update-server
+# runs and embeds the advertised host (e.g. a tailnet IP) — never commit it.
+#
+server/update-restart.log
+server/ainotepad-server
+
 # node.js
 #
 node_modules/

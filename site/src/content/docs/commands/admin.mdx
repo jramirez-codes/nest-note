@@ -1,0 +1,54 @@
+---
+title: Admin
+description: Pairing a device and updating the server from inside a note.
+sidebar:
+  order: 5
+---
+
+import Requires from '../../../components/Requires.astro';
+
+<Requires />
+
+## `/pair`
+
+> Pair a device by QR code or payload.
+
+```text
+/pair
+```
+
+Opens the camera to scan the QR the server prints. Or paste the payload
+directly:
+
+```text
+/pair {"v":1,"host":"192.168.1.20","port":8443,"pin":"…","code":"…"}
+```
+
+This is the one command that works on an **unpaired** device — it's how a
+device becomes paired. Full details on [the pairing page](../server/pairing.md).
+
+## `/update-server`
+
+> Update the paired laptop: pull the latest code, rebuild the Go server, and
+> restart it.
+
+```text
+/update-server
+```
+
+From your phone, this makes the laptop:
+
+1. `git pull` the ai-notepad checkout (`-repo-dir`, defaulting to
+   `<root>/ai-notepad`),
+2. rebuild the Go server,
+3. restart into the new binary.
+
+The card streams each step. The connection drops briefly during the restart and
+the app reconnects on its own — you don't need to re-pair, since the
+certificate and token are persisted in the server's `-dir`.
+
+:::caution[It restarts the process you're talking to]
+If the rebuild fails, the server stays on the old binary — that's the intended
+safe path. But a bad commit that *builds* and then crashes on boot will leave
+you with nothing to reconnect to until you fix it at the laptop.
+:::
