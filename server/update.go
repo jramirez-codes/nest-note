@@ -246,7 +246,18 @@ func runUpdateStep(dir string, timeout time.Duration, extraEnv []string, name st
 // child runs in its own session (Setsid) so it survives our exit, sleeps briefly
 // so the port is free by the time it binds, then replaces itself with the server
 // via exec. Its stdio goes to a log beside the binary.
+//
+// Under systemd (INVOCATION_ID is set on every process a unit starts) this
+// self-relaunch is skipped entirely: the binary is already swapped in place, so
+// we just exit and let Restart=always bring the unit back up as the tracked
+// main process. Spawning our own detached child here too would race the
+// supervisor's own restart for the port a few seconds later — both end up
+// trying to bind :8443, and the loser crash-loops forever.
 func restartInto(bin string) {
+	if os.Getenv("INVOCATION_ID") != "" {
+		time.Sleep(restartDelay / 2)
+		os.Exit(0)
+	}
 	wd, err := os.Getwd()
 	if err != nil {
 		wd = filepath.Dir(bin)
