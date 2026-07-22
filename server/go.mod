@@ -1,4 +1,4 @@
-module ainotepad/server
+module nestnote/server
 
 go 1.26
 

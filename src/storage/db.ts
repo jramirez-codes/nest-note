@@ -8,7 +8,7 @@ import { open, type DB, type Transaction } from '@op-engineering/op-sqlite';
  * key/value store all live in this one file so there is a single source of
  * truth (see `storage/pages.ts`, `storage/notebooks.ts`, `storage/kv.ts`).
  */
-const DB_NAME = 'ainotepad.sqlite';
+const DB_NAME = 'nestnote.sqlite';
 
 /**
  * Current schema version. Bump this and add a branch in {@link migrate} when

@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-All app state lives in a single SQLite database (`ainotepad.sqlite`) via
+All app state lives in a single SQLite database (`nestnote.sqlite`) via
 [op-sqlite](https://github.com/OP-Engineering/op-sqlite). SQLite is the only
 source of truth: notes, notebooks, full-text search, the key/value store, and
 bulky AI-card bodies all live in one file. The rest of the app imports only

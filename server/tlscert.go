@@ -42,7 +42,7 @@ func loadOrCreateCert(dir string, sans []string) (tls.Certificate, error) {
 
 	tmpl := x509.Certificate{
 		SerialNumber:          serial,
-		Subject:               pkix.Name{CommonName: "ainotepad-server"},
+		Subject:               pkix.Name{CommonName: "nestnote-server"},
 		NotBefore:             time.Now().Add(-time.Hour),
 		NotAfter:              time.Now().AddDate(10, 0, 0),
 		KeyUsage:              x509.KeyUsageDigitalSignature,

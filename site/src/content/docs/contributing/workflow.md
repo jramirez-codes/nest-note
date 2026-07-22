@@ -44,7 +44,7 @@ current.
 ## The server
 
 ```bash
-yarn server:build   # -> server/ainotepad-server
+yarn server:build   # -> server/nestnote-server
 cd server && go run .
 ```
 
@@ -56,7 +56,7 @@ Remember that `yarn server:start` enables all three capability flags. See
 ```bash
 cd site
 npm install
-npm run dev         # http://localhost:4321/ai-notepad/
+npm run dev         # http://localhost:4321/nest-note/
 npm run build && npm run preview
 ```
 

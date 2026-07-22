@@ -51,15 +51,31 @@ const restartDelay = 2 * time.Second
 // README build step and server/.gitignore). We build/swap/relaunch this fixed
 // name inside the repo's server/ dir rather than trusting os.Executable(), which
 // points into a temp dir under `go run` and needn't even sit in the repo.
-const serverBinaryName = "ainotepad-server"
+const serverBinaryName = "nestnote-server"
+
+// legacyServerBinaryName is what the binary was called before the NestNote
+// rebrand. A deployment installed back then may be supervised by that path (a
+// systemd unit, a launch script), so after every build we mirror the fresh
+// binary onto it — otherwise the next reboot would silently start pre-rebrand
+// code on a machine nobody can log into.
+const legacyServerBinaryName = "ainotepad-server"
+
+// repoDirName is the checkout directory under -root; legacyRepoDirName is what
+// it was called before the rebrand (the GitHub repo moved ai-notepad ->
+// nest-note). Deployments that cloned before the rename still have the old
+// directory on disk, and self-update has to keep working on them untouched.
+const (
+	repoDirName       = "nest-note"
+	legacyRepoDirName = "ai-notepad"
+)
 
 // updateHandler runs on the pinned mux. A plain authed POST triggers the
 // pull/build/restart recipe; `?probe=1` is a cheap liveness check the phone polls
 // after a restart to learn the new process is up. Always enabled — the recipe is
 // fixed, not caller-controlled.
 //
-// root is the server's -root scaffold dir; the ai-notepad checkout lives at
-// <root>/ai-notepad. repoOverride is the optional -repo-dir flag that points
+// root is the server's -root scaffold dir; the nest-note checkout lives at
+// <root>/nest-note. repoOverride is the optional -repo-dir flag that points
 // straight at the checkout instead. Resolving the repo this way (not from the
 // running binary's location) is what lets `git pull` run in the real checkout
 // even when the binary lives elsewhere (a temp `go run` build, a copied binary).
@@ -78,8 +94,8 @@ func updateHandler(token, root, repoOverride string) http.HandlerFunc {
 			return
 		}
 
-		// Locate the ai-notepad git checkout to update. This is the step that was
-		// failing: the repo is <root>/ai-notepad, not necessarily next to the
+		// Locate the nest-note git checkout to update. This is the step that was
+		// failing: the repo is <root>/nest-note, not necessarily next to the
 		// running binary.
 		repoDir, err := resolveRepo(root, repoOverride)
 		if err != nil {
@@ -113,6 +129,13 @@ func updateHandler(token, root, repoOverride string) http.HandlerFunc {
 			return
 		}
 
+		// 2b. Keep a pre-rebrand binary path (if any) pointing at the new build, so
+		// a supervisor or reboot can't resurrect the old code. Best effort — we
+		// restart into the new name regardless.
+		if err := mirrorLegacyBinary(serverDir, targetBin); err != nil {
+			log.Printf("update: could not refresh legacy binary name: %v", err)
+		}
+
 		// 3. Tell the phone we're going down for a restart, and make sure it's on
 		// the wire before we sever the connection.
 		out := tailStr(pullOut + "\n" + buildOut)
@@ -127,22 +150,63 @@ func updateHandler(token, root, repoOverride string) http.HandlerFunc {
 	}
 }
 
-// resolveRepo finds the ai-notepad git checkout to self-update: the -repo-dir
-// override if set, otherwise <root>/ai-notepad. Verifies it's actually a git work
-// tree and returns its root, or a clear error explaining how to point us at it.
+// resolveRepo finds the nest-note git checkout to self-update: the -repo-dir
+// override if set, otherwise <root>/nest-note, falling back to the pre-rebrand
+// <root>/ai-notepad when that's the directory actually on disk. Verifies it's a
+// git work tree and returns its root, or a clear error explaining how to point
+// us at it.
 func resolveRepo(root, override string) (string, error) {
 	repo := override
 	if repo == "" {
 		if root == "" {
-			return "", fmt.Errorf("/update-server needs the repo location: start the server with -root <dir> (the checkout is <root>/ai-notepad), or pass -repo-dir <path>")
+			return "", fmt.Errorf("/update-server needs the repo location: start the server with -root <dir> (the checkout is <root>/%s), or pass -repo-dir <path>", repoDirName)
 		}
-		repo = filepath.Join(root, "ai-notepad")
+		repo = filepath.Join(root, repoDirName)
+		if !isDir(repo) {
+			if legacy := filepath.Join(root, legacyRepoDirName); isDir(legacy) {
+				repo = legacy
+			}
+		}
 	}
 	top, err := gitToplevel(repo)
 	if err != nil {
-		return "", fmt.Errorf("no ai-notepad git checkout at %s: %v", repo, err)
+		return "", fmt.Errorf("no nest-note git checkout at %s: %v", repo, err)
 	}
 	return top, nil
+}
+
+// isDir reports whether path exists and is a directory (following symlinks, so a
+// checkout symlinked into place still counts).
+func isDir(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.IsDir()
+}
+
+// mirrorLegacyBinary copies the freshly-built binary over the pre-rebrand
+// binary name, but only when that file already exists — i.e. only for
+// deployments that were installed before the rename and may still be launched
+// through it. Best effort: a failure here doesn't fail the update, since the
+// new name is what we actually restart into. Writing via a temp file + rename
+// keeps the swap atomic and is safe even if the running process IS that binary
+// (Linux keeps our inode alive until we exit).
+func mirrorLegacyBinary(serverDir, freshBin string) error {
+	legacy := filepath.Join(serverDir, legacyServerBinaryName)
+	if _, err := os.Stat(legacy); err != nil {
+		return nil // no pre-rebrand install here; nothing to keep in sync
+	}
+	data, err := os.ReadFile(freshBin)
+	if err != nil {
+		return err
+	}
+	tmp := legacy + ".new"
+	if err := os.WriteFile(tmp, data, 0o755); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, legacy); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // gitToplevel returns the git work-tree root containing dir, or an error if dir

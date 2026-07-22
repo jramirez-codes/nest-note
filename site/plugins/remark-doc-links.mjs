@@ -3,11 +3,11 @@
  *
  * WHY
  * ---
- * The site is served from a sub-path (`/ai-notepad/`), so links must carry
+ * The site is served from a sub-path (`/nest-note/`), so links must carry
  * that base. Three obvious approaches all fail:
  *
  *   1. `[x](/server/flags/)`          — 404s in production; the base is missing.
- *   2. `[x](/ai-notepad/server/flags/)` — works, but hardcodes the base in every
+ *   2. `[x](/nest-note/server/flags/)` — works, but hardcodes the base in every
  *      page, so moving to a custom domain becomes a 40-file find-and-replace.
  *   3. `[x](../server/flags.md)`      — Astro does NOT rewrite these (there is
  *      no markdown-link rewriting in Astro 7), so the `.md` leaks into the
@@ -27,7 +27,7 @@ import { relative, resolve, dirname, sep } from 'node:path';
 
 const DOCS_ROOT = resolve(import.meta.dirname, '../src/content/docs');
 
-/** '/ai-notepad' -> '/ai-notepad'; '/' or '' -> '' */
+/** '/nest-note' -> '/nest-note'; '/' or '' -> '' */
 function normalizeBase(base) {
   if (!base || base === '/') return '';
   return base.startsWith('/') ? base.replace(/\/$/, '') : `/${base.replace(/\/$/, '')}`;

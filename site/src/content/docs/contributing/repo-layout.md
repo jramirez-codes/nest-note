@@ -48,7 +48,8 @@ Neither should be hand-edited. The site's copy is checked in CI via
 whole repo. It exports:
 
 - `mocha` — the raw dark palette the app ships
-- `latte` — the official light flavor, used only by the docs site
+- `latte` — the official light flavor; still generated into the site's CSS,
+  but unreachable since the docs site went dark-only
 - `makeSemantic(flavor)` — the role mapping (background, text, accent, …)
 - `semantic` — `makeSemantic(mocha)`, what the app consumes
 

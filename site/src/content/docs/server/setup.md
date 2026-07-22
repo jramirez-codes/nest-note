@@ -37,7 +37,7 @@ get `/ask`, `/clean` and the other model-only commands.
 To build a binary instead:
 
 ```bash
-yarn server:build      # -> server/ainotepad-server
+yarn server:build      # -> server/nestnote-server
 ```
 
 ## The `-root` layout
@@ -46,13 +46,13 @@ Most real use passes `-root`, which scaffolds a working directory and turns on
 MCP:
 
 ```bash
-go run . -root ~/ainotepad-data
+go run . -root ~/nestnote-data
 ```
 
 That creates and manages:
 
 ```
-~/ainotepad-data/
+~/nestnote-data/
   projects/       Claude runs here; /code <name> gets projects/<name>
   mcp/            MCP servers, built on startup
   orchestrator/   subject notes maintained by /talk and /agg-tasks
@@ -60,6 +60,17 @@ That creates and manages:
 
 Without `-root`, Claude runs in `-workdir` (defaulting to the current
 directory) and MCP is disabled.
+
+If that startup scaffold fails — a capability server under `mcp/` that doesn't
+compile, say — the server logs the error and keeps running with MCP disabled
+rather than exiting. Every `/run` re-scaffolds, so the fix is picked up on the
+next message, and a server that stays up is one you can still reach with
+[`/update-server`](../commands/admin.mdx).
+
+Roots created before the rebrand are migrated in place on the next scaffold:
+the generated `go.mod` files move to the `nestnote-*` module names, and stale
+`ainotepad-*` imports in your own server code are rewritten to match. Only the
+import path changes — the rest of your edits are left alone.
 
 ## The convenience script
 

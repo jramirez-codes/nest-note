@@ -1,11 +1,11 @@
 ---
 title: Install & run
-description: Build ainotepad from source and get it onto an Android or iOS device.
+description: Build NestNote from source and get it onto an Android or iOS device.
 sidebar:
   order: 1
 ---
 
-There is no app store listing. ainotepad is built from source and sideloaded —
+There is no app store listing. NestNote is built from source and sideloaded —
 if you're reading this, you're expected to have a working React Native
 toolchain.
 
@@ -21,8 +21,8 @@ toolchain.
 ## Clone and install
 
 ```bash
-git clone https://github.com/jramirez-codes/ai-notepad.git
-cd ai-notepad
+git clone https://github.com/jramirez-codes/nest-note.git
+cd nest-note
 yarn install
 ```
 

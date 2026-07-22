@@ -100,7 +100,7 @@ export async function fetchLinkPreview(url: string): Promise<LinkPreview> {
       signal: controller.signal,
       headers: {
         // Some sites only emit OG tags for a browser-ish UA.
-        'User-Agent': 'Mozilla/5.0 (compatible; ainotepad-linkpreview)',
+        'User-Agent': 'Mozilla/5.0 (compatible; nestnote-linkpreview)',
         Accept: 'text/html,application/xhtml+xml',
       },
     });

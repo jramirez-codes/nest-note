@@ -50,7 +50,7 @@ stops resolving. Pair against a stable address instead; see
 
 ## Discovery
 
-On the LAN the server advertises itself over mDNS as `_ainotepad._tcp`, so the
+On the LAN the server advertises itself over mDNS as `_nestnote._tcp`, so the
 app can find it without knowing the address. Off-LAN, mDNS goes quiet and the
 app falls back to the stored pairing address — which is the behavior you want,
 provided you paired against something reachable.

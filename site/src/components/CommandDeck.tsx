@@ -68,7 +68,7 @@ const COMMANDS: Command[] = [
     what: 'Start a Claude Code agent in a project directory on the paired laptop and watch it work from your phone.',
     needs: ['-allow-code'],
     example: '/code fix the flaky pairing test',
-    result: 'agent running in ~/ainotepad-data/projects/app …',
+    result: 'agent running in ~/nestnote-data/projects/app …',
   },
 ];
 

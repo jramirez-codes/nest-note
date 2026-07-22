@@ -25,7 +25,7 @@ src/
 ## Design choices that keep it scalable
 
 **SQLite is the single source of truth.** Notes, notebooks, full-text search
-and a key/value store all live in one `ainotepad.sqlite` file. The app imports
+and a key/value store all live in one `nestnote.sqlite` file. The app imports
 only from `src/storage/` and never touches SQL directly. `initStorage()` —
 called once in `App.tsx` — opens and migrates the database before any screen
 renders. See [storage](./storage.md).

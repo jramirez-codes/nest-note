@@ -8,6 +8,6 @@ export function fireAndForget(
   context: string,
 ): void {
   promise.catch(error => {
-    console.warn(`[ainotepad] ${context} failed:`, error);
+    console.warn(`[NestNote] ${context} failed:`, error);
   });
 }

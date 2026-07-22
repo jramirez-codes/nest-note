@@ -1,7 +1,7 @@
 /**
  * Base-aware URL helper.
  *
- * The site is served from a sub-path (`/ai-notepad/` on GitHub Pages), so every
+ * The site is served from a sub-path (`/nest-note/` on GitHub Pages), so every
  * hand-written `href`/`src` must be prefixed with that base. Starlight prefixes
  * its own chrome (sidebar, pagination, search) automatically — but nothing we
  * write by hand gets that for free, and a bare `/introduction/` silently 404s
@@ -11,7 +11,7 @@
  * through `withBase()`.** No exceptions. Markdown files are exempt — they use
  * relative file links (`../server/flags.md`), which Astro rewrites at build.
  *
- * `import.meta.env.BASE_URL` is always trailing-slashed by Astro ('/ai-notepad/'),
+ * `import.meta.env.BASE_URL` is always trailing-slashed by Astro ('/nest-note/'),
  * or '/' when no base is configured — both are normalized here.
  */
 const BASE = import.meta.env.BASE_URL;

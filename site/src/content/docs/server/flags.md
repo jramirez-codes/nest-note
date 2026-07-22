@@ -24,10 +24,27 @@ rather than just the LAN IP, so it also listens on the tailnet interface.
 
 | Flag         | Default              | Meaning                                                                       |
 | ------------ | -------------------- | ----------------------------------------------------------------------------- |
-| `-dir`       | platform state dir   | Directory for the cert, key and token.                                        |
+| `-dir`       | `~/.nestnote-server` | Directory for the cert, key and token.                                        |
 | `-workdir`   | current directory    | Directory Claude runs in. **Ignored when `-root` is set.**                     |
 | `-root`      | *(disabled)*         | Scaffold `projects/`, `mcp/`, `orchestrator/` under this dir and enable MCP; Claude runs in `<root>/projects`. |
-| `-repo-dir`  | `<root>/ai-notepad`  | The ai-notepad git checkout that `/update-server` pulls and rebuilds.          |
+| `-repo-dir`  | `<root>/nest-note`  | The nest-note git checkout that `/update-server` pulls and rebuilds.          |
+
+### Pre-rebrand installs keep working
+
+The project used to be called ai-notepad, and both defaults above were renamed
+with it. A server installed before the rename keeps running untouched — the
+defaults fall back to the old names when those are the ones on disk:
+
+- `-dir` falls back to `~/.ainotepad-server` when `~/.nestnote-server` doesn't
+  exist. This matters: the cert and token live there, so silently starting in a
+  fresh directory would regenerate both and break the phone's pinned
+  certificate *and* its saved token at once. Recovering from that needs a QR
+  re-pair at the machine.
+- `-repo-dir` falls back to `<root>/ai-notepad` when `<root>/nest-note` doesn't
+  exist, so [`/update-server`](../commands/admin.mdx) still finds the checkout.
+
+When both names exist the current one wins. Pass either flag explicitly to
+override the search entirely.
 
 ## Behavior
 
@@ -58,11 +75,11 @@ tunnel.** See [the security model](./security.md).
 go run .
 
 # Scaffolded working directory, still no capability flags.
-go run . -root ~/ainotepad-data
+go run . -root ~/nestnote-data
 
 # Reachable over Tailscale.
-go run . -root ~/ainotepad-data -advertise-host "$(tailscale ip -4 | head -n1)"
+go run . -root ~/nestnote-data -advertise-host "$(tailscale ip -4 | head -n1)"
 
 # Everything on — only for a laptop you fully trust.
-go run . -root ~/ainotepad-data -allow-exec -allow-code -allow-view
+go run . -root ~/nestnote-data -allow-exec -allow-code -allow-view
 ```

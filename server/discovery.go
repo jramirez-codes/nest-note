@@ -2,7 +2,7 @@ package main
 
 import "github.com/grandcat/zeroconf"
 
-// advertise publishes the server on the LAN as _ainotepad._tcp so the phone can
+// advertise publishes the server on the LAN as _nestnote._tcp so the phone can
 // re-find it after the laptop's IP changes, without hand-typing an address.
 // Discovery grants no trust on its own: the TXT record carries the SPKI pin only
 // as a convenience, and the phone still trusts the pin it captured from the QR
@@ -10,7 +10,7 @@ import "github.com/grandcat/zeroconf"
 func advertise(instance string, port int, pin string) (*zeroconf.Server, error) {
 	return zeroconf.Register(
 		instance,
-		"_ainotepad._tcp",
+		"_nestnote._tcp",
 		"local.",
 		port,
 		[]string{"v=1", "pin=" + pin},

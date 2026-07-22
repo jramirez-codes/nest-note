@@ -47,7 +47,7 @@ The repo ships this as `yarn server:remote` — though note that script also
 enables all three [capability flags](./security.md).
 
 :::note[mDNS goes quiet off-LAN]
-Discovery (`_ainotepad._tcp`) is LAN-only by design. Off-LAN the app falls back
+Discovery (`_nestnote._tcp`) is LAN-only by design. Off-LAN the app falls back
 to the stored pairing address — which is exactly the tailnet IP you paired
 against.
 :::

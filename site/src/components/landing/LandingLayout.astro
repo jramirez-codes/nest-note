@@ -27,23 +27,19 @@ import LandingNav from './LandingNav.astro';
 import { withBase } from '../../lib/url';
 ---
 
-<html lang="en">
+<!-- data-theme is baked into the markup: the site is dark-only, and an
+     attribute (unlike the docs' ThemeProvider script) holds without JS. -->
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>ainotepad — notes in, tools out</title>
+    <title>NestNote — notes in, tools out</title>
     <meta
       name="description"
       content="A markdown notepad you flip through page by page. An orchestrator on your own laptop files pages into subjects, subjects grow into queryable MCP servers, and no cloud sits anywhere in the loop."
     />
     <link rel="icon" href={withBase('/favicon.svg')} type="image/svg+xml" />
     <script is:inline>
-      try {
-        const stored = localStorage.getItem('starlight-theme');
-        if (stored === 'light' || stored === 'dark') {
-          document.documentElement.dataset.theme = stored;
-        }
-      } catch {}
       document.documentElement.classList.add('js');
     </script>
   </head>

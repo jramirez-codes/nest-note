@@ -1,9 +1,9 @@
 {
-  "name": "ainotepad-site",
+  "name": "nestnote-site",
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Landing page and documentation for ainotepad. Independent sub-project — not part of the React Native app's dependency graph.",
+  "description": "Landing page and documentation for NestNote. Independent sub-project — not part of the React Native app's dependency graph.",
   "engines": {
     "node": ">=22.12.0"
   },

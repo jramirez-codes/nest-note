@@ -1,4 +1,4 @@
-# ainotepad
+# NestNote
 
 A markdown notepad you flip through **page by page**, like a physical pad. Each
 note is a full-screen page; swipe left/right to move between them, and tap the
@@ -11,7 +11,7 @@ companion server on your own laptop — `/ask` a question, `/code` in a project,
 
 Without a paired server, it's a fully functional **offline markdown pad**.
 
-📖 **[Documentation →](https://jramirez-codes.github.io/ai-notepad/)**
+📖 **[Documentation →](https://jramirez-codes.github.io/nest-note/)**
 
 > This README is a pitch and a repo map. Everything operational — install,
 > pairing, the security model, all 15 slash commands, architecture — lives in
@@ -44,16 +44,16 @@ For the AI commands, run the companion server on your laptop and pair once by
 scanning the QR it prints:
 
 ```bash
-cd server && go run . -root ~/ainotepad-data
+cd server && go run . -root ~/nestnote-data
 ```
 
-Full instructions: **[Install & run](https://jramirez-codes.github.io/ai-notepad/start/install/)**
-and **[Server setup](https://jramirez-codes.github.io/ai-notepad/server/setup/)**.
+Full instructions: **[Install & run](https://jramirez-codes.github.io/nest-note/start/install/)**
+and **[Server setup](https://jramirez-codes.github.io/nest-note/server/setup/)**.
 
 > ⚠️ The server's `-allow-exec`, `-allow-code` and `-allow-view` flags are **off
 > by default**, and each one runs code as your user account over the tunnel.
 > Read the
-> **[security model](https://jramirez-codes.github.io/ai-notepad/server/security/)**
+> **[security model](https://jramirez-codes.github.io/nest-note/server/security/)**
 > before enabling any of them. Note that the `yarn server:start` convenience
 > script enables all three.
 
@@ -75,7 +75,7 @@ src/
 Three design choices carry most of the weight:
 
 - **SQLite is the single source of truth.** Notes, notebooks, full-text search
-  and a key/value store all live in one `ainotepad.sqlite` file via
+  and a key/value store all live in one `nestnote.sqlite` file via
   [op-sqlite](https://github.com/OP-Engineering/op-sqlite). `initStorage()` runs
   once in `App.tsx` before any screen renders.
 - **Derived data isn't stored.** Previews come from `deriveTitle(content)`, so
@@ -83,7 +83,7 @@ Three design choices carry most of the weight:
 - **Runs outlive their pages.** In-flight AI runs are hoisted into a long-lived
   `runRegistry`, so swiping between pages doesn't kill them.
 
-Details: **[Architecture](https://jramirez-codes.github.io/ai-notepad/architecture/overview/)**.
+Details: **[Architecture](https://jramirez-codes.github.io/nest-note/architecture/overview/)**.
 
 ## Generated files
 
@@ -104,5 +104,5 @@ yarn lint
 yarn test
 ```
 
-See **[Contributing](https://jramirez-codes.github.io/ai-notepad/contributing/repo-layout/)**
+See **[Contributing](https://jramirez-codes.github.io/nest-note/contributing/repo-layout/)**
 for the repo layout, the development workflow, and how to work on the docs.

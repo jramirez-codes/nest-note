@@ -3,7 +3,7 @@
  *
  * The heavy lifting is native (Android: MediaRecorder inside a microphone-typed
  * foreground service, so capture survives backgrounding; see
- * android/app/src/main/java/com/ainotepad/recorder). This module is the JS seam:
+ * android/app/src/main/java/com/NestNote/recorder). This module is the JS seam:
  * it requests the runtime permissions, starts/stops the one active recording,
  * and exports the finished clip into the device's shared Recordings library
  * (where a Voice Recorder app or file browser can pick it up).
@@ -80,7 +80,7 @@ export async function ensureRecordingPermissions(): Promise<string | null> {
     {
       title: 'Microphone access',
       message:
-        'ainotepad needs the microphone to record audio. Everyone being recorded ' +
+        'NestNote needs the microphone to record audio. Everyone being recorded ' +
         'should be aware and consent.',
       buttonPositive: 'Allow',
       buttonNegative: 'Deny',

@@ -1,4 +1,4 @@
-# AI Notepad
+# NestNote
 
 React Native note-taking app (the "pad") + Go companion server (`server/`) that runs
 Claude-powered subjects/orchestrator, with a documentation site in `site/`
@@ -58,6 +58,6 @@ grep -ri "<feature-or-flag>" site/src/content/docs/
 
 ```bash
 cd site
-npm run dev    # http://localhost:4321/ai-notepad/
+npm run dev    # http://localhost:4321/nest-note/
 npm run build  # catches broken links / schema errors
 ```

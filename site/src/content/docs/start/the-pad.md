@@ -50,7 +50,7 @@ entirely offline; it's a local index, not a server feature.
 
 ## What's stored where
 
-Everything lives in one `ainotepad.sqlite` file on the device: notes,
+Everything lives in one `nestnote.sqlite` file on the device: notes,
 notebooks, the full-text index, a key/value store, and the bodies of AI cards.
 There are no accounts, no cloud sync, and no third-party service holding your
 notes.

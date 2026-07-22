@@ -11,7 +11,7 @@ living in `site/` as an independent sub-project.
 ```bash
 cd site
 npm install
-npm run dev     # http://localhost:4321/ai-notepad/
+npm run dev     # http://localhost:4321/nest-note/
 ```
 
 ## Adding a page
@@ -61,7 +61,7 @@ page be `.mdx`, not `.md`.
 
 ## Link rules
 
-The site is served from a **sub-path** (`/ai-notepad/`). Starlight prefixes its
+The site is served from a **sub-path** (`/nest-note/`). Starlight prefixes its
 own chrome automatically, but nothing hand-written gets that for free. Two
 rules:
 
@@ -69,9 +69,9 @@ rules:
 file on disk, which your editor can follow:
 
 ```markdown
-[flags](../server/flags.md)        ✅ becomes /ai-notepad/server/flags/
+[flags](../server/flags.md)        ✅ becomes /nest-note/server/flags/
 [flags](/server/flags/)            ❌ 404s in production — no base
-[flags](/ai-notepad/server/flags/) ❌ works, but hardcodes the base
+[flags](/nest-note/server/flags/) ❌ works, but hardcodes the base
 ```
 
 Astro does **not** rewrite markdown links on its own. `plugins/remark-doc-links.mjs`
@@ -144,11 +144,12 @@ generated palette stays the single source of truth, with no second copy to
 drift.
 
 :::caution[Deciding light vs dark in JS]
-Use the `dark` flag from `usePalette()`. Do **not** infer it from
-`document.documentElement.dataset.theme` directly: outside the Starlight layout
-a first-time visitor has *no* `data-theme` at all, and the generated CSS then
-falls back to the OS preference. Treating a missing attribute as dark renders
-the island's dark styling on top of a Latte page.
+The site is **dark-only**: the landing page bakes `data-theme="dark"` into its
+`<html>` tag, and the docs pin it via the `ThemeProvider`/`ThemeSelect`
+overrides in `astro.config.mjs` (the header toggle is removed). If an island
+still needs to branch on flavor, use the `dark` flag from `usePalette()` rather
+than reading `document.documentElement.dataset.theme` yourself — it mirrors the
+CSS cascade, so it stays correct if a light theme ever comes back.
 :::
 
 ## Gotchas
@@ -180,9 +181,8 @@ committed file is stale. Starlight variable mapping is hand-written in
 npm run build && npm run preview
 ```
 
-Browse from `http://localhost:4321/ai-notepad/` — **not** `/`, which 404s and
-looks like a broken build. Click through the sidebar, toggle light/dark, and
-run a search.
+Browse from `http://localhost:4321/nest-note/` — **not** `/`, which 404s and
+looks like a broken build. Click through the sidebar and run a search.
 
 ## Keeping the README honest
 

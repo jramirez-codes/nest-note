@@ -4,4 +4,4 @@
  * astro.config.mjs keeps its own copy — the config is evaluated before the
  * src/ module graph exists, so it can't import from here.
  */
-export const REPO = 'https://github.com/jramirez-codes/ai-notepad';
+export const REPO = 'https://github.com/jramirez-codes/nest-note';

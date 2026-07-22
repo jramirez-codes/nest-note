@@ -1,5 +1,5 @@
 /**
- * ainotepad — a markdown notepad you flip through page by page.
+ * NestNote — a markdown notepad you flip through page by page.
  *
  * @format
  */

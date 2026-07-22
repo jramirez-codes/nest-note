@@ -5,14 +5,14 @@ import react from '@astrojs/react';
 import starlightLinksValidator from 'starlight-links-validator';
 import { remarkDocLinks } from './plugins/remark-doc-links.mjs';
 
-const REPO = 'https://github.com/jramirez-codes/ai-notepad';
-const BASE = '/ai-notepad';
+const REPO = 'https://github.com/jramirez-codes/nest-note';
+const BASE = '/nest-note';
 
 export default defineConfig({
   // `site` is the ORIGIN ONLY — no path. `base` carries the path, with a
   // leading slash and no trailing one. Astro concatenates them.
   //
-  // Putting the full URL (including /ai-notepad) in `site` is the classic
+  // Putting the full URL (including /nest-note) in `site` is the classic
   // mistake here: it produces doubled canonical tags and sitemap entries that
   // look fine locally and 404 in production.
   //
@@ -26,7 +26,7 @@ export default defineConfig({
   // Pinning this makes `astro preview` and production agree.
   trailingSlash: 'always',
 
-  // Turns `[flags](../server/flags.md)` into `/ai-notepad/server/flags/`.
+  // Turns `[flags](../server/flags.md)` into `/nest-note/server/flags/`.
   // Astro does not rewrite markdown links itself, so without this the `.md`
   // leaks into the HTML and 404s. See the plugin's header for the rationale.
   markdown: {
@@ -39,20 +39,27 @@ export default defineConfig({
     react(),
 
     starlight({
-      title: 'ainotepad',
+      title: 'NestNote',
       description:
         'A markdown notepad you flip through page by page. Live-preview markdown on your phone, with optional AI that runs on your own laptop.',
-      logo: { src: './src/assets/logo.png', alt: 'ainotepad' },
+      logo: { src: './src/assets/logo.png', alt: 'NestNote' },
       favicon: '/favicon.svg',
       customCss: [
         './src/styles/catppuccin.generated.css',
         './src/styles/theme.css',
       ],
-      // Shiki bundles the Catppuccin themes, so code blocks track the site's
-      // light/dark toggle using the same palette as the surrounding chrome.
+      // The site is dark-only, so code blocks ship a single theme matching
+      // the surrounding chrome.
       expressiveCode: {
-        themes: ['catppuccin-mocha', 'catppuccin-latte'],
+        themes: ['catppuccin-mocha'],
         styleOverrides: { borderRadius: '0.4rem' },
+      },
+
+      // Dark-only: the provider stamps `data-theme="dark"` unconditionally
+      // and the header's light/dark toggle is removed.
+      components: {
+        ThemeProvider: './src/components/ThemeProvider.astro',
+        ThemeSelect: './src/components/ThemeSelect.astro',
       },
 
       social: [{ icon: 'github', label: 'GitHub', href: REPO }],
