@@ -34,8 +34,9 @@ the in-note AI commands.
 
 ## Quick start
 
-Prebuilt Android APK and macOS/Linux server binaries are attached to every
-tagged [release](https://github.com/jramirez-codes/nest-note/releases). The
+Prebuilt Android APK and server binaries are attached to
+[releases](https://github.com/jramirez-codes/nest-note/releases) where
+available — they're built and uploaded by hand, so coverage varies. The
 APK is debug-signed — see [Install & run](https://jramirez-codes.github.io/nest-note/start/install/)
 for what that means before sideloading.
 

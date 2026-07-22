@@ -10,19 +10,20 @@ release or built from source — building needs a working React Native toolchain
 
 ## Prebuilt downloads
 
-Each tagged release on
+Releases on
 [GitHub Releases](https://github.com/jramirez-codes/nest-note/releases)
-carries:
+generally carry:
 
-| Asset                                       | What it is                                            |
-| ------------------------------------------- | ----------------------------------------------------- |
-| `nestnote-<tag>.apk`                        | Android APK, `arm64-v8a` + `armeabi-v7a`              |
-| `nestnote-server_<tag>_<os>_<arch>.tar.gz`  | Companion server binary — macOS and Linux, amd64/arm64 |
-| `SHA256SUMS.txt`                            | Checksums for every asset above                        |
+| Asset                                | What it is                               |
+| ------------------------------------ | ---------------------------------------- |
+| `nestnote-<tag>.apk`                 | Android APK, `arm64-v8a` + `armeabi-v7a` |
+| `nestnote-server_<tag>_<os>_<arch>`  | Companion server binary                  |
+
+Release artifacts are built and uploaded by hand, so which platforms a given
+release covers varies — check the release's own asset list. If the build you
+need isn't there, build from source; it's a short path for both.
 
 ```bash
-# Verify, then sideload
-sha256sum -c SHA256SUMS.txt --ignore-missing
 adb install -r nestnote-<tag>.apk
 ```
 

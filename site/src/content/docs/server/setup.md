@@ -43,12 +43,14 @@ yarn server:build      # -> server/nestnote-server
 
 ## Prebuilt binaries
 
-Every tagged [release](https://github.com/jramirez-codes/nest-note/releases)
-ships the server for macOS and Linux, amd64 and arm64 — no Go toolchain
-needed:
+A [release](https://github.com/jramirez-codes/nest-note/releases) may carry a
+prebuilt server binary — no Go toolchain needed. Builds are published by hand,
+so platform coverage varies release to release; check the asset list, and build
+from source if yours isn't there.
 
 ```bash
-tar -xzf nestnote-server_<tag>_darwin_arm64.tar.gz
+mv nestnote-server_<tag>_darwin_arm64 nestnote-server
+chmod +x nestnote-server
 ./nestnote-server -root ~/nestnote-data
 ```
 
