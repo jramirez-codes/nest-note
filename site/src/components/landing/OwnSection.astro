@@ -3,7 +3,7 @@
  * 05 · own — "your laptop is the backend": the TrustGraph island, one real
  * session told as a pipeline of flag-tagged captures wired port-to-port by
  * dashed edges, then two closing node-cards (the -allow-* flags and the
- * self-host install).
+ * install-and-run card: APK on the phone, binary on the laptop).
  */
 import { Image } from 'astro:assets';
 import { ArrowRight, HardDrive, Lock, ShieldCheck, Star } from '@lucide/astro';
@@ -105,24 +105,25 @@ const flags = [
       </div>
     </div>
     <div class="card own-card own-install">
-      <p class="own-head"><HardDrive size={13} class="own-ic" aria-hidden="true" />Self-host it</p>
+      <p class="own-head"><HardDrive size={13} class="own-ic" aria-hidden="true" />Get it running</p>
       <div class="own-body">
         <p class="own-sub">
-          One clone builds both halves — the pad on your phone, the
-          server on your laptop. Not building?
-          <a href={withBase('/start/download/')}>Download the APK and server binary</a>
-          from a release instead.
+          Two files from a release, no toolchain: the APK on your phone,
+          the server binary on your laptop. Then type <code>/pair</code> on
+          a page and scan the QR the server prints.
         </p>
-        <pre class="code code--term"><code><span class="term-comment"># the pad</span>
-<span class="term-ps">$</span> git clone {REPO}.git
-<span class="term-ps">$</span> cd nest-note && yarn install && yarn android
+        <pre class="code code--term"><code><span class="term-comment"># on your phone</span>
+<span class="term-ps">$</span> adb install -r nest-note-&lt;tag&gt;.apk
 
-<span class="term-comment"># the companion server</span>
-<span class="term-ps">$</span> cd server && go run . -root ~/nestnote-data</code></pre>
+<span class="term-comment"># on your laptop</span>
+<span class="term-ps">$</span> ./nestnote-server -root ~/nestnote-data</code></pre>
         <div class="btn-row">
-          <a class="btn btn--primary" href={withBase('/start/install/')}>Build from source <ArrowRight size={15} /></a>
+          <a class="btn btn--primary" href={withBase('/start/download/')}>Download &amp; run <ArrowRight size={15} /></a>
           <a class="btn" href={REPO} rel="noopener"><Star size={15} /> Star on GitHub</a>
         </div>
+        <!-- The source route is real, just not the headline: one clone
+             builds both halves, and it's what iOS and emulators need. -->
+        <MoreLink href="/start/install/">Prefer to build it yourself? Build from source</MoreLink>
       </div>
     </div>
   </div>
@@ -206,9 +207,12 @@ const flags = [
   .own-head .own-ic--warn { color: var(--warn); }
   .own-body { display: flex; flex-direction: column; flex: 1; padding: 1.15rem 1.4rem 1.35rem; }
   .own-sub { margin: 0 0 1rem; font-size: 0.92rem; }
-  /* .more / .btn-row pin to the bottom edge so both nodes close level. */
+  /* .more / .btn-row pin to the bottom edge so both nodes close level. The
+     install card closes on its buttons plus a quieter source link, so the
+     auto margin goes on the button row and the link just trails it. */
   .own-flags .more { margin-top: auto; padding-top: 1.1rem; }
   .own-install .btn-row { margin-top: auto; padding-top: 1.35rem; }
+  .own-install .more { margin: 0; padding-top: 0.95rem; font-size: 0.85rem; }
 
   .flag-list { list-style: none; margin: 0; padding: 0; }
   .flag { display: grid; grid-template-columns: auto 1fr; gap: 0.95rem; align-items: start; padding: 0.85rem 0; }

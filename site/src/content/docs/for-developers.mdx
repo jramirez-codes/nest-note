@@ -1,0 +1,111 @@
+---
+title: For developers
+description: How the repo is put together — four independently buildable parts, and where to start reading.
+---
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
+import { withBase } from '../../lib/url';
+
+This page is the orientation for working *on* NestNote. If you only want to
+*use* it, start at [what is NestNote?](./introduction.mdx) instead.
+
+## Four parts, no monorepo tooling
+
+The repository holds four independently buildable parts. None of them is a
+workspace member; each carries its own dependencies and builds on its own.
+
+| Directory         | What it is                                                   | Builds with            |
+| ----------------- | ------------------------------------------------------------ | ---------------------- |
+| `src/` (+ root)   | The React Native app — this repo's main deliverable           | `yarn android` / `ios` |
+| `webview-editor/` | CodeMirror 6 editor, bundled into the app as one HTML string  | `npm run build`        |
+| `server/`         | Optional Go companion server for the AI features              | `go build`             |
+| `site/`           | This documentation site (Astro + Starlight)                   | `npm run build`        |
+
+You can run the app with just the first two. `server/` only comes into play for
+the in-note slash commands — **without a paired server the notepad is a fully
+functional offline markdown pad**, and that is the intended fallback rather
+than a degraded mode.
+
+Why that independence matters, and the two config files that enforce it, is in
+[repo layout](./contributing/repo-layout.md).
+
+## How the parts meet
+
+- **The editor is a bundle, not a component.** `webview-editor/` is built into
+  a single committed file, `src/webview/editorHtml.ts`, which the app loads
+  into a WebView. Editing the app's copy by hand is always wrong — see
+  [rebuilding the editor](./start/editor-bundle.md) and
+  [the editor architecture](./architecture/editor.md).
+- **SQLite is the single source of truth.** Notes, notebooks, full-text search
+  and a key/value store live in one file, reached only through `src/storage/`.
+  See [storage](./architecture/storage.md).
+- **The phone talks to the laptop over a pinned-TLS tunnel.** The client in
+  `src/server/` knows only the shape of the bytes on the wire; only the socket
+  transport is native. See [the protocol](./architecture/protocol.md).
+- **The server shells out.** `server/` drives the Claude Code CLI as a
+  subprocess and gates every laptop capability behind an `-allow-*` flag. See
+  [the architecture overview](./architecture/overview.md) and
+  [the security model](./server/security.md).
+
+## Getting a dev loop going
+
+<CardGrid>
+  <LinkCard
+    title="Build from source"
+    href={withBase('/start/install/')}
+    description="Toolchain, clone, yarn android / ios, and the FTS5 build flag."
+  />
+  <LinkCard
+    title="Set up the server"
+    href={withBase('/server/setup/')}
+    description="cd server && go run . -root ~/nestnote-data, then pair."
+  />
+  <LinkCard
+    title="Rebuilding the editor"
+    href={withBase('/start/editor-bundle/')}
+    description="Change webview-editor/, regenerate the committed bundle."
+  />
+  <LinkCard
+    title="Native setup"
+    href={withBase('/server/native-setup/')}
+    description="The native modules the server features need on each platform."
+  />
+</CardGrid>
+
+## House rules
+
+**Docs ship with the change.** Any change to product functionality is not done
+until the matching pages under `site/src/content/docs/` are updated in the same
+branch — flags, command names, defaults and prerequisites included. A stale
+`-allow-*` warning is a security problem, not a typo, which is why capability
+callouts are declared in frontmatter and rendered by a shared component rather
+than hand-written.
+
+The conventions, the code-area-to-docs map and the sidebar rules are in
+[writing docs](./contributing/docs.md); lint, tests and the patch workflow are
+in [development workflow](./contributing/workflow.md).
+
+## Read the code
+
+<CardGrid>
+  <LinkCard
+    title="Architecture overview"
+    href={withBase('/architecture/overview/')}
+    description="How the app is layered, and where new features slot in."
+  />
+  <LinkCard
+    title="Repo layout"
+    href={withBase('/contributing/repo-layout/')}
+    description="What lives where, generated files, and the color source of truth."
+  />
+  <LinkCard
+    title="Protocol"
+    href={withBase('/architecture/protocol/')}
+    description="The message types on the pinned-TLS tunnel."
+  />
+  <LinkCard
+    title="Flags reference"
+    href={withBase('/server/flags/')}
+    description="Every server flag, its default, and what it unlocks."
+  />
+</CardGrid>

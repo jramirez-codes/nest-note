@@ -76,7 +76,15 @@ export default defineConfig({
       // are reference material where order is genuinely arbitrary, so they
       // autogenerate and pick up new pages with zero config.
       sidebar: [
-        { label: 'Introduction', link: '/introduction/' },
+        {
+          label: 'Introduction',
+          items: [
+            // Two audiences, users first: the product intro assumes nothing,
+            // the developer intro orients you in the repo.
+            { label: 'What is NestNote?', link: '/introduction/' },
+            { label: 'For developers', link: '/for-developers/' },
+          ],
+        },
         {
           label: 'Get started',
           items: [
