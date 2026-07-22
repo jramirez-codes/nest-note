@@ -1,5 +1,5 @@
 /**
- * Wire protocol for the ainotepad companion server (see `server/` — a Go process
+ * Wire protocol for the NestNote companion server (see `server/` — a Go process
  * that streams the Claude Code CLI to this app over pinned TLS).
  *
  * This module is deliberately platform-free: no React Native, no Node imports.

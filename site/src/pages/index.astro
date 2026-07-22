@@ -1,0 +1,56 @@
+---
+/**
+ * Landing page.
+ *
+ * A concrete route in src/pages/ takes precedence over Starlight's catch-all,
+ * so this fully owns `/`. It deliberately does NOT use the Starlight layout —
+ * docs chrome (sidebar, pagination, breadcrumbs) is wrong for a landing page.
+ *
+ * Every href/src goes through withBase(). See src/lib/url.ts.
+ *
+ * ── Design ───────────────────────────────────────────────────────────────────
+ * The page is a *node-editor canvas*, not a stack of hero cards. A dotted grid
+ * runs the full height of the page; the hero leads with real footage of the
+ * pad beside the copy, with the live React Flow graph of the whole system as
+ * a full-width band beneath it; and each section below reads as zooming into
+ * one node of that graph. A dashed "edge" (the spine) threads down the left
+ * margin from section to section, with a port dot and a mono tag where each
+ * one connects. Content sits in node-cards — mantle panels with hairline
+ * borders — and real captures of the app are treated as nodes too, never as
+ * a gallery grid. Lucide icons are part of the canvas grammar, not
+ * decoration: 12–15px glyphs that inherit the text tone next to them.
+ *
+ * ── Structure ────────────────────────────────────────────────────────────────
+ * This file only composes; everything lives in src/components/landing/:
+ *
+ *   LandingLayout      html shell, nav/footer, page behavior, and the shared
+ *                      canvas primitives (.canvas/.ns/.card/.chain/.btn/.phone)
+ *   HeroSection        copy + hero capture + SystemGraph band
+ *   WriteSection       01 · the pad as a plain offline notepad
+ *   OrganizeSection    02 · subject lifecycle (LifecycleFlow)
+ *   CommandSection     03 · slash commands + dictation cue rail (CommandDeck)
+ *   SteerSection       04 · the dashboard panels
+ *   OwnSection         05 · trust graph, flag pipeline, self-host (TrustGraph)
+ *
+ * Shared pieces: SpineSection (the numbered-section frame), PhonePair (fanned
+ * captures), Callout, MoreLink. Each section owns its data, markup and styles;
+ * the four React islands are all `client:visible`, so only @xyflow/react is
+ * heavy and it loads only when a graph is approached.
+ */
+import CommandSection from '../components/landing/CommandSection.astro';
+import HeroSection from '../components/landing/HeroSection.astro';
+import LandingLayout from '../components/landing/LandingLayout.astro';
+import OrganizeSection from '../components/landing/OrganizeSection.astro';
+import OwnSection from '../components/landing/OwnSection.astro';
+import SteerSection from '../components/landing/SteerSection.astro';
+import WriteSection from '../components/landing/WriteSection.astro';
+---
+
+<LandingLayout>
+  <HeroSection />
+  <WriteSection />
+  <OrganizeSection />
+  <CommandSection />
+  <SteerSection />
+  <OwnSection />
+</LandingLayout>

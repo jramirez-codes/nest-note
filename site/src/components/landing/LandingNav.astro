@@ -1,0 +1,55 @@
+---
+/**
+ * Sticky top nav for the landing page. Transparent until the page scrolls
+ * (LandingLayout's script toggles `.is-stuck` on [data-nav]).
+ */
+import { Image } from 'astro:assets';
+import { ArrowUpRight } from '@lucide/astro';
+import logo from '../../assets/logo.png';
+import { REPO } from '../../lib/repo';
+import { withBase } from '../../lib/url';
+---
+
+<header class="nav" data-nav>
+  <div class="nav-inner">
+    <a class="brand" href={withBase('/')}>
+      <Image src={logo} alt="" width={24} height={24} />
+      <span>NestNote</span>
+    </a>
+    <nav class="nav-links">
+      <a href={withBase('/introduction/')}>Docs</a>
+      <a href={withBase('/commands/')}>Commands</a>
+      <a href={withBase('/architecture/overview/')}>Architecture</a>
+      <a href={REPO} rel="noopener">GitHub <ArrowUpRight size={13} class="ext-ic" /></a>
+    </nav>
+    <a class="btn btn--primary btn--sm nav-cta" href={withBase('/start/install/')}>Get started</a>
+  </div>
+</header>
+
+<style is:global>
+  .nav {
+    position: sticky; top: 0; z-index: 20;
+    border-bottom: 1px solid transparent;
+    transition: border-color 0.25s ease, background-color 0.25s ease;
+  }
+  .nav.is-stuck { background: color-mix(in srgb, var(--ctp-base) 82%, transparent); backdrop-filter: blur(12px); border-bottom-color: var(--rule); }
+  .nav-inner {
+    max-width: var(--frame); margin-inline: auto;
+    padding: 0.8rem var(--pad-x);
+    display: flex; align-items: center; gap: 1.25rem;
+  }
+  .nav-links { display: flex; gap: 1.4rem; margin-left: auto; flex-wrap: wrap; }
+  .nav-links a { color: var(--muted); text-decoration: none; font-size: 0.9rem; transition: color 0.15s ease; }
+  .nav-links a:hover { color: var(--fg); }
+  .nav-cta { flex: none; }
+
+  @media (max-width: 46rem) {
+    /* The links may wrap to a second row; keep wrapped rows right-aligned. */
+    .nav-links { gap: 0.35rem 1rem; justify-content: flex-end; }
+    /* .nav qualifier on purpose: this component's CSS is emitted before the
+       layout's base styles, so a bare .nav-cta (0,1,0) would lose the cascade
+       to .btn's display — order across component style blocks is not the
+       source order of the old single-file page. */
+    .nav .nav-cta { display: none; }
+  }
+</style>

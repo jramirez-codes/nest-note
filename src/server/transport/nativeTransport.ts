@@ -4,7 +4,7 @@
  * RN's stock fetch and WebSocket can neither trust the server's self-signed cert
  * nor pin a runtime SPKI hash, so this delegates to a small native module,
  * `AiNotepadSecure` (Android: OkHttp + a pin-only TrustManager; iOS: URLSession
- * + a pinning delegate). See android/app/src/main/java/com/ainotepad/secure and
+ * + a pinning delegate). See android/app/src/main/java/com/NestNote/secure and
  * ios/ainotepad/Secure. The pin — base64 SHA-256 of the server SPKI — is the
  * only thing the native side trusts; a mismatch fails the connection outright.
  *

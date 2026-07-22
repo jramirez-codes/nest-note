@@ -232,7 +232,7 @@ export function useDictation(): Dictation {
 
     const onError = addSpeechErrorListener((e: SpeechError) => {
       if (!wantOnRef.current) return;
-      if (__DEV__) console.warn(`[ainotepad] dictation recognizer error: ${e.code}`, e.message);
+      if (__DEV__) console.warn(`[NestNote] dictation recognizer error: ${e.code}`, e.message);
       if (FATAL_ERRORS.has(String(e.code))) {
         hardStop(
           e.code === SpeechErrorCode.PERMISSION_DENIED

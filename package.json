@@ -1,5 +1,5 @@
 {
-  "name": "ainotepad",
+  "name": "nestnote",
   "version": "0.0.1",
   "private": true,
   "op-sqlite": {
@@ -16,7 +16,7 @@
     "apk:release": "yarn apk:build:release && yarn apk:install:release",
     "lint": "eslint .",
     "postinstall": "patch-package",
-    "server:build": "cd server && go build -o ainotepad-server .",
+    "server:build": "cd server && go build -o nestnote-server .",
     "server:start": "cd server && go run . -root ~/Documents/ai-notes-data/  -allow-exec -allow-code -allow-view",
     "server:remote": "cd server && go run . -root ~/Documents/ai-notes-data/ -advertise-host \"$(tailscale ip -4 | head -n1)\"  -allow-exec -allow-code -allow-view",
     "start": "react-native start",

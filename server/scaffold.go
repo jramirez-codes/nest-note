@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"ainotepad/server/internal/mcptemplates"
+	"nestnote/server/internal/mcptemplates"
 )
 
 // mcpSetup is the outcome of scaffolding a root: where Claude should run and
@@ -63,9 +63,9 @@ func scaffoldRoot(root string, threshold int) (mcpSetup, error) {
 	// Library code and module files: rewritten only when their content changed,
 	// so their modtimes stay stable and the build guard below stays effective.
 	for _, f := range []struct{ path, content string }{
-		{filepath.Join(mcpDir, "go.mod"), goModTmpl("ainotepad-mcp")},
+		{filepath.Join(mcpDir, "go.mod"), goModTmpl("nestnote-mcp")},
 		{filepath.Join(mcpDir, "mcpx", "mcpx.go"), mcptemplates.MCPXTmpl},
-		{filepath.Join(orchDir, "go.mod"), goModTmpl("ainotepad-orchestrator")},
+		{filepath.Join(orchDir, "go.mod"), goModTmpl("nestnote-orchestrator")},
 		{filepath.Join(orchDir, "mcpx", "mcpx.go"), mcptemplates.MCPXTmpl},
 		{filepath.Join(orchDir, "main.go"), mcptemplates.OrchestratorMainTmpl},
 	} {
@@ -73,6 +73,14 @@ func scaffoldRoot(root string, threshold int) (mcpSetup, error) {
 			return mcpSetup{}, err
 		}
 	}
+
+	// The go.mod files above carry the current module names. Roots scaffolded
+	// before the NestNote rebrand hold sources that still import the old ones —
+	// and user-owned files (dog/main.go, anything hand-written) are never
+	// rewritten from a template, so nothing else would ever fix them. Left alone
+	// they fail to compile against the regenerated go.mod, which fails the build
+	// below. Rewrite the stale import paths before anything builds.
+	migrateModulePaths(mcpDir, orchDir)
 
 	// User-owned seed: only written if absent so edits survive a restart.
 	if err := writeIfMissing(filepath.Join(mcpDir, "dog", "main.go"), mcptemplates.DogMainTmpl); err != nil {
@@ -181,6 +189,42 @@ func scaffoldRoot(root string, threshold int) (mcpSetup, error) {
 		servers:      names,
 		allowedTools: allowed,
 	}, nil
+}
+
+// legacyModulePaths maps the scaffold module names used before the NestNote
+// rebrand to their current ones.
+var legacyModulePaths = map[string]string{
+	"ainotepad-mcp":          "nestnote-mcp",
+	"ainotepad-orchestrator": "nestnote-orchestrator",
+}
+
+// migrateModulePaths rewrites pre-rebrand module import paths in every .go file
+// under the given scaffold dirs, matching on the quoted `"old/` prefix so only
+// import strings are touched and a subject named e.g. "ainotepad-mcp-notes" in
+// prose isn't. Idempotent (a rewritten file no longer matches) and best effort:
+// an unreadable file is skipped rather than failing the scaffold, since the
+// build below reports the real problem with better context.
+func migrateModulePaths(dirs ...string) {
+	for _, dir := range dirs {
+		filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() || !strings.HasSuffix(p, ".go") {
+				return nil
+			}
+			data, err := os.ReadFile(p)
+			if err != nil {
+				return nil
+			}
+			src := string(data)
+			out := src
+			for old, cur := range legacyModulePaths {
+				out = strings.ReplaceAll(out, `"`+old+`/`, `"`+cur+`/`)
+			}
+			if out != src {
+				_ = writeFile(p, out)
+			}
+			return nil
+		})
+	}
 }
 
 // writeMcpConfig writes a Claude .mcp.json registering each named server as a

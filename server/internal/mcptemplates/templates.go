@@ -480,7 +480,7 @@ func (s *Server) callTool(name string, args map[string]any) map[string]any {
 // new server. Its "storage" is a stub — swap the handlers for real logic.
 var DogMainTmpl = bt(`package main
 
-import "ainotepad-mcp/mcpx"
+import "nestnote-mcp/mcpx"
 
 func main() {
 	s := mcpx.NewServer("dog", "0.1.0")
@@ -542,7 +542,7 @@ import (
 	"strings"
 	"time"
 
-	"ainotepad-orchestrator/mcpx"
+	"nestnote-orchestrator/mcpx"
 )
 
 type capability struct {
@@ -1545,7 +1545,7 @@ import (
 	"strings"
 	"sync"
 
-	"ainotepad-mcp/mcpx"
+	"nestnote-mcp/mcpx"
 )
 
 var mu sync.Mutex

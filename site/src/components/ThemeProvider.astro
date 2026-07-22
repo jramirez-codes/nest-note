@@ -1,0 +1,15 @@
+---
+/**
+ * Starlight `ThemeProvider` override: the site is dark-only.
+ *
+ * The default provider reads `starlight-theme` from localStorage and stamps
+ * whatever the visitor last picked. This one stamps `dark` unconditionally,
+ * ignoring any stored preference from before the site went dark-only. Paired
+ * with the `ThemeSelect` override (which removes the toggle) in
+ * astro.config.mjs.
+ */
+---
+
+<script is:inline>
+  document.documentElement.dataset.theme = 'dark';
+</script>

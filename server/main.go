@@ -22,7 +22,7 @@ func main() {
 		advHost    = flag.String("advertise-host", "", "host to put in the pairing QR (e.g. a Tailscale IP or DDNS name for off-LAN access); default: bind address")
 		dir        = flag.String("dir", defaultStateDir(), "directory for cert/key/token")
 		workdir    = flag.String("workdir", mustCwd(), "directory Claude runs in (ignored when -root is set)")
-		repoDir    = flag.String("repo-dir", "", "path to the ai-notepad git checkout that /update-server pulls & rebuilds; empty = <root>/ai-notepad")
+		repoDir    = flag.String("repo-dir", "", "path to the nest-note git checkout that /update-server pulls & rebuilds; empty = <root>/nest-note, falling back to the pre-rebrand <root>/ai-notepad if that's what exists")
 		root       = flag.String("root", "", "scaffold projects/, mcp/, orchestrator/ under this dir and enable MCP; Claude runs in <root>/projects. Empty = disabled")
 		threshold  = flag.Int("subject-threshold", 4, "mentions before the orchestrator proposes a dedicated server for a subject (with -root)")
 		runTimeout = flag.Duration("run-timeout", 8*time.Minute, "max time for a single Claude run before it is killed and reported as failed (/agg-tasks sweeps a whole notebook and can need several minutes)")
@@ -46,10 +46,16 @@ func main() {
 	if *root != "" {
 		setup, err := scaffoldRoot(*root, *threshold)
 		if err != nil {
-			log.Fatalf("root scaffold: %v", err)
+			// Don't die here. This scaffold is a warm-up — every /run re-scaffolds,
+			// so a failure now is reported again (with the same error) at the next
+			// message, and staying up keeps /update-server reachable. Exiting instead
+			// would strand a remote machine: the process that just restarted into a
+			// bad build is the only way anyone could push the fix.
+			log.Printf("root scaffold failed, continuing without MCP (retried on the next /run): %v", err)
+		} else {
+			boot = setup
+			runDir = setup.projectsDir
 		}
-		boot = setup
-		runDir = setup.projectsDir
 	}
 
 	bindIP := *addr
@@ -154,7 +160,7 @@ func main() {
 	}
 
 	// Advertise on the LAN so the phone can re-find us after an IP change.
-	mdns, err := advertise("ainotepad", *port, pin)
+	mdns, err := advertise("NestNote", *port, pin)
 	if err != nil {
 		log.Printf("mdns: advertise failed (discovery disabled): %v", err)
 	} else {
@@ -178,12 +184,12 @@ func main() {
 		Code: pr.code,
 	})
 
-	fmt.Println("ainotepad server")
+	fmt.Println("NestNote server")
 	fmt.Printf("  listening  wss://%s/run\n", listenAddr)
 	if *advHost != "" {
 		fmt.Printf("  pair host  wss://%s/run  (encoded in the QR)\n", net.JoinHostPort(qrHost, fmt.Sprintf("%d", *port)))
 	}
-	fmt.Printf("  discovery  _ainotepad._tcp on the LAN\n")
+	fmt.Printf("  discovery  _nestnote._tcp on the LAN\n")
 	fmt.Printf("  workdir    %s\n", runDir)
 	if *root != "" {
 		fmt.Printf("  mcp servers %v (+ orchestrator, auto-grows at %d mentions)\n", boot.servers, *threshold)
@@ -233,12 +239,24 @@ func lanIP() string {
 	return "127.0.0.1"
 }
 
+// defaultStateDir is where the TLS cert/key and auth token live. Pre-rebrand
+// deployments keep theirs in ~/.ainotepad-server, and we must keep using that
+// directory when it's the one on disk: starting fresh would regenerate the cert
+// and token, which breaks the phone's pinned certificate AND its saved token at
+// once. Re-pairing needs someone at the machine to scan a QR, so on a server
+// nobody can log into that mistake is unrecoverable.
 func defaultStateDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return ".ainotepad-server"
+		return ".nestnote-server"
 	}
-	return filepath.Join(home, ".ainotepad-server")
+	dir := filepath.Join(home, ".nestnote-server")
+	if !isDir(dir) {
+		if legacy := filepath.Join(home, ".ainotepad-server"); isDir(legacy) {
+			return legacy
+		}
+	}
+	return dir
 }
 
 func mustCwd() string {

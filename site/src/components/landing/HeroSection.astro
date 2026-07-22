@@ -1,0 +1,90 @@
+---
+/**
+ * Hero: copy beside real footage — a 49-second unedited capture of the pad
+ * (markdown rendering live, `/` opening the palette, /clean rewriting the
+ * page) in a phone frame — with the live React Flow graph of the whole system
+ * (SystemGraph island) as a full-width band beneath it. Every numbered
+ * section below reads as zooming into one node of that graph.
+ */
+import { ArrowRight, BookOpen, Move } from '@lucide/astro';
+import SystemGraph from '../SystemGraph.tsx';
+import { withBase } from '../../lib/url';
+---
+
+<section class="hero" id="overview">
+  <div class="hero-copy">
+    <p class="tag"><span class="tag-dot"></span>v0 · self-hosted · offline-first</p>
+    <h1>Notes in. <em>Tools out.</em></h1>
+    <p class="lede">
+      A markdown pad you swipe through on your phone. An orchestrator on
+      your own laptop files every page into subjects — and the subjects
+      you keep returning to compile into MCP servers your model can
+      query. No cloud anywhere in the loop.
+    </p>
+    <div class="btn-row">
+      <a class="btn btn--primary" href={withBase('/start/install/')}>Get started <ArrowRight size={15} /></a>
+      <a class="btn" href={withBase('/introduction/')}><BookOpen size={15} /> Read the docs</a>
+    </div>
+    <p class="hero-meta">React Native · Go · SQLite · MCP · Claude Code</p>
+  </div>
+  <!-- Real footage first: the app introduces itself before the diagrams
+       do. The capture is raw — status bar, keyboard and all. -->
+  <figure class="phone-fig hero-demo">
+    <div class="phone">
+      <video
+        src={withBase('/write-demo.mp4')}
+        poster={withBase('/write-demo-poster.jpg')}
+        muted
+        loop
+        playsinline
+        preload="metadata"
+        aria-label="Screen recording: markdown typed on the pad renders live — a heading, then real checkboxes — until /clean is typed and Claude rewrites the page into a task list, offered as a change to accept or reject."
+        data-autovid
+      ></video>
+    </div>
+    <figcaption>
+      One page, start to finish: markdown renders as you type, <code>/</code> opens
+      the palette, <code>/clean</code> rewrites the page — and nothing
+      lands until you tap <strong>Accept</strong>.
+    </figcaption>
+  </figure>
+  <figure class="hero-graph">
+    <SystemGraph client:visible />
+    <figcaption>The system, end to end.<span class="drag-hint"> <Move size={12} class="ext-ic" /> Drag the nodes — the page won’t mind.</span></figcaption>
+  </figure>
+</section>
+
+<style is:global>
+  .hero {
+    display: grid; grid-template-columns: 1.1fr 0.9fr;
+    gap: clamp(2rem, 4vw, 3.5rem);
+    align-items: center;
+    padding: clamp(3rem, 6vw, 5.5rem) 0 clamp(3.5rem, 6vw, 5.5rem);
+    position: relative;
+  }
+  .hero::before {
+    content: ''; position: absolute; inset: -6rem -20rem 0; pointer-events: none; z-index: -1;
+    background: radial-gradient(46rem 30rem at 70% 0%, color-mix(in srgb, var(--accent) 13%, transparent), transparent 65%);
+  }
+  .tag { display: inline-flex; align-items: center; gap: 0.55rem; margin: 0 0 1.4rem; font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.08em; color: var(--muted); text-transform: uppercase; }
+  .tag-dot { width: 0.42rem; height: 0.42rem; border-radius: 50%; background: var(--ctp-green); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ctp-green) 22%, transparent); }
+  .lede { font-size: clamp(1.08rem, 2vw, 1.25rem); color: var(--muted); max-width: 33rem; margin: 1.4rem 0 0; text-wrap: pretty; }
+  .hero-meta { margin: 1.75rem 0 0; font-family: var(--font-mono); font-size: 0.78rem; letter-spacing: 0.03em; color: var(--faint); }
+
+  /* The hero capture: a real recording of the pad in a phone frame. */
+  .hero-demo { justify-self: center; width: clamp(13rem, 26vw, 15.5rem); }
+  .hero-demo figcaption { text-align: center; }
+
+  /* The master graph: a full-width band closing the header, the map every
+     numbered section below zooms into. */
+  .hero-graph { grid-column: 1 / -1; margin: clamp(1rem, 2.5vw, 2rem) 0 0; min-width: 0; }
+  .hero-graph figcaption { margin-top: 0.7rem; text-align: center; font-size: 0.8rem; color: var(--faint); }
+  /* Dragging is disabled on narrow screens, so don't invite it there. */
+  @media (max-width: 60rem) { .drag-hint { display: none; } }
+
+  @media (max-width: 60rem) {
+    .hero { grid-template-columns: 1fr; }
+    .hero-demo { width: min(15.5rem, 72vw); }
+    .hero-graph { order: 2; }
+  }
+</style>

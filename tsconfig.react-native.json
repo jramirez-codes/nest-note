@@ -1,0 +1,70 @@
+{
+  // Vendored verbatim from @react-native/typescript-config@0.86.0.
+  //
+  // WHY THIS FILE EXISTS
+  // --------------------
+  // `tsconfig.json` used to extend the bare specifier
+  // "@react-native/typescript-config". Bare specifiers in `extends` resolve
+  // from the directory of the config that declares them — the repo root — so
+  // they only work when the root `node_modules` is installed.
+  //
+  // That made every sub-project's build depend on a full React Native install.
+  // In particular the docs site under `site/` (Astro) walks up, parses this
+  // config, and fails to resolve the extends when only `site/` is installed —
+  // which is exactly what CI does. Vendoring the preset and extending it by
+  // relative path keeps each part of the repo independently buildable, which
+  // is the property README.md claims for `src/`, `webview-editor/` and
+  // `server/`.
+  //
+  // ON UPGRADE
+  // ----------
+  // React Native ships this preset per release. When bumping react-native,
+  // re-sync this file:
+  //
+  //   npm pack @react-native/typescript-config@<new-version>
+  //   tar -xzf react-native-typescript-config-*.tgz
+  //   diff package/tsconfig.json tsconfig.react-native.json
+  //
+  // Keep the contents below byte-identical to upstream apart from this header,
+  // so that diff stays meaningful. Project-specific overrides belong in
+  // `tsconfig.json`, not here.
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "display": "React Native",
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "esnext",
+    "types": ["jest"],
+    "lib": [
+      "es2019",
+      "es2020.bigint",
+      "es2020.date",
+      "es2020.number",
+      "es2020.promise",
+      "es2020.string",
+      "es2020.symbol.wellknown",
+      "es2021.promise",
+      "es2021.string",
+      "es2021.weakref",
+      "es2022.array",
+      "es2022.object",
+      "es2022.string"
+    ],
+    "allowJs": true,
+    "jsx": "react-native",
+    "noEmit": true,
+    "isolatedModules": true,
+    "strict": true,
+    "moduleResolution": "bundler",
+    "customConditions": ["react-native"],
+    "allowImportingTsExtensions": true,
+    "allowArbitraryExtensions": true,
+    "resolveJsonModule": true,
+    "resolvePackageJsonImports": false,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    // Causes issues with package.json "exports"
+    "forceConsistentCasingInFileNames": false
+  },
+  "exclude": ["**/Pods/**"]
+}

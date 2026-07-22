@@ -1,0 +1,17 @@
+---
+/**
+ * The "go deeper" arrow link closing a section, pointing into the docs.
+ * Styling (.more/.link/.link-ic) lives in LandingLayout.
+ */
+import { ArrowRight } from '@lucide/astro';
+import { withBase } from '../../lib/url';
+
+interface Props {
+  /** Site-internal path; withBase() is applied here. */
+  href: string;
+}
+
+const { href } = Astro.props;
+---
+
+<p class="more"><a class="link" href={withBase(href)}><slot /> <ArrowRight size={14} class="link-ic" /></a></p>

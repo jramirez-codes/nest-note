@@ -1,0 +1,133 @@
+/*
+ * Host container for the hero SystemGraph. Shared node/edge styling lives in
+ * graph-node.css; this file sizes the pane, keeps the canvas backdrop themed,
+ * and adds the styling that is unique to this graph: draggable-node cursors
+ * and the loose "chip" fact nodes.
+ */
+
+/* Height tracks the component's layout: a short strip for the full-width
+   left-to-right BAND, taller when the graph stacks. The component picks its
+   layout from element width (460/760px); these viewport queries approximate
+   the same cutoffs (element ≈ viewport − 2×page padding) so the height is
+   right on first paint, before hydration. */
+.sg-host {
+  height: 21rem;
+  border: 1px solid var(--ctp-surface0);
+  border-radius: 0.9rem;
+  background: color-mix(in srgb, var(--ctp-mantle) 45%, transparent);
+  overflow: hidden;
+}
+
+/* WIDE (two-column) layout territory. */
+@media (max-width: 52rem) {
+  .sg-host {
+    height: 32rem;
+  }
+}
+
+.sg-host .react-flow,
+.sg-host .react-flow__pane {
+  --xy-background-color: transparent;
+  --xy-background-color-default: transparent;
+  background: transparent;
+}
+
+/* The one graph on the site whose nodes move. */
+.sg-host .react-flow__node {
+  cursor: grab;
+}
+
+.sg-host .react-flow__node.dragging {
+  cursor: grabbing;
+}
+
+/* Hovering warms the node the same way it warms its edges. */
+.sg-host .react-flow__node:hover .gn-node {
+  border-color: color-mix(in srgb, var(--ctp-mauve) 55%, var(--ctp-surface1));
+}
+
+/* Loose facts pinned to the canvas — deliberately smaller and quieter than
+   the flow nodes so the trunk still reads first. */
+.gn-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.7rem;
+  border: 1px dashed var(--ctp-surface2);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ctp-mantle) 80%, transparent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  color: var(--ctp-subtext0);
+  white-space: nowrap;
+}
+
+.sg-host .react-flow__node:hover .gn-chip {
+  border-color: var(--ctp-mauve);
+  color: var(--ctp-text);
+}
+
+/* --- Living data flow ----------------------------------------------------- */
+
+/* The packet riding the trunk edges. SMIL moves it; CSS just paints it. */
+.sg-packet {
+  fill: var(--ctp-mauve);
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--ctp-mauve) 80%, transparent));
+  pointer-events: none;
+}
+
+/* Custom edges render labels via EdgeLabelRenderer; match the default look. */
+.sg-edge-label {
+  position: absolute;
+  padding: 0.05rem 0.3rem;
+  background: var(--ctp-base);
+  border-radius: 0.25rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.62rem;
+  color: var(--ctp-subtext0);
+  pointer-events: none;
+}
+
+/* The line the pad node is "writing". Fixed height so the node never jitters
+   as characters appear. */
+.sg-typed {
+  display: block;
+  height: 1.1em;
+  overflow: hidden;
+  white-space: nowrap;
+  margin-top: 0.3rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.7rem;
+  color: var(--ctp-mauve);
+}
+
+.sg-caret {
+  display: inline-block;
+  width: 0.45em;
+  height: 1em;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  background: var(--ctp-mauve);
+  animation: sg-blink 1.05s steps(2, start) infinite;
+}
+
+@keyframes sg-blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sg-caret {
+    animation: none;
+  }
+}
+
+/* The NARROW column layout is tall; give it room so fitView keeps labels
+   legible. */
+@media (max-width: 32rem) {
+  .sg-host {
+    height: 36rem;
+  }
+}

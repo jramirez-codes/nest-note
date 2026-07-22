@@ -1,5 +1,13 @@
+const path = require('path');
 const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config');
 const { withNativeWind } = require('nativewind/metro');
+
+/** Escape a literal string for safe interpolation into a RegExp. */
+const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** Anchor a sub-project path to this repo, so we only block *our* copy. */
+const subProject = name =>
+  new RegExp(`^${esc(__dirname)}${esc(path.sep)}${name}${esc(path.sep)}.*`);
 
 /**
  * Metro configuration
@@ -9,9 +17,11 @@ const { withNativeWind } = require('nativewind/metro');
  */
 const config = {
   resolver: {
-    // The `webview-editor/` sub-project has its own node_modules (CodeMirror);
-    // keep Metro from crawling it — the app only imports the built HTML string.
-    blockList: /\/webview-editor\/.*/,
+    // `webview-editor/` (CodeMirror) and `site/` (Astro docs) are independent
+    // sub-projects carrying their own node_modules. Metro must not crawl them
+    // or it hits duplicate-package haste collisions — the app imports neither,
+    // only the generated `src/webview/editorHtml.ts`.
+    blockList: [subProject('webview-editor'), subProject('site')],
   },
 };
 

@@ -1,0 +1,28 @@
+/*
+ * Host container for the TrustGraph diagram. Shared node/edge styling lives in
+ * graph-node.css; this file only sizes the pane, clears React Flow's opaque
+ * background, and keeps its dotted backdrop themed.
+ */
+
+.tg-host {
+  height: 26rem;
+  border: 1px solid var(--ctp-surface0);
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--ctp-mantle) 60%, transparent);
+  overflow: hidden;
+}
+
+.tg-host .react-flow,
+.tg-host .react-flow__pane {
+  --xy-background-color: transparent;
+  --xy-background-color-default: transparent;
+  background: transparent;
+}
+
+/* Stacked, the graph is five nodes deep instead of two. Holding it at the wide
+   height would make fitView shrink every label past reading size. */
+@media (max-width: 46rem) {
+  .tg-host {
+    height: 34rem;
+  }
+}

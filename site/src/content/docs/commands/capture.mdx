@@ -1,0 +1,51 @@
+---
+title: Capture
+description: Recording audio and talking through a subject over time.
+sidebar:
+  order: 3
+---
+
+import Requires from '../../../components/Requires.astro';
+
+<Requires />
+
+## `/record`
+
+> Record microphone audio — keeps going in the background; tap to stop.
+
+```text
+/record
+```
+
+Starts recording the device microphone. Recording **continues in the
+background**, so you can leave the app or lock the phone and it keeps going.
+Tap the card to stop.
+
+Clip metadata is stored in the `recordings` table; the app holds a wake lock
+while recording so the OS doesn't suspend it.
+
+:::note[On-device]
+`/record` captures audio locally and needs no server. What you subsequently do
+with a clip may.
+:::
+
+## `/talk`
+
+> Chat about a subject — the orchestrator keeps its notes updated as you talk.
+
+```text
+/talk storage-migration I think FTS5 needs a rebuild step
+```
+
+Signature: **`/talk SUBJECT <message>`**. Unlike `/chat`, which is a thread
+attached to a card, `/talk` is attached to a **subject** — a long-lived topic
+in the orchestrator's notes under the server's `-root`.
+
+As you talk, the orchestrator maintains that subject's notes, so the knowledge
+accumulates across sessions instead of being trapped in one card.
+
+Requires the server to be started with `-root`, which is what enables the
+orchestrator and MCP layer at all. See [setup](../server/setup.md).
+
+Once a subject has been mentioned enough times — `-subject-threshold`, default
+`4` — the orchestrator proposes giving it a dedicated MCP server.

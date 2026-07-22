@@ -1,0 +1,71 @@
+---
+title: Introduction
+description: A markdown notepad you flip through page by page, with an optional AI layer that runs entirely on your own laptop.
+---
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
+import { withBase } from '../../lib/url';
+
+**NestNote** is a markdown notepad you flip through **page by page**, like a
+physical pad. Each note is a full-screen page; swipe left or right to move
+between them, and tap the blank sheet at the end to start a new one.
+
+Text is edited as **live-preview markdown** — syntax marks hide to render clean
+text and reveal again on the line you're editing — while markdown stays the
+stored format. Nothing is transformed on the way in or out.
+
+The optional part is the AI layer. Typing a slash command on a page turns it
+into a live **card** backed by a small Go server running on your own laptop,
+which streams the Claude Code CLI and a few laptop capabilities to your phone.
+There is no hosted service in that path.
+
+## The three pieces
+
+The project is three cooperating parts, each independently buildable:
+
+| Directory         | What it is                                                 |
+| ----------------- | ---------------------------------------------------------- |
+| `src/`            | The React Native app — this repo's main deliverable         |
+| `webview-editor/` | CodeMirror 6 editor, bundled into the app as one HTML string |
+| `server/`         | Optional Go companion server for the AI features            |
+
+You can run the app with just the first two. `server/` only comes into play for
+the in-note slash commands. **Without a paired server the notepad is a fully
+functional offline markdown pad** — that is the intended fallback, not a
+degraded mode.
+
+## Where to go next
+
+<CardGrid>
+  <LinkCard
+    title="Install & run"
+    href={withBase('/start/install/')}
+    description="Build the app and get it onto a device."
+  />
+  <LinkCard
+    title="Using the pad"
+    href={withBase('/start/the-pad/')}
+    description="The paging model and the live-preview editor."
+  />
+  <LinkCard
+    title="Set up the server"
+    href={withBase('/server/setup/')}
+    description="Run the Go companion server and pair your phone."
+  />
+  <LinkCard
+    title="Slash commands"
+    href={withBase('/commands/')}
+    description="All 15 commands, grouped by what they do."
+  />
+</CardGrid>
+
+## A note on what this can do
+
+The companion server has three capability flags — `-allow-exec`, `-allow-code`
+and `-allow-view` — that let your phone run shell commands, run a coding agent,
+and expose local dev servers. All three are **off by default**, and each one
+runs code as your user account over the tunnel.
+
+This is documented up front rather than buried, because the security model is
+something you should choose deliberately. See
+[the security model](./server/security.md) before enabling anything.

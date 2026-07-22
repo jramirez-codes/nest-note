@@ -8,16 +8,7 @@ import ConfirmDialog from '../modals/ConfirmDialog';
 
 /** Greetings for the dashboard header, rotated one per day. */
 const GREETINGS = [
-  'Shine bright, JR',
-  'Raise the bar, JR',
-  'You’re a star, JR',
-  'Reach out far, JR',
-  'Here you are, JR',
-  'Right on par, JR',
-  'Go far, JR',
-  'You’re the star, JR',
-  'Take it far, JR',
-  'Superstar, JR',
+  'Welcome'
 ];
 
 /** Pick today's greeting, stable for the whole day and rotating every 24h. */

@@ -1,0 +1,66 @@
+---
+title: Dashboard
+description: Filing pages into subjects, archiving them, and sweeping a notebook for tasks.
+sidebar:
+  order: 4
+---
+
+import Requires from '../../../components/Requires.astro';
+
+<Requires />
+
+The dashboard is the app's second surface — where pages go once they're no
+longer the thing you're actively writing. These three commands feed it.
+
+## `/ingest`
+
+> File this page into your dashboard — sorts notes into subjects, then clears
+> the page.
+
+```text
+/ingest
+```
+
+Reads the page, files its contents into the appropriate dashboard subjects, and
+**clears the page** so the sheet is blank again. This is the "brain dump, then
+sort it out" workflow: write freely, then let `/ingest` put things where they
+belong.
+
+Needs a paired server — the sorting is a model decision, not a rule.
+
+## `/archive`
+
+> Archive this page — lifts it off the pad into the dashboard's Archived
+> section, reopenable from there.
+
+```text
+/archive
+```
+
+Takes the page out of the swipe order without deleting it. Archived pages live
+in the dashboard's Archived section and can be reopened at any time.
+
+:::note[On-device]
+Archiving is a local state change. No server required.
+:::
+
+## `/agg-tasks`
+
+> Sweep a subject's whole notebook for action items and file one task card per
+> item.
+
+```text
+/agg-tasks storage-migration
+```
+
+Walks an entire notebook looking for action items and files one task card per
+item found.
+
+:::caution[This one is slow on purpose]
+Sweeping a whole notebook can legitimately take several minutes. It is the
+reason the server's `-run-timeout` defaults to **8 minutes** rather than
+something tighter — if you lower that flag, this is the command that will start
+failing.
+:::
+
+Requires `-root`, like `/talk`, since it works through the orchestrator.

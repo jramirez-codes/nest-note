@@ -2,7 +2,7 @@
  * JS seam for the shared CPU wake lock.
  *
  * Backed by a small native module (Android:
- * android/app/src/main/java/com/ainotepad/power) over one reference-counted
+ * android/app/src/main/java/com/NestNote/power) over one reference-counted
  * PARTIAL_WAKE_LOCK: the CPU stays awake while the screen is free to sleep, so a
  * feature that needs to keep working through a screen timeout or Doze — currently
  * speech-to-text dictation — doesn't get starved. The native recorder service
