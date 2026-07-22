@@ -6,7 +6,7 @@
  * (SystemGraph island) as a full-width band beneath it. Every numbered
  * section below reads as zooming into one node of that graph.
  */
-import { ArrowRight, BookOpen, Move, Terminal } from '@lucide/astro';
+import { ArrowRight, BookOpen, Move, Server } from '@lucide/astro';
 import SystemGraph from '../SystemGraph.tsx';
 import { withBase } from '../../lib/url';
 ---
@@ -25,12 +25,14 @@ import { withBase } from '../../lib/url';
       you keep returning to compile into MCP servers your model can
       query. No cloud anywhere in the loop.
     </p>
-    <!-- The primary CTA goes to the prebuilt path — an APK and a binary from
-         Releases — because that's what most first-time readers want. The
-         from-source route sits beside it for anyone who'd rather build. -->
+    <!-- Both action CTAs stay on the prebuilt path — install the APK, then
+         start the server — because that is the whole product for a first-time
+         reader and neither step needs a toolchain. Building from source is a
+         developer route; it's reached from the docs and from section 05, not
+         from the top of the page. -->
     <div class="btn-row">
       <a class="btn btn--primary" href={withBase('/start/download/')}>Download &amp; run <ArrowRight size={15} /></a>
-      <a class="btn" href={withBase('/start/install/')}><Terminal size={15} /> Build from source</a>
+      <a class="btn" href={withBase('/server/setup/')}><Server size={15} /> Set up the server</a>
       <a class="btn" href={withBase('/introduction/')}><BookOpen size={15} /> Read the docs</a>
     </div>
     <p class="hero-meta">React Native · Go · SQLite · MCP · Claude Code</p>

@@ -1,9 +1,9 @@
 ---
-title: Introduction
+title: What is NestNote?
 description: A markdown notepad you flip through page by page, with an optional AI layer that runs entirely on your own laptop.
 ---
 
-import { CardGrid, LinkCard } from '@astrojs/starlight/components';
+import { CardGrid, LinkCard, Steps } from '@astrojs/starlight/components';
 import { withBase } from '../../lib/url';
 
 **NestNote** is a markdown notepad you flip through **page by page**, like a
@@ -14,34 +14,81 @@ Text is edited as **live-preview markdown** — syntax marks hide to render clea
 text and reveal again on the line you're editing — while markdown stays the
 stored format. Nothing is transformed on the way in or out.
 
-The optional part is the AI layer. Typing a slash command on a page turns it
-into a live **card** backed by a small Go server running on your own laptop,
-which streams the Claude Code CLI and a few laptop capabilities to your phone.
-There is no hosted service in that path.
+Used this way it is an ordinary offline notepad: no account, no sync, no
+network. Everything below is optional.
 
-## The three pieces
+## The optional half: your laptop
 
-The project is three cooperating parts, each independently buildable:
+Typing a slash command on a page turns that line into a live **card** backed by
+a small server running on **your own laptop**. The card streams its result in
+place and is saved into the note. There is no hosted service in that path — the
+server drives the Claude Code CLI already installed on your machine, with your
+credentials.
 
-| Directory         | What it is                                                 |
-| ----------------- | ---------------------------------------------------------- |
-| `src/`            | The React Native app — this repo's main deliverable         |
-| `webview-editor/` | CodeMirror 6 editor, bundled into the app as one HTML string |
-| `server/`         | Optional Go companion server for the AI features            |
+That unlocks three things:
 
-You can run the app with just the first two. `server/` only comes into play for
-the in-note slash commands. **Without a paired server the notepad is a fully
-functional offline markdown pad** — that is the intended fallback, not a
-degraded mode.
+- **Commands on the page** — `/ask` a question, `/clean` up a messy page,
+  `/search` your notebooks, `/record` audio, and more.
+  [All 15 commands](./commands/index.mdx).
+- **Subjects** — `/ingest` files a page into the right subject, and `/talk`
+  keeps a running conversation per subject. The orchestrator on your laptop
+  maintains those notes for you.
+- **A dashboard** — subjects, tasks swept out of your pages by `/agg-tasks`,
+  and an archive, all readable from the pad.
 
-## Two ways in
+Without a paired server the notepad is a **fully functional offline markdown
+pad** — that is the intended fallback, not a degraded mode.
 
-There is no app store listing, so getting NestNote means one of two paths:
+## What you need
 
-- **[Download & run](./start/download.md)** — grab the APK and the server binary
-  from GitHub Releases. No toolchain, Android only.
-- **[Build from source](./start/install.md)** — a clone and a React Native
-  toolchain. Required for iOS, emulators, or changing any of the code.
+- An **Android phone**. There is no app store listing, so you sideload the APK.
+  iOS works, but only if you [build it yourself](./start/install.md).
+- For the AI half: a **laptop** (macOS or Linux; Windows via WSL) on the same
+  Wi-Fi, with the [Claude Code CLI](https://claude.com/claude-code) installed
+  and signed in.
+
+## Getting it running
+
+<Steps>
+
+1. **Install the app.** Download `nest-note-<tag>.apk` from
+   [GitHub Releases](https://github.com/jramirez-codes/nest-note/releases) and
+   open it on the phone, or `adb install -r` it from a laptop.
+
+   You can stop here — the pad works offline.
+
+2. **Start the server.** Download the `nestnote-server` binary for your laptop
+   from the same release and run it:
+
+   ```bash
+   chmod +x nestnote-server
+   ./nestnote-server -root ~/nestnote-data
+   ```
+
+   It prints a pairing QR code and stays running.
+
+3. **Pair the phone.** In any note, type `/pair` on its own line and press
+   Enter, then point the camera at the QR code. Once per device.
+
+4. **Try it.** Type `/ask what day is it` on a page. The answer streams into a
+   card.
+
+</Steps>
+
+The full version of those steps, including the macOS quarantine step and what
+to do when a release has no binary for your platform, is on
+[download & run](./start/download.md).
+
+## Before you turn on the powerful bits
+
+The companion server has three capability flags — `-allow-exec`, `-allow-code`
+and `-allow-view` — that let your phone run shell commands, run a coding agent,
+and expose local dev servers. All three are **off by default**, and each one
+runs code as your user account over the tunnel.
+
+This is documented up front rather than buried, because the security model is
+something you should choose deliberately. See
+[the security model](./server/security.md) before enabling anything.
 
 ## Where to go next
 
@@ -52,11 +99,6 @@ There is no app store listing, so getting NestNote means one of two paths:
     description="Install the prebuilt APK and server binary — no toolchain."
   />
   <LinkCard
-    title="Build from source"
-    href={withBase('/start/install/')}
-    description="Clone the repo and build the app yourself."
-  />
-  <LinkCard
     title="Using the pad"
     href={withBase('/start/the-pad/')}
     description="The paging model and the live-preview editor."
@@ -64,22 +106,16 @@ There is no app store listing, so getting NestNote means one of two paths:
   <LinkCard
     title="Set up the server"
     href={withBase('/server/setup/')}
-    description="Run the Go companion server and pair your phone."
+    description="Run the companion server and pair your phone."
   />
   <LinkCard
     title="Slash commands"
     href={withBase('/commands/')}
     description="All 15 commands, grouped by what they do."
   />
+  <LinkCard
+    title="For developers"
+    href={withBase('/for-developers/')}
+    description="The repo's four parts, and where to start reading code."
+  />
 </CardGrid>
-
-## A note on what this can do
-
-The companion server has three capability flags — `-allow-exec`, `-allow-code`
-and `-allow-view` — that let your phone run shell commands, run a coding agent,
-and expose local dev servers. All three are **off by default**, and each one
-runs code as your user account over the tunnel.
-
-This is documented up front rather than buried, because the security model is
-something you should choose deliberately. See
-[the security model](./server/security.md) before enabling anything.
