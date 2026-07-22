@@ -109,7 +109,47 @@ grep -rn 'href="/\|src="/' site/src --include=*.astro
 
 **Images go in `src/assets/` and are imported**, never in `public/`, so Vite
 emits a hashed base-correct URL. Reserve `public/` for `favicon.svg`,
-`robots.txt` and `.nojekyll`.
+`robots.txt`, `.nojekyll` — and the landing page's demo videos with their
+poster frames (`write-demo.mp4`, `dictation.mp4`, …), which cannot go through
+the image pipeline and are referenced with `withBase()`.
+
+## Landing page islands
+
+The landing page (`src/pages/index.astro`) carries four React islands, and
+nothing else on the site uses React:
+
+| Island | File | What it is |
+| --- | --- | --- |
+| System graph | `src/components/SystemGraph.tsx` | The hero's whole-system graph, in `@xyflow/react` |
+| Lifecycle flow | `src/components/LifecycleFlow.tsx` | The subject lifecycle on loop (step rail + `@xyflow/react`) |
+| Command deck | `src/components/CommandDeck.tsx` | The slash-command inspector (plain React) |
+| Trust graph | `src/components/TrustGraph.tsx` | The security architecture diagram, in `@xyflow/react` |
+
+**All mount `client:visible`, and that matters.** `@xyflow/react` is the single
+heaviest thing this site can serve. Loading it lazily keeps it off the critical
+path — and off the wire entirely for a reader who bounces at the hero. The docs
+pages import none of it and stay at zero React.
+
+**Styles for island markup go in a plain `.css` file the component imports**,
+never in a page `<style>` block. Astro scopes page styles by stamping a
+`data-astro-*` attribute on the elements it compiles at build time, and it never
+sees markup React creates at runtime — so a scoped rule for an island's class
+compiles to a selector that matches nothing and silently does nothing. See
+`src/styles/system-graph.css` and `src/styles/trust-graph.css`.
+
+**Colors come from `src/lib/palette.ts`, not hardcoded hex.** React Flow's
+style props need real values rather than `var(--ctp-*)`, so that module reads the computed
+custom properties off `:root` and re-reads them when the flavor changes. The
+generated palette stays the single source of truth, with no second copy to
+drift.
+
+:::caution[Deciding light vs dark in JS]
+Use the `dark` flag from `usePalette()`. Do **not** infer it from
+`document.documentElement.dataset.theme` directly: outside the Starlight layout
+a first-time visitor has *no* `data-theme` at all, and the generated CSS then
+falls back to the OS preference. Treating a missing attribute as dark renders
+the island's dark styling on top of a Latte page.
+:::
 
 ## Gotchas
 

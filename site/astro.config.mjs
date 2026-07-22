@@ -1,6 +1,7 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import react from '@astrojs/react';
 import starlightLinksValidator from 'starlight-links-validator';
 import { remarkDocLinks } from './plugins/remark-doc-links.mjs';
 
@@ -33,6 +34,10 @@ export default defineConfig({
   },
 
   integrations: [
+    // Only the landing page ships React. Every island there is `client:visible`,
+    // so the docs pages — which import none of it — stay at zero JS.
+    react(),
+
     starlight({
       title: 'ainotepad',
       description:

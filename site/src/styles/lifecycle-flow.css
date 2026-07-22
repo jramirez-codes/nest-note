@@ -1,0 +1,302 @@
+/*
+ * LifecycleFlow: the 02 · Organize island — step rail + animated subject
+ * graph. Shared node/edge styling lives in graph-node.css; this file adds the
+ * rail, the host sizing, and the stage-dependent dress: ghost nodes, packets,
+ * mention dots, the approve/dismiss chips.
+ */
+
+.lf {
+  display: grid;
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+  gap: clamp(1.5rem, 3.5vw, 2.5rem);
+  align-items: stretch;
+}
+
+/* --- Rail: the four lifecycle steps, synced to the loop ------------------- */
+
+.lf-rail {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.6rem;
+}
+
+.lf-step {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.85rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid transparent;
+  border-radius: 0.6rem;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  color: var(--ctp-subtext0);
+  cursor: pointer;
+  /* Clips the progress bar to the rounded corners. */
+  overflow: hidden;
+  transition: border-color 0.18s ease, background-color 0.18s ease, color 0.18s ease;
+}
+
+.lf-step:hover {
+  border-color: var(--ctp-surface1);
+  color: var(--ctp-subtext1);
+}
+
+.lf-step.is-active {
+  border-color: color-mix(in srgb, var(--ctp-mauve) 45%, var(--ctp-surface1));
+  background: color-mix(in srgb, var(--ctp-mantle) 70%, transparent);
+  color: var(--ctp-subtext1);
+}
+
+.lf-num {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--ctp-overlay1);
+  padding-top: 0.2rem;
+  transition: color 0.18s ease;
+}
+
+.lf-step.is-active .lf-num,
+.lf-step.is-done .lf-num {
+  color: var(--ctp-mauve);
+}
+
+.lf-step-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.lf-step-copy strong {
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ctp-text);
+}
+
+.lf-step-copy span {
+  font-size: 0.87rem;
+  line-height: 1.55;
+  text-wrap: pretty;
+}
+
+/* The active step's timer, drawn as a filling underline. Duration comes from
+   the component so it always matches the loop's actual hold time. */
+.lf-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--ctp-mauve);
+  transform-origin: left;
+  transform: scaleX(0);
+  animation: lf-fill linear forwards;
+}
+
+@keyframes lf-fill {
+  to {
+    transform: scaleX(1);
+  }
+}
+
+/* --- Canvas host ---------------------------------------------------------- */
+
+.lf-canvas {
+  height: 30rem;
+  border: 1px solid var(--ctp-surface0);
+  border-radius: 0.9rem;
+  background: color-mix(in srgb, var(--ctp-mantle) 45%, transparent);
+  overflow: hidden;
+}
+
+.lf-canvas .react-flow,
+.lf-canvas .react-flow__pane {
+  --xy-background-color: transparent;
+  --xy-background-color-default: transparent;
+  background: transparent;
+}
+
+/* --- Nodes: ghosts, arrivals, and the subject's counters ------------------ */
+
+.lf-node {
+  transition: opacity 0.45s ease, border-color 0.45s ease;
+}
+
+/* A stage that hasn't happened yet: present, but only as an outline. */
+.lf-ghost {
+  opacity: 0.42;
+  border-style: dashed;
+  box-shadow: none;
+}
+
+/* One pulse on the frame a node stops being a ghost. */
+.lf-fresh {
+  animation: lf-arrive 0.9s ease-out;
+}
+
+@keyframes lf-arrive {
+  from {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--ctp-mauve) 55%, transparent);
+  }
+  to {
+    box-shadow: 0 0 0 14px transparent;
+  }
+}
+
+.lf-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.7rem;
+}
+
+/* Mention dots filling toward the threshold. */
+.lf-dots {
+  display: flex;
+  gap: 0.3rem;
+  margin: 0.35rem 0 0.1rem;
+}
+
+.lf-dots i {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  border: 1px solid var(--ctp-surface2);
+  transition: background-color 0.3s ease, border-color 0.3s ease;
+}
+
+.lf-dots i.is-on {
+  background: var(--ctp-mauve);
+  border-color: var(--ctp-mauve);
+}
+
+/* The proposal's decorative approve/dismiss chips, and its approved state. */
+.lf-choices {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.45rem;
+}
+
+.lf-choices span {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.18rem 0.55rem;
+  border: 1px solid var(--ctp-surface2);
+  border-radius: 999px;
+  color: var(--ctp-subtext0);
+}
+
+.lf-choices span:first-child {
+  border-color: color-mix(in srgb, var(--ctp-green) 55%, var(--ctp-surface2));
+  color: var(--ctp-green);
+}
+
+.lf-approved {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.45rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  color: var(--ctp-green);
+}
+
+/* "registered" status on the compiled server. */
+.lf-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.35rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.68rem;
+  color: var(--ctp-green);
+}
+
+.lf-live i {
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 50%;
+  background: var(--ctp-green);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ctp-green) 22%, transparent);
+}
+
+/* --- Edges: ghost → active (packet) → done -------------------------------- */
+
+.lf-edge.is-ghost .react-flow__edge-path {
+  stroke-dasharray: 4 4;
+  opacity: 0.5;
+}
+
+.lf-edge.is-active .react-flow__edge-path {
+  stroke: var(--ctp-mauve);
+  stroke-width: 2;
+}
+
+.lf-edge.is-done .react-flow__edge-path {
+  stroke: color-mix(in srgb, var(--ctp-mauve) 55%, var(--ctp-surface2));
+}
+
+.lf-packet {
+  fill: var(--ctp-mauve);
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--ctp-mauve) 80%, transparent));
+  pointer-events: none;
+}
+
+/* Custom edges render labels via EdgeLabelRenderer; match the default look. */
+.lf-edge-label {
+  position: absolute;
+  padding: 0.05rem 0.3rem;
+  background: var(--ctp-base);
+  border-radius: 0.25rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.62rem;
+  color: var(--ctp-subtext0);
+  pointer-events: none;
+  transition: color 0.3s ease, opacity 0.3s ease;
+}
+
+.lf-edge-label.is-ghost {
+  opacity: 0.5;
+}
+
+.lf-edge-label.is-active {
+  color: var(--ctp-mauve);
+}
+
+/* --- Narrow --------------------------------------------------------------- */
+
+@media (max-width: 60rem) {
+  .lf {
+    grid-template-columns: 1fr;
+  }
+
+  .lf-rail {
+    justify-content: flex-start;
+  }
+
+  /* The column layout is four nodes deep; holding the wide height would make
+     fitView shrink every label past reading size. */
+  .lf-canvas {
+    height: 34rem;
+  }
+}
+
+/* The page's own reduced-motion rules are Astro-scoped and never reach this
+   React-rendered DOM, so the island carries its own. */
+@media (prefers-reduced-motion: reduce) {
+  .lf-step,
+  .lf-node,
+  .lf-num,
+  .lf-dots i,
+  .lf-edge-label {
+    transition: none;
+  }
+
+  .lf-fresh {
+    animation: none;
+  }
+}

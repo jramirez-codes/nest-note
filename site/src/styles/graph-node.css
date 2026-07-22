@@ -1,0 +1,126 @@
+/*
+ * Shared look for the React Flow diagrams (SystemGraph, LifecycleFlow and
+ * TrustGraph), so they read as one visual system rather than three widgets.
+ *
+ * Global, not host-scoped: the rules key off React Flow's own internal classes
+ * (`.react-flow__edge-path`, `.react-flow__handle`) plus our `.gn-*` classes,
+ * and every React Flow island on the site wants exactly this treatment. Each
+ * diagram's own stylesheet then only sets its host container's size and
+ * background.
+ *
+ * Astro cannot scope these anyway — the markup is created by React at runtime,
+ * so a hashed `data-astro-*` selector would never match.
+ */
+
+/* --- Nodes --------------------------------------------------------------- */
+
+.gn-node {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  width: 12rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--ctp-surface1);
+  border-radius: 0.6rem;
+  background: var(--ctp-mantle);
+  font-family: inherit;
+  line-height: 1.35;
+}
+
+.gn-node strong {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--ctp-text);
+}
+
+.gn-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.02em;
+  color: var(--ctp-overlay1);
+}
+
+/* Kicker icons inherit the kicker's tone color (plain / mauve / peach). */
+.gn-kicker .lucide {
+  flex: none;
+}
+
+.gn-detail {
+  font-size: 0.75rem;
+  color: var(--ctp-subtext0);
+}
+
+/* Accent = a surface the reader owns and drives. Warn = a capability that only
+   exists once a flag turns it on. The whole security story, told in color. */
+.gn-accent {
+  border-color: color-mix(in srgb, var(--ctp-mauve) 45%, var(--ctp-surface1));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ctp-mauve) 12%, transparent);
+}
+
+.gn-accent .gn-kicker {
+  color: var(--ctp-mauve);
+}
+
+.gn-warn {
+  border-color: color-mix(in srgb, var(--ctp-peach) 38%, var(--ctp-surface1));
+}
+
+.gn-warn .gn-kicker {
+  color: var(--ctp-peach);
+}
+
+/* --- Handles ------------------------------------------------------------- */
+
+/* Nothing is draggable, but React Flow needs a Handle to anchor each edge.
+   Shrink them to nothing rather than `display:none`, which breaks positioning. */
+.react-flow__handle {
+  width: 1px;
+  height: 1px;
+  min-width: 0;
+  min-height: 0;
+  border: 0;
+  background: transparent;
+}
+
+/* --- Edges --------------------------------------------------------------- */
+
+.react-flow__edge-path {
+  stroke-width: 1.5;
+}
+
+.gn-edge-trunk .react-flow__edge-path {
+  stroke: var(--ctp-mauve);
+  stroke-width: 2;
+}
+
+.gn-edge-return .react-flow__edge-path {
+  stroke-dasharray: 4 4;
+}
+
+/* SystemGraph hover: edges touching the hovered node warm to the accent. */
+.gn-edge.is-hot .react-flow__edge-path {
+  stroke: var(--ctp-mauve);
+}
+
+.react-flow__edge-text {
+  fill: var(--ctp-subtext0);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.62rem;
+}
+
+.react-flow__edge-textbg {
+  fill: var(--ctp-base);
+}
+
+.react-flow__pane {
+  cursor: default;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .react-flow__edge.animated .react-flow__edge-path {
+    animation: none;
+  }
+}
