@@ -13,7 +13,8 @@ If you skip this page entirely, the pad still works — it's just offline.
 
 ## Prerequisites
 
-- **Go 1.26 or newer**
+- **Go 1.26 or newer** — unless you use a
+  [prebuilt binary](#prebuilt-binaries)
 - The **Claude Code CLI**, installed and authenticated on the laptop. The
   server shells out to it; the AI commands run against your own CLI and your
   own credentials.
@@ -39,6 +40,30 @@ To build a binary instead:
 ```bash
 yarn server:build      # -> server/nestnote-server
 ```
+
+## Prebuilt binaries
+
+Every tagged [release](https://github.com/jramirez-codes/nest-note/releases)
+ships the server for macOS and Linux, amd64 and arm64 — no Go toolchain
+needed:
+
+```bash
+tar -xzf nestnote-server_<tag>_darwin_arm64.tar.gz
+./nestnote-server -root ~/nestnote-data
+```
+
+The binaries are statically linked (`CGO_ENABLED=0`) and unsigned. macOS
+Gatekeeper quarantines an unsigned download, so the first run needs
+`xattr -d com.apple.quarantine ./nestnote-server` or an *Open anyway* in
+System Settings → Privacy & Security.
+
+There is no Windows build: the server manages Claude and `/run` subprocesses
+through POSIX process groups, which have no Windows equivalent. Use WSL.
+
+A prebuilt binary is *not* self-updating the way a checkout is:
+[`/update-server`](../commands/admin.mdx) does `git pull` + `go build` against a
+real clone. If you want that command, run from a checkout — or keep one and
+point the binary at it with `-repo-dir`.
 
 ## The `-root` layout
 

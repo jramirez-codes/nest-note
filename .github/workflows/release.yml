@@ -1,0 +1,179 @@
+name: Release
+
+# Builds the sideloadable Android APK and the companion-server binaries, then
+# attaches them to the GitHub release for the tag that triggered the run.
+#
+# Cut a release with:
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# workflow_dispatch builds the same artifacts but publishes nothing — they land
+# on the run's Artifacts list, which is the way to test a change to this file
+# without burning a tag.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One release build per ref. Don't cancel an in-progress tag build: a half-
+# uploaded release is worse than a slow one.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  apk:
+    name: Android APK
+    runs-on: ubuntu-latest
+    # The new architecture compiles op-sqlite, reanimated and vision-camera
+    # from C++ source for each ABI — this is a long build, not a hung one.
+    timeout-minutes: 90
+    env:
+      # android/build.gradle pins this exactly; AGP fails rather than falling
+      # back to whatever NDK the runner happens to preinstall.
+      NDK_VERSION: '27.1.12297006'
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: yarn
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Install the pinned NDK
+        run: '"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"'
+
+      - name: Install dependencies
+        # --frozen-lockfile so a release can never resolve versions that
+        # yarn.lock doesn't pin. postinstall still runs, so patches apply.
+        run: yarn install --frozen-lockfile
+
+      - name: Build release APK
+        # Phone ABIs only. x86/x86_64 are emulator targets and would roughly
+        # double the build for artifacts nobody sideloads.
+        run: ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a,armeabi-v7a
+        working-directory: android
+
+      - name: Name the APK after the release
+        run: |
+          version="${GITHUB_REF_NAME}"
+          [ "${GITHUB_REF_TYPE}" = tag ] || version="$(git rev-parse --short HEAD)"
+          mkdir -p dist
+          cp android/app/build/outputs/apk/release/app-release.apk \
+             "dist/nestnote-${version}.apk"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: apk
+          path: dist/
+          if-no-files-found: error
+
+  server:
+    name: Server ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: Test
+        # Once per matrix, not four times — the tests are platform-independent
+        # and this is the last gate before a binary ships.
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        run: go test ./...
+        working-directory: server
+
+      - name: Build
+        # CGO off keeps the binary static and the cross-builds hermetic; the
+        # server has no cgo dependencies. Windows is not a target: procgroup.go
+        # and update.go use POSIX process groups (Setpgid/Setsid/kill).
+        env:
+          CGO_ENABLED: '0'
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build -trimpath -ldflags '-s -w' -o ../build/nestnote-server .
+        working-directory: server
+
+      - name: Package
+        run: |
+          version="${GITHUB_REF_NAME}"
+          [ "${GITHUB_REF_TYPE}" = tag ] || version="$(git rev-parse --short HEAD)"
+          cp LICENSE build/
+          mkdir -p dist
+          tar -czf "dist/nestnote-server_${version}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz" \
+              -C build nestnote-server LICENSE
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: server-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: [apk, server]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # gh release create/upload
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        # Written outside dist/ first so the sums file can't end up hashing itself.
+        run: cd dist && sha256sum ./* > ../SHA256SUMS.txt && mv ../SHA256SUMS.txt .
+
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cat > notes.md <<'EOF'
+          ## Downloads
+
+          | File | For |
+          | --- | --- |
+          | `nestnote-<tag>.apk` | Android phone (arm64-v8a / armeabi-v7a) |
+          | `nestnote-server_<tag>_<os>_<arch>.tar.gz` | Companion server for macOS/Linux |
+
+          The APK is **signed with the repo's debug keystore** — the release build
+          type has no production signing config. Android will warn on install, and
+          it cannot be upgraded in place by a differently-signed build.
+
+          The server still needs the Claude Code CLI installed and authenticated on
+          the machine you run it on. Verify a download with `sha256sum -c
+          SHA256SUMS.txt`.
+          EOF
+          # A release may already exist — tag pushed from the UI, or a re-run of
+          # this workflow. Create it if not, then overwrite its assets either way.
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --title "$TAG" \
+              --notes-file notes.md --generate-notes
+          fi
+          gh release upload "$TAG" dist/* --clobber
