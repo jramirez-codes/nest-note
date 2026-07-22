@@ -37,7 +37,7 @@ the in-note AI commands.
 Prebuilt Android APK and server binaries are attached to
 [releases](https://github.com/jramirez-codes/nest-note/releases) where
 available — they're built and uploaded by hand, so coverage varies. The
-APK is debug-signed — see [Install & run](https://jramirez-codes.github.io/nest-note/start/install/)
+APK is debug-signed — see [Download & run](https://jramirez-codes.github.io/nest-note/start/download/)
 for what that means before sideloading.
 
 To build from source instead:
@@ -55,7 +55,7 @@ scanning the QR it prints:
 cd server && go run . -root ~/nestnote-data
 ```
 
-Full instructions: **[Install & run](https://jramirez-codes.github.io/nest-note/start/install/)**
+Full instructions: **[Build from source](https://jramirez-codes.github.io/nest-note/start/install/)**
 and **[Server setup](https://jramirez-codes.github.io/nest-note/server/setup/)**.
 
 > ⚠️ The server's `-allow-exec`, `-allow-code` and `-allow-view` flags are **off

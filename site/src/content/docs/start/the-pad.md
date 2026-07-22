@@ -2,7 +2,7 @@
 title: Using the pad
 description: The paging model, the live-preview markdown editor, and how notes are titled and stored.
 sidebar:
-  order: 2
+  order: 3
 ---
 
 The interface is deliberately small. There is no file browser, no note list, no

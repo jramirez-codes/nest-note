@@ -11,6 +11,12 @@ pinned-TLS tunnel. Nothing is hosted; there is no third party in the path.
 
 If you skip this page entirely, the pad still works — it's just offline.
 
+:::tip[Not building from source?]
+If you're running a released binary rather than a checkout, the short version —
+download, run, pair — is on [download & run](../start/download.md). This page is
+the full picture, and everything below about `-root` applies either way.
+:::
+
 ## Prerequisites
 
 - **Go 1.26 or newer** — unless you use a
@@ -44,25 +50,11 @@ yarn server:build      # -> server/nestnote-server
 ## Prebuilt binaries
 
 A [release](https://github.com/jramirez-codes/nest-note/releases) may carry a
-prebuilt server binary — no Go toolchain needed. Builds are published by hand,
-so platform coverage varies release to release; check the asset list, and build
-from source if yours isn't there.
+prebuilt server binary — no Go toolchain needed. Platform coverage, the macOS
+quarantine step and the missing Windows build are all covered on
+[download & run](../start/download.md).
 
-```bash
-mv nestnote-server_<tag>_darwin_arm64 nestnote-server
-chmod +x nestnote-server
-./nestnote-server -root ~/nestnote-data
-```
-
-The binaries are statically linked (`CGO_ENABLED=0`) and unsigned. macOS
-Gatekeeper quarantines an unsigned download, so the first run needs
-`xattr -d com.apple.quarantine ./nestnote-server` or an *Open anyway* in
-System Settings → Privacy & Security.
-
-There is no Windows build: the server manages Claude and `/run` subprocesses
-through POSIX process groups, which have no Windows equivalent. Use WSL.
-
-A prebuilt binary is *not* self-updating the way a checkout is:
+One difference worth knowing here: a prebuilt binary is *not* self-updating the way a checkout is:
 [`/update-server`](../commands/admin.mdx) does `git pull` + `go build` against a
 real clone. If you want that command, run from a checkout — or keep one and
 point the binary at it with `-repo-dir`.
