@@ -34,13 +34,27 @@ the in-note slash commands. **Without a paired server the notepad is a fully
 functional offline markdown pad** — that is the intended fallback, not a
 degraded mode.
 
+## Two ways in
+
+There is no app store listing, so getting NestNote means one of two paths:
+
+- **[Download & run](./start/download.md)** — grab the APK and the server binary
+  from GitHub Releases. No toolchain, Android only.
+- **[Build from source](./start/install.md)** — a clone and a React Native
+  toolchain. Required for iOS, emulators, or changing any of the code.
+
 ## Where to go next
 
 <CardGrid>
   <LinkCard
-    title="Install & run"
+    title="Download & run"
+    href={withBase('/start/download/')}
+    description="Install the prebuilt APK and server binary — no toolchain."
+  />
+  <LinkCard
+    title="Build from source"
     href={withBase('/start/install/')}
-    description="Build the app and get it onto a device."
+    description="Clone the repo and build the app yourself."
   />
   <LinkCard
     title="Using the pad"

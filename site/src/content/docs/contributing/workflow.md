@@ -69,24 +69,40 @@ to `main` with changes under `site/` triggers the GitHub Pages deploy.
 
 ## Cutting a release
 
-`.github/workflows/release.yml` runs on any tag matching `v*` and attaches the
-build artifacts to that tag's GitHub release:
+Releases are built and uploaded **by hand** — there is no release CI. Tag the
+commit, build the artifacts locally, then attach them to the GitHub release:
 
 ```bash
 git tag v0.1.0
 git push origin v0.1.0
 ```
 
-It produces `nestnote-<tag>.apk` (Gradle `assembleRelease`, phone ABIs only —
-`arm64-v8a` and `armeabi-v7a`), a `nestnote-server_<tag>_<os>_<arch>.tar.gz`
-for macOS and Linux on amd64 and arm64, and `SHA256SUMS.txt`. `go test ./...`
-gates the server binaries. The release is created with generated notes if it
-doesn't exist yet, and assets are uploaded with `--clobber`, so re-running the
-workflow on a tag replaces them cleanly.
+Build the APK (phone ABIs only — `arm64-v8a` and `armeabi-v7a`, since x86 is
+an emulator target):
 
-Running the workflow via **Run workflow** (`workflow_dispatch`) builds the same
-artifacts and publishes nothing — they're attached to the run instead. That's
-the way to test a change to the workflow without spending a tag.
+```bash
+cd android
+./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a,armeabi-v7a
+# -> android/app/build/outputs/apk/release/app-release.apk
+```
+
+Build the server for whichever platform you're publishing. `CGO_ENABLED=0`
+keeps it static, and the server has no cgo dependencies, so cross-compiling is
+just a matter of setting `GOOS`/`GOARCH`:
+
+```bash
+cd server
+go test ./...
+CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
+  go build -trimpath -ldflags '-s -w' -o nestnote-server .
+```
+
+There is no Windows build: `procgroup.go` and `update.go` use POSIX process
+groups, which have no Windows equivalent.
+
+Then create the release and upload both files. Name them so it's obvious what
+they are and which tag they came from — the docs refer to them as
+`nestnote-<tag>.apk` and `nestnote-server_<tag>_<os>_<arch>`.
 
 Two things worth remembering before you tag:
 
