@@ -1,0 +1,76 @@
+---
+/**
+ * 04 · steer — the dashboard as the control room: four panel cards beside
+ * a fanned pair of dashboard captures.
+ */
+import { Image } from 'astro:assets';
+import { Archive, LayoutDashboard, Library, Lightbulb, ListChecks } from '@lucide/astro';
+import shotArchived from '../../assets/shots/note-archived-coder.jpg';
+import shotDashboard from '../../assets/shots/dashboard.jpg';
+import MoreLink from './MoreLink.astro';
+import PhonePair from './PhonePair.astro';
+import SpineSection from './SpineSection.astro';
+
+const panels = [
+  { icon: Library, title: 'Subjects', body: 'Every notebook the orchestrator maintains, with its pages and the tools its MCP server exposes.' },
+  { icon: ListChecks, title: 'Tasks', body: 'First-class task cards, including everything /agg-tasks swept out of a subject’s notebook.' },
+  { icon: Lightbulb, title: 'Suggestions', body: 'Non-blocking proposals — new servers to create, subjects to merge. Approve or dismiss.' },
+  { icon: Archive, title: 'Archived', body: 'Pages lifted off the pad with /archive. Out of the swipe order, never deleted, reopenable in a tap.' },
+];
+---
+
+<SpineSection id="steer" tag="04 · steer" icon={LayoutDashboard} heading="The dashboard is the control room">
+  <Fragment slot="sub">
+    The pad is for the page you’re writing now. Everything past it —
+    subjects, tasks, open proposals, archived pages — lives on the
+    dashboard, where you approve or dismiss what happens next.
+  </Fragment>
+
+  <div class="steer">
+    <div class="panels">
+      {panels.map(({ icon: Icon, title, body }) => (
+        <div class="card panel">
+          <h3><Icon size={15} class="panel-ic" aria-hidden="true" />{title}</h3>
+          <p>{body}</p>
+        </div>
+      ))}
+    </div>
+    <PhonePair class="steer-visual">
+      <Image
+        slot="back"
+        src={shotArchived}
+        alt="An archived page reopened from the dashboard, holding a finished Claude coding card and a server-run card."
+        width={480}
+        densities={[1, 2]}
+      />
+      <Image
+        slot="front"
+        src={shotDashboard}
+        alt="The dashboard: archived pages, tasks sorted by priority with due dates, and tagged ideas."
+        width={480}
+        densities={[1, 2]}
+      />
+      <Fragment slot="caption">The dashboard — and an archived page pulled back open.</Fragment>
+    </PhonePair>
+  </div>
+
+  <MoreLink href="/commands/dashboard/">Dashboard commands</MoreLink>
+</SpineSection>
+
+<style is:global>
+  .steer {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 24rem);
+    gap: clamp(1.75rem, 4vw, 3rem);
+    align-items: center;
+  }
+  .steer .panels { grid-template-columns: 1fr; }
+  .panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: 1.25rem; }
+  .panel h3 { display: flex; align-items: center; gap: 0.6rem; }
+  .panel p { margin: 0; font-size: 0.94rem; }
+  .panel h3 .panel-ic { color: var(--accent); }
+
+  @media (max-width: 60rem) {
+    .steer { grid-template-columns: 1fr; }
+  }
+</style>

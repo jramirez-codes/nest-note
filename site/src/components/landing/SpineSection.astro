@@ -1,0 +1,28 @@
+---
+/**
+ * One numbered section on the page spine: the port dot + mono tag where it
+ * connects, a heading block, then whatever the section pins to the canvas
+ * (default slot). The shared .ns/.ns-tag/.ns-head styles live in
+ * LandingLayout; [data-reveal] opts the section into the scroll-in cascade.
+ */
+import type { AstroComponent } from '@lucide/astro';
+
+interface Props {
+  id: string;
+  /** Mono port label, e.g. "01 · write". */
+  tag: string;
+  icon: AstroComponent;
+  heading: string;
+}
+
+const { id, tag, icon: Icon, heading } = Astro.props;
+---
+
+<section class="ns" id={id} data-reveal>
+  <p class="ns-tag"><Icon size={12} /> {tag}</p>
+  <div class="ns-head">
+    <h2>{heading}</h2>
+    <p class="sub"><slot name="sub" /></p>
+  </div>
+  <slot />
+</section>

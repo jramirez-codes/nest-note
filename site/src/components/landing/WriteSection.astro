@@ -1,0 +1,77 @@
+---
+/**
+ * 01 · write — the pad as a plain offline notepad, retracing the hero
+ * capture: feature chain beside two real pages of the pad fanned like the
+ * deck you swipe.
+ */
+import { Image } from 'astro:assets';
+import { ArrowLeftRight, Database, FilePlus, FileText, PenLine } from '@lucide/astro';
+import shotPadBlank from '../../assets/shots/pad-blank.jpg';
+import shotPadMarkdown from '../../assets/shots/pad-markdown.jpg';
+import Callout from './Callout.astro';
+import PhonePair from './PhonePair.astro';
+import SpineSection from './SpineSection.astro';
+
+/* Ordered to retrace the hero capture: it opens on writing, ends on /clean. */
+const padFeatures = [
+  { icon: FileText, title: 'Live-preview markdown', body: 'The heading and checkboxes in the capture were typed as plain markdown. Marks hide into rendered text, reveal on the line you are editing — and markdown stays the stored format.' },
+  { icon: ArrowLeftRight, title: 'Swipe between pages', body: 'Each note is a full-screen page. Swipe left or right through the pad — no file browser, no note list.' },
+  { icon: FilePlus, title: 'Tap the blank sheet', body: 'The last page is always blank. Tapping it starts a new note. That is the entire navigation model.' },
+];
+---
+
+<SpineSection id="write" tag="01 · write" icon={PenLine} heading="It starts as paper">
+  <Fragment slot="sub">
+    Everything in the capture above until <code>/clean</code> is just
+    the pad doing its day job: a stack of full-screen pages you flip
+    through, with markdown that renders as you write it. All of that
+    works with no server, no account and no signal — a complete offline
+    notepad first, an AI system second.
+  </Fragment>
+
+  <div class="split split--pad">
+    <ol class="chain">
+      {padFeatures.map(({ icon: Icon, title, body }) => (
+        <li>
+          <h3><Icon size={14} class="chain-ic" /> {title}</h3>
+          <p>{body}</p>
+        </li>
+      ))}
+    </ol>
+    <!-- Two real pages of the pad, fanned like the deck you swipe:
+         the note from the hero capture mid-write, and the blank sheet
+         that is always waiting at the end. -->
+    <PhonePair class="pad-visual">
+      <Image
+        slot="back"
+        src={shotPadBlank}
+        alt="The pad’s blank last page: an empty sheet with the page indicator reading 1 of 3, a Dashboard button and the dictation mic."
+        width={480}
+        densities={[1, 2]}
+      />
+      <Image
+        slot="front"
+        src={shotPadMarkdown}
+        alt="A note mid-write with the keyboard open: “# Markdown Notes” rendered as a heading above two live checkboxes."
+        width={480}
+        densities={[1, 2]}
+      />
+      <Fragment slot="caption">The same note as the capture above — and the blank sheet waiting at the end of the pad.</Fragment>
+    </PhonePair>
+  </div>
+
+  <Callout icon={Database}>
+    Everything lives in one <code>ainotepad.sqlite</code> file on the
+    device — notes, notebooks, a local FTS5 search index. The server is
+    optional; unpaired is the intended fallback, not a degraded mode.
+  </Callout>
+</SpineSection>
+
+<style is:global>
+  .split--pad { grid-template-columns: 1.05fr 0.95fr; align-items: center; }
+  .pad-visual { justify-self: center; }
+
+  @media (max-width: 60rem) {
+    .split--pad { grid-template-columns: 1fr; }
+  }
+</style>

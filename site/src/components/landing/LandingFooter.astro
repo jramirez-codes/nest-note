@@ -1,0 +1,35 @@
+---
+import { Image } from 'astro:assets';
+import logo from '../../assets/logo.png';
+import { REPO } from '../../lib/repo';
+import { withBase } from '../../lib/url';
+---
+
+<footer>
+  <div class="footer-inner">
+    <a class="brand" href={withBase('/')}>
+      <Image src={logo} alt="" width={20} height={20} />
+      <span>ainotepad</span>
+    </a>
+    <nav class="footer-links">
+      <a href={withBase('/introduction/')}>Documentation</a>
+      <a href={withBase('/commands/')}>Commands</a>
+      <a href={withBase('/server/security/')}>Security</a>
+      <a href={REPO} rel="noopener">Source</a>
+    </nav>
+    <p class="footer-note">Not on any app store — build it yourself.</p>
+  </div>
+</footer>
+
+<style is:global>
+  footer { border-top: 1px solid var(--rule); background: color-mix(in srgb, var(--ctp-base) 70%, transparent); }
+  .footer-inner { max-width: var(--frame); margin-inline: auto; padding: 2.5rem var(--pad-x) 3.5rem; display: flex; align-items: center; gap: 1rem 1.75rem; flex-wrap: wrap; }
+  .footer-links { display: flex; gap: 1.4rem; flex-wrap: wrap; }
+  .footer-links a { color: var(--muted); text-decoration: none; font-size: 0.9rem; }
+  .footer-links a:hover { color: var(--fg); }
+  .footer-note { margin: 0 0 0 auto; color: var(--faint); font-size: 0.85rem; }
+
+  @media (max-width: 46rem) {
+    .footer-note { margin-left: 0; width: 100%; }
+  }
+</style>

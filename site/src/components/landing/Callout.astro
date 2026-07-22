@@ -1,0 +1,26 @@
+---
+/**
+ * A single accent-ruled takeaway line closing a section — the "what this
+ * means for your data" beat after the visuals.
+ */
+import type { AstroComponent } from '@lucide/astro';
+
+interface Props {
+  icon: AstroComponent;
+}
+
+const { icon: Icon } = Astro.props;
+---
+
+<p class="callout"><Icon size={15} class="callout-ic" /> <slot /></p>
+
+<style is:global>
+  .callout {
+    margin: clamp(1.75rem, 3.5vw, 2.5rem) 0 0;
+    border-left: 2px solid var(--accent);
+    padding-left: 1rem;
+    max-width: 42rem;
+    color: var(--fg) !important;
+  }
+  .callout .callout-ic { vertical-align: -0.18em; margin-right: 0.15rem; color: var(--accent); }
+</style>

@@ -1,0 +1,22 @@
+---
+/**
+ * Two overlapping phone frames — echoes the pad's fanned-deck visual. The
+ * front slot is the capture being talked about (image or video); the back
+ * slot peeks out rotated behind it. Inside a [data-reveal] section the back
+ * phone deals itself out from under the front one (see LandingLayout).
+ */
+interface Props {
+  /** Extra class on the figure for section-specific layout. */
+  class?: string;
+}
+
+const { class: className } = Astro.props;
+---
+
+<figure class:list={['phone-fig', className]}>
+  <div class="phone-pair">
+    <div class="phone phone--back"><slot name="back" /></div>
+    <div class="phone phone--front"><slot name="front" /></div>
+  </div>
+  <figcaption><slot name="caption" /></figcaption>
+</figure>

@@ -1,0 +1,251 @@
+---
+/**
+ * 05 · own — "your laptop is the backend": the TrustGraph island, one real
+ * session told as a pipeline of flag-tagged captures wired port-to-port by
+ * dashed edges, then two closing node-cards (the -allow-* flags and the
+ * self-host install).
+ */
+import { Image } from 'astro:assets';
+import { ArrowRight, HardDrive, Lock, ShieldCheck, Star } from '@lucide/astro';
+import shotCodeAgent from '../../assets/shots/code-agent.jpg';
+import shotCodeRun from '../../assets/shots/code-run.jpg';
+import shotCodeView from '../../assets/shots/code-view.jpg';
+import TrustGraph from '../TrustGraph.tsx';
+import MoreLink from './MoreLink.astro';
+import SpineSection from './SpineSection.astro';
+import { REPO } from '../../lib/repo';
+import { withBase } from '../../lib/url';
+
+/* Same order as the pipeline captures above: build → run → view. */
+const flags = [
+  { flag: '-allow-code', body: 'Runs a coding agent with every tool auto-accepted. No per-tool confirmation.' },
+  { flag: '-allow-exec', body: 'Runs arbitrary shell commands as you, gated only by the tunnel and token.' },
+  { flag: '-allow-view', body: 'Serves previewed dev servers over cleartext HTTP to anyone on your LAN.' },
+];
+---
+
+<SpineSection id="own" tag="05 · own" icon={ShieldCheck} heading="Your laptop is the backend">
+  <Fragment slot="sub">
+    The orchestrator, the generated servers, every command — all backed
+    by one small Go binary you run yourself. Your phone connects over a
+    pinned-TLS, token-authenticated tunnel, paired once by QR. The model
+    runs against your own Claude Code CLI, with your credentials, on
+    your machine.
+  </Fragment>
+
+  <div class="figure">
+    <TrustGraph client:visible />
+  </div>
+
+  <!-- One real session, told as a pipeline: each capture is a node
+       tagged with the flag that unlocks it, wired to the next by a
+       dashed edge. Same order as the flags card below. -->
+  <p class="aside-label aside-label--gap">One session, three flags — a website from the pad</p>
+  <div class="pipeline">
+    <figure class="shot">
+      <span class="shot-tag">-allow-code</span>
+      <div class="phone">
+        <Image
+          src={shotCodeAgent}
+          alt="A /code card on a page: a Claude agent scaffolds a Vite project and runs npm install, with a message box to steer it."
+          width={480}
+          densities={[1, 2]}
+        />
+      </div>
+      <figcaption>An agent scaffolds the site inside a card — message it mid-run to steer.</figcaption>
+    </figure>
+    <div class="pipe" aria-hidden="true"><span>then run it</span></div>
+    <figure class="shot">
+      <span class="shot-tag">-allow-exec</span>
+      <div class="phone">
+        <Image
+          src={shotCodeRun}
+          alt="A /run card streaming npm run dev output on the pad, with a stdin box and a live view card below."
+          width={480}
+          densities={[1, 2]}
+        />
+      </div>
+      <figcaption>npm run dev streams back — stdin included, from your phone.</figcaption>
+    </figure>
+    <div class="pipe" aria-hidden="true"><span>then see it</span></div>
+    <figure class="shot">
+      <span class="shot-tag">-allow-view</span>
+      <div class="phone">
+        <Image
+          src={shotCodeView}
+          alt="That dev server mirrored full-screen into the pad through /view, showing the Vite starter page live."
+          width={480}
+          densities={[1, 2]}
+        />
+      </div>
+      <figcaption>The dev server, mirrored live into the page you’re writing.</figcaption>
+    </figure>
+  </div>
+
+  <!-- Two closing nodes, styled like the graph nodes above them: a
+       title bar with a port dot (peach = flag-gated, mauve = yours),
+       then the body. The flag pills repeat the pipeline's tags. -->
+  <div class="own-grid">
+    <div class="card own-card own-flags">
+      <p class="own-head"><Lock size={13} class="own-ic own-ic--warn" aria-hidden="true" />Locked until you unlock them</p>
+      <div class="own-body">
+        <p class="own-sub">
+          The session above ran with all three on. Out of the box, none
+          of them exist — each flag unlocks exactly one capability.
+        </p>
+        <ul class="flag-list">
+          {flags.map(f => (
+            <li class="flag">
+              <code class="flag-name">{f.flag}</code>
+              <p>{f.body}</p>
+            </li>
+          ))}
+        </ul>
+        <MoreLink href="/server/security/">Read the security model</MoreLink>
+      </div>
+    </div>
+    <div class="card own-card own-install">
+      <p class="own-head"><HardDrive size={13} class="own-ic" aria-hidden="true" />Self-host it</p>
+      <div class="own-body">
+        <p class="own-sub">
+          One clone builds both halves — the pad on your phone, the
+          server on your laptop.
+        </p>
+        <pre class="code code--term"><code><span class="term-comment"># the pad</span>
+<span class="term-ps">$</span> git clone {REPO}.git
+<span class="term-ps">$</span> cd ai-notepad && yarn install && yarn android
+
+<span class="term-comment"># the companion server</span>
+<span class="term-ps">$</span> cd server && go run . -root ~/ainotepad-data</code></pre>
+        <div class="btn-row">
+          <a class="btn btn--primary" href={withBase('/start/install/')}>Full setup guide <ArrowRight size={15} /></a>
+          <a class="btn" href={REPO} rel="noopener"><Star size={15} /> Star on GitHub</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</SpineSection>
+
+<style is:global>
+  .figure { margin: 0 0 clamp(1.75rem, 3.5vw, 2.5rem); }
+
+  /* ── Pipeline: captures as flag-gated nodes, wired in sequence ─────── */
+  .pipeline {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
+    gap: 1rem;
+    align-items: start;
+    margin-top: 1.4rem;
+    /* --drop is a transform, invisible to layout: reserve the room the
+       lowest capture actually occupies so it can't overlap what follows. */
+    margin-bottom: 3.4rem;
+  }
+  /* Each capture staggers a little lower than the last (--drop), so the
+     row reads as a cascade, not a grid. The offsets live here, not in
+     inline styles: an inline --drop would beat the vertical layout's reset
+     below and shove the captures out of flow on phones. */
+  .shot { position: relative; margin: 0; min-width: 0; transform: translateY(var(--drop, 0rem)); }
+  .pipeline .shot:nth-of-type(2) { --drop: 1.3rem; }
+  .pipeline .shot:nth-of-type(3) { --drop: 2.6rem; }
+  .pipeline .pipe:nth-of-type(1) { --lift: 0.65rem; }
+  .pipeline .pipe:nth-of-type(2) { --lift: 1.95rem; }
+  .shot-tag {
+    position: absolute; z-index: 2; top: 0; left: 1.1rem;
+    transform: translateY(-50%);
+    padding: 0.26rem 0.6rem;
+    border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--rule-hi));
+    border-radius: 999px;
+    background: var(--ctp-base);
+    font-family: var(--font-mono);
+    font-size: 0.64rem; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--warn);
+    white-space: nowrap;
+  }
+  /* The dashed edge between captures: port → dashes → arrowhead. Tilted
+     slightly to follow the cascade. */
+  .pipe {
+    position: relative; align-self: center;
+    width: clamp(2.2rem, 3.5vw, 3.6rem); height: 3.2rem;
+    transform: translateY(var(--lift, 0rem)) rotate(8deg);
+  }
+  .pipe::before {
+    content: ''; position: absolute; left: 0; right: 0.55rem; top: 50%;
+    border-top: 1px dashed var(--rule-hi);
+  }
+  .pipe::after {
+    content: '▸'; position: absolute; right: 0; top: 50%;
+    transform: translateY(-55%);
+    color: var(--faint); font-size: 0.78rem; line-height: 1;
+  }
+  .pipe span {
+    position: absolute; left: 50%; bottom: calc(50% + 0.4rem);
+    transform: translateX(-50%);
+    font-family: var(--font-mono);
+    font-size: 0.62rem; letter-spacing: 0.06em; color: var(--faint);
+    white-space: nowrap;
+  }
+
+  /* ── Own it (flags + install): two node-cards with title bars ──────── */
+  .own-grid { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 1.25rem; align-items: stretch; }
+  /* The card owns no padding; the title bar and body split it, so the
+     hairline under the title runs edge to edge — a node's title bar.
+     min-width: 0 lets the install pre's long clone line scroll inside the
+     card instead of blowing the grid track past the viewport on phones. */
+  .own-card { padding: 0; display: flex; flex-direction: column; min-width: 0; }
+  .own-head {
+    display: flex; align-items: center; gap: 0.6rem;
+    margin: 0; padding: 0.8rem 1.4rem;
+    border-bottom: 1px solid var(--rule);
+    font-family: var(--font-mono);
+    font-size: 0.7rem; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--muted);
+  }
+  .own-head .own-ic { color: var(--accent); }
+  .own-head .own-ic--warn { color: var(--warn); }
+  .own-body { display: flex; flex-direction: column; flex: 1; padding: 1.15rem 1.4rem 1.35rem; }
+  .own-sub { margin: 0 0 1rem; font-size: 0.92rem; }
+  /* .more / .btn-row pin to the bottom edge so both nodes close level. */
+  .own-flags .more { margin-top: auto; padding-top: 1.1rem; }
+  .own-install .btn-row { margin-top: auto; padding-top: 1.35rem; }
+
+  .flag-list { list-style: none; margin: 0; padding: 0; }
+  .flag { display: grid; grid-template-columns: auto 1fr; gap: 0.95rem; align-items: start; padding: 0.85rem 0; }
+  .flag + .flag { border-top: 1px dashed var(--rule); }
+  /* Same pill as .shot-tag on the pipeline captures above — the card
+     re-lists the exact tags the reader just saw on the footage. */
+  .flag-name {
+    justify-self: start; margin-top: 0.15rem;
+    padding: 0.26rem 0.6rem;
+    border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--rule-hi));
+    border-radius: 999px;
+    background: var(--ctp-base);
+    font-family: var(--font-mono);
+    font-size: 0.64rem; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--warn); font-weight: 600;
+    white-space: nowrap;
+  }
+  .flag p { margin: 0; font-size: 0.9rem; }
+
+  .code--term { background: var(--ctp-crust); border-color: var(--rule); }
+  .term-comment { color: var(--faint); }
+  .term-ps { color: var(--accent); user-select: none; }
+
+  @media (max-width: 60rem) {
+    .own-grid { grid-template-columns: 1fr; }
+
+    /* The pipeline goes vertical: same nodes, the edges turn downward.
+       The nth-of-type reset must match the stagger rules' specificity. */
+    .pipeline { grid-template-columns: 1fr; justify-items: center; gap: 0.6rem; margin-bottom: 1.4rem; }
+    .pipeline .shot,
+    .pipeline .shot:nth-of-type(2),
+    .pipeline .shot:nth-of-type(3) { --drop: 0rem; width: 100%; max-width: 16rem; }
+    .pipe { transform: none; align-self: auto; width: auto; height: 2.6rem; }
+    .pipe::before { left: 50%; right: auto; top: 0.1rem; bottom: 0.8rem; border-top: 0; border-left: 1px dashed var(--rule-hi); }
+    .pipe::after { content: '▾'; right: auto; left: 50%; top: auto; bottom: 0; transform: translateX(-50%); }
+    .pipe span { left: calc(50% + 0.9rem); bottom: auto; top: 40%; transform: translateY(-50%); }
+  }
+
+  @media (max-width: 46rem) {
+    .flag { grid-template-columns: 1fr; gap: 0.45rem; }
+  }
+</style>

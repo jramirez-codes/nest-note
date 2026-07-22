@@ -1,0 +1,27 @@
+---
+/**
+ * 02 · organize — the subject lifecycle, played on loop by the
+ * LifecycleFlow island (step rail + React Flow).
+ */
+import { FolderOpen, Workflow } from '@lucide/astro';
+import LifecycleFlow from '../LifecycleFlow.tsx';
+import Callout from './Callout.astro';
+import MoreLink from './MoreLink.astro';
+import SpineSection from './SpineSection.astro';
+---
+
+<SpineSection id="organize" tag="02 · organize" icon={Workflow} heading="Subjects earn their servers">
+  <Fragment slot="sub">
+    A subject starts as a name you mentioned once. Keep returning to it
+    and the orchestrator turns it into a real, compiled MCP server the
+    model can query — without you writing any of it.
+  </Fragment>
+
+  <LifecycleFlow client:visible />
+
+  <Callout icon={FolderOpen}>
+    Everything it builds is plain files under <code>~/ainotepad-data</code> —
+    notes as markdown pages, servers as Go you can read.
+  </Callout>
+  <MoreLink href="/architecture/overview/">How the orchestrator works</MoreLink>
+</SpineSection>

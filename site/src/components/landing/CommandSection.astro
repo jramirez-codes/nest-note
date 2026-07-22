@@ -1,0 +1,151 @@
+---
+/**
+ * 03 · command — slash commands as a node inspector (CommandDeck island),
+ * then the dictation story: a cue rail that live-syncs to the dictation
+ * video. The rail is a miniature of the page spine — ports on a dashed
+ * edge — and clicking a beat seeks the video.
+ */
+import { Image } from 'astro:assets';
+import { Mic, MessageSquareText, SquareSlash } from '@lucide/astro';
+import shotPalette from '../../assets/shots/command-palette.jpg';
+import CommandDeck from '../CommandDeck.tsx';
+import MoreLink from './MoreLink.astro';
+import PhonePair from './PhonePair.astro';
+import SpineSection from './SpineSection.astro';
+import { withBase } from '../../lib/url';
+
+/* The dictation video's beats. `t` seconds must track the actual recording:
+ * dictation types until ~10s, the card runs/thinks until ~21s, then the
+ * answer streams. The rail highlights live off video.currentTime. */
+const beats = [
+  { t: 0, stamp: '00:00', icon: Mic, title: 'You say it', body: '“System command — talk dog, upcoming tasks.” The mic types every word onto the page.' },
+  { t: 10, stamp: '00:10', icon: SquareSlash, title: 'The slash runs', body: 'The spoken command becomes a live card on the page. The keyboard never opened.' },
+  { t: 21, stamp: '00:21', icon: MessageSquareText, title: 'The answer lands', body: 'The dog subject reports its upcoming tasks, pulled straight off the dashboard.' },
+];
+---
+
+<SpineSection id="command" tag="03 · command" icon={SquareSlash} heading="Every command is an edge">
+  <Fragment slot="sub">
+    Type a slash command on any page and the result streams into a live
+    card, in place — and keeps running when you swipe away. Select one
+    to inspect it.
+  </Fragment>
+
+  <CommandDeck client:visible />
+
+  <p class="aside-label aside-label--gap">No keyboard? Say it.</p>
+  <div class="voice">
+    <ol class="cues" data-cues>
+      {beats.map(({ icon: Icon, ...b }) => (
+        <li>
+          <button type="button" data-seek={b.t}>
+            <span class="cue-time">{b.stamp}</span>
+            <span class="cue-copy">
+              <strong><Icon size={13} class="cue-ic" /> {b.title}</strong>
+              {b.body}
+            </span>
+          </button>
+        </li>
+      ))}
+    </ol>
+    <PhonePair class="voice-stage">
+      <Image
+        slot="back"
+        src={shotPalette}
+        alt="The pad’s slash-command palette open over a note, suggesting /agg-tasks, /archive, /ask and /chat."
+        width={480}
+        densities={[1, 2]}
+      />
+      <video
+        slot="front"
+        src={withBase('/dictation.mp4')}
+        poster={withBase('/dictation-poster.jpg')}
+        muted
+        loop
+        playsinline
+        preload="metadata"
+        aria-label="Screen recording: “/talk dog upcoming tasks” is dictated by voice, lands on the page as text, and Claude’s answer streams into a card."
+        data-dictation
+        data-autovid
+      ></video>
+      <Fragment slot="caption">Dictated end to end — or type <code>/</code> and the palette completes the command.</Fragment>
+    </PhonePair>
+  </div>
+
+  <MoreLink href="/commands/">All 15 commands</MoreLink>
+</SpineSection>
+
+<script is:inline>
+  (() => {
+    // The cue rail follows the video, and clicking a beat seeks to it.
+    // (A click is a user gesture, so playing is fine under reduced motion.)
+    const demo = document.querySelector('[data-dictation]');
+    const cueList = document.querySelector('[data-cues]');
+    if (!demo || !cueList) return;
+    const cues = [...cueList.querySelectorAll('[data-seek]')];
+    const follow = () => {
+      let now = 0;
+      cues.forEach((cue, i) => { if (demo.currentTime >= +cue.dataset.seek - 0.2) now = i; });
+      cues.forEach((cue, i) => cue.closest('li').classList.toggle('is-now', i === now));
+    };
+    demo.addEventListener('timeupdate', follow);
+    cues.forEach(cue => cue.addEventListener('click', () => {
+      demo.currentTime = +cue.dataset.seek;
+      demo.play().catch(() => {});
+    }));
+    follow();
+  })();
+</script>
+
+<style is:global>
+  .voice {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 26rem);
+    gap: clamp(1.75rem, 4vw, 3rem);
+    align-items: center;
+  }
+  .cues { list-style: none; margin: 0; padding: 0; position: relative; display: flex; flex-direction: column; gap: 0.55rem; max-width: 30rem; }
+  /* The rail's own dashed edge, a miniature of the page spine. */
+  .cues::before {
+    content: ''; position: absolute; top: 1.3rem; bottom: 1.3rem; left: 0.42rem;
+    border-left: 1px dashed var(--rule-hi);
+  }
+  .cues li { position: relative; padding-left: 1.55rem; }
+  .cues li::before {
+    content: ''; position: absolute; left: 0.42rem; top: 1.15rem;
+    width: 0.55rem; height: 0.55rem; transform: translateX(-50%);
+    border-radius: 50%;
+    background: var(--ctp-base);
+    border: 1px solid var(--ctp-surface2);
+    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+    z-index: 1;
+  }
+  .cues li.is-now::before {
+    background: var(--accent); border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+  .cues button {
+    display: block; width: 100%; text-align: left;
+    font: inherit; color: var(--muted);
+    background: transparent;
+    border: 1px solid transparent; border-radius: 0.6rem;
+    padding: 0.7rem 0.9rem;
+    cursor: pointer;
+    transition: border-color 0.18s ease, background-color 0.18s ease;
+  }
+  .cues button:hover { border-color: var(--rule-hi); }
+  .cues li.is-now button {
+    border-color: color-mix(in srgb, var(--accent) 40%, var(--rule-hi));
+    background: var(--panel);
+  }
+  .cue-time { display: block; font-family: var(--font-mono); font-size: 0.66rem; letter-spacing: 0.08em; color: var(--faint); margin-bottom: 0.25rem; transition: color 0.2s ease; }
+  .cues li.is-now .cue-time { color: var(--accent); }
+  .cue-copy { font-size: 0.88rem; }
+  .cue-copy strong { display: flex; align-items: center; gap: 0.45rem; color: var(--fg); font-weight: 600; font-size: 0.95rem; margin-bottom: 0.15rem; }
+  .cues .cue-ic { color: var(--faint); transition: color 0.2s ease; }
+  .cues li.is-now .cue-ic { color: var(--accent); }
+
+  @media (max-width: 60rem) {
+    .voice { grid-template-columns: 1fr; }
+  }
+</style>
