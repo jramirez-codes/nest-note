@@ -34,6 +34,13 @@ the in-note AI commands.
 
 ## Quick start
 
+Prebuilt Android APK and macOS/Linux server binaries are attached to every
+tagged [release](https://github.com/jramirez-codes/nest-note/releases). The
+APK is debug-signed — see [Install & run](https://jramirez-codes.github.io/nest-note/start/install/)
+for what that means before sideloading.
+
+To build from source instead:
+
 ```bash
 yarn install
 yarn start          # Metro

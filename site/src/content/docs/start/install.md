@@ -5,9 +5,42 @@ sidebar:
   order: 1
 ---
 
-There is no app store listing. NestNote is built from source and sideloaded —
-if you're reading this, you're expected to have a working React Native
-toolchain.
+There is no app store listing. NestNote is either sideloaded from a prebuilt
+release or built from source — building needs a working React Native toolchain.
+
+## Prebuilt downloads
+
+Each tagged release on
+[GitHub Releases](https://github.com/jramirez-codes/nest-note/releases)
+carries:
+
+| Asset                                       | What it is                                            |
+| ------------------------------------------- | ----------------------------------------------------- |
+| `nestnote-<tag>.apk`                        | Android APK, `arm64-v8a` + `armeabi-v7a`              |
+| `nestnote-server_<tag>_<os>_<arch>.tar.gz`  | Companion server binary — macOS and Linux, amd64/arm64 |
+| `SHA256SUMS.txt`                            | Checksums for every asset above                        |
+
+```bash
+# Verify, then sideload
+sha256sum -c SHA256SUMS.txt --ignore-missing
+adb install -r nestnote-<tag>.apk
+```
+
+The APK carries no x86 ABIs, so it will not install on a typical emulator —
+build from source for that. iOS has no prebuilt artifact at all: unsigned IPAs
+aren't installable, so iOS is source-only.
+
+:::caution[Release APKs are debug-signed]
+The repo has no production signing config, so the released APK is signed with
+the checked-in debug keystore. Android warns on install, and a build signed
+with a different key cannot upgrade it in place — you'd have to uninstall
+first, which takes your notes with it.
+:::
+
+Server binaries are extracted and run directly; they still need the Claude Code
+CLI on that machine. See [server setup](../server/setup.md).
+
+Everything below is for building it yourself.
 
 ## Prerequisites
 
