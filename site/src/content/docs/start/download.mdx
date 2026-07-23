@@ -1,0 +1,123 @@
+---
+title: Download & run
+description: Install NestNote from the prebuilt APK and server binary — no toolchain required.
+sidebar:
+  order: 1
+---
+
+import { Steps, LinkButton, Badge } from '@astrojs/starlight/components';
+
+This is the short path. Two files off GitHub: install one on your phone, run the
+other on your laptop. No Node, no Go, no React Native toolchain.
+
+<LinkButton href="https://github.com/jramirez-codes/nest-note/releases/latest" variant="primary" icon="external" iconPlacement="end">Get the latest release</LinkButton>
+
+That link always resolves to the newest release. Grab both assets from its
+**Assets** list:
+
+| Asset                                 | Goes on   | What it is                               |
+| ------------------------------------- | --------- | ---------------------------------------- |
+| `nest-note-<tag>.apk`                 | the phone | Android app, `arm64-v8a` + `armeabi-v7a` |
+| `nestnote-server_<tag>_<os>_<arch>`   | the laptop | Companion server binary                 |
+
+Releases are built and uploaded **by hand**, so which server platforms a given
+release covers varies — if there's no binary matching your laptop, the server is
+a quick [build from source](./install.md). Want to change the code, run on iOS,
+or use an emulator? That's the [source path](./install.md) too.
+
+## Set it up
+
+<Steps>
+
+1. **Install the app.** Download the `.apk` onto the phone and open it, or push
+   it from a laptop over `adb`:
+
+   ```bash
+   adb install -r nest-note-<tag>.apk
+   ```
+
+   Android warns about installing from an unknown source — expected for a
+   sideloaded app. Launch it and you land on a seeded welcome note; swipe left
+   for the blank sheet and start typing.
+
+   **You can stop here.** With no server the pad is a fully functional offline
+   markdown notepad — the intended fallback, not a degraded mode. See
+   [using the pad](./the-pad.md). Everything below adds the AI layer.
+
+2. **Install the Claude Code CLI.** The server has no hosted API of its own — it
+   drives the [Claude Code CLI](https://claude.com/claude-code) on your laptop
+   with your own credentials. Install it and sign in first; if `claude` doesn't
+   run in your terminal, none of the AI commands will.
+
+3. **Run the server.** Make the downloaded binary executable and start it:
+
+   ```bash
+   mv nestnote-server_<tag>_linux_amd64 nestnote-server
+   chmod +x nestnote-server
+   ./nestnote-server -root ~/nestnote-data
+   ```
+
+   `-root` scaffolds a working directory (`projects/`, `mcp/`, `orchestrator/`)
+   and turns on MCP; without it Claude runs in the current directory with MCP
+   off. The server listens on port 8443, auto-detects your LAN IP, generates a
+   self-signed certificate on first run, and prints a **pairing QR code**. Leave
+   it running.
+
+   With no other flags, **none of the capability features are on** — you get
+   `/ask`, `/clean` and the other model-only commands. Shell execution, the
+   coding agent and dev-server exposure each need an explicit `-allow-*` flag;
+   read [the security model](../server/security.md) before enabling any.
+
+4. **Pair the phone.** Keep phone and laptop on the same Wi-Fi. In any note, on
+   its own line, type `/pair` and press **Enter** — the camera opens; point it
+   at the QR code in your terminal. Once per device; after that the app
+   reconnects silently. Full details, including pasting the payload instead of
+   scanning: [pairing](../server/pairing.md).
+
+5. **Check it worked.** In any note:
+
+   ```text
+   /ask what day is it
+   ```
+
+   The answer streams into a collapsible card saved in the note's markdown. If
+   nothing happens, the device isn't paired or the server isn't reachable.
+
+</Steps>
+
+## Things to know before you install
+
+:::caution[Release APKs are debug-signed]
+The repo has no production signing config, so the released APK is signed with
+the checked-in debug keystore. Android warns on install, and a build signed with
+a different key cannot upgrade it in place — you'd have to uninstall first,
+which takes your notes with it.
+:::
+
+:::caution[macOS quarantines unsigned downloads]
+The binaries are statically linked (`CGO_ENABLED=0`) and unsigned. On macOS the
+first run needs `xattr -d com.apple.quarantine ./nestnote-server`, or an
+*Open anyway* in System Settings → Privacy & Security.
+:::
+
+- **No emulator, no iOS from here.** The APK carries no x86 ABIs, so it won't
+  install on a typical emulator, and there's no prebuilt iOS artifact — unsigned
+  IPAs aren't installable. Both are [source-only](./install.md).
+- **No Windows server build.** The server manages Claude and `/run` subprocesses
+  through POSIX process groups, which have no Windows equivalent. Use WSL.
+
+## What the prebuilt path can't do
+
+| You want to…                          | Then…                                    |
+| ------------------------------------- | ---------------------------------------- |
+| Run on iOS                            | [Build from source](./install.md)        |
+| Run on an emulator                    | [Build from source](./install.md)        |
+| Use [`/update-server`](../commands/admin.mdx) | Run the server from a git checkout, or point the binary at one with `-repo-dir` |
+| Change the app or editor              | [Build from source](./install.md)        |
+
+## Next
+
+1. [Using the pad](./the-pad.md) — the paging model and the editor.
+2. [Slash commands](../commands/index.mdx) — what you can actually run.
+3. [Security model](../server/security.md) — before enabling any `-allow-*` flag.
+4. [Remote access](../server/remote-access.md) — using it off your home Wi-Fi.
