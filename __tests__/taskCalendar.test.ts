@@ -5,6 +5,7 @@
 import {
   buildMonthGrid,
   dateKey,
+  relDate,
   tasksByDueDate,
   topPriority,
 } from '../src/components/dashboard/cardModel';
@@ -27,6 +28,43 @@ describe('dateKey', () => {
     expect(dateKey(undefined)).toBeNull();
     expect(dateKey('')).toBeNull();
     expect(dateKey('soon')).toBeNull();
+  });
+});
+
+describe('relDate', () => {
+  // A YYYY-MM-DD key `offset` days from local midnight today.
+  const keyDaysFromNow = (offset: number): string => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() + offset);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+
+  test('names today, tomorrow, and yesterday', () => {
+    expect(relDate(keyDaysFromNow(0)).label).toBe('Today');
+    expect(relDate(keyDaysFromNow(1)).label).toBe('Tomorrow');
+    expect(relDate(keyDaysFromNow(-1))).toEqual({ label: 'Yesterday', overdue: true });
+  });
+
+  test('counts down future days 2–7 out as "X days", not a calendar date', () => {
+    expect(relDate(keyDaysFromNow(2)).label).toBe('2 days');
+    expect(relDate(keyDaysFromNow(3)).label).toBe('3 days');
+    expect(relDate(keyDaysFromNow(7)).label).toBe('7 days');
+    expect(relDate(keyDaysFromNow(2)).overdue).toBe(false);
+  });
+
+  test('spells out the calendar date past the 7-day window', () => {
+    expect(relDate(keyDaysFromNow(8)).label).not.toMatch(/days$/);
+    expect(relDate(keyDaysFromNow(8)).overdue).toBe(false);
+  });
+
+  test('past dates beyond yesterday stay a calendar date and read overdue', () => {
+    const rel = relDate(keyDaysFromNow(-5));
+    expect(rel.overdue).toBe(true);
+    expect(rel.label).not.toMatch(/days$/);
   });
 });
 

@@ -90,6 +90,9 @@ export function relDate(iso: string): { label: string; overdue: boolean } {
   if (days === 0) return { label: 'Today', overdue: false };
   if (days === 1) return { label: 'Tomorrow', overdue: false };
   if (days === -1) return { label: 'Yesterday', overdue: true };
+  // Near-future days (2–7 out) read as a relative countdown rather than a calendar
+  // date — "3 days" instead of "Jul 26". Past dates keep their calendar wording.
+  if (days >= 2 && days <= 7) return { label: `${days} days`, overdue: false };
   const label =
     `${MONTHS[d.getMonth()]} ${d.getDate()}` +
     (d.getFullYear() !== today.getFullYear() ? `, ${d.getFullYear()}` : '');
@@ -185,8 +188,9 @@ export function topPriority(cards: DashboardCard[]): string {
 }
 
 // A tapped day's header label: "Today"/"Tomorrow"/"Yesterday" when near, else a
-// weekday + month/day like "Wed, Jul 22". Reuses relDate so the relative wording
-// matches the task rows' due labels.
+// weekday + month/day like "Wed, Jul 22". Reuses relDate only for the "near" wording
+// — the calendar header always spells out the actual date for other days (including
+// the 2–7-day range that the task rows show as an "X days" countdown).
 export function formatCalendarDay(key: string): string {
   const rel = relDate(key);
   if (rel.label === 'Today' || rel.label === 'Tomorrow' || rel.label === 'Yesterday') {
@@ -195,7 +199,10 @@ export function formatCalendarDay(key: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(key);
   if (!m) return key;
   const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-  return `${WEEKDAYS[d.getDay()]}, ${rel.label}`;
+  const monthDay =
+    `${MONTHS[d.getMonth()]} ${d.getDate()}` +
+    (d.getFullYear() !== new Date().getFullYear() ? `, ${d.getFullYear()}` : '');
+  return `${WEEKDAYS[d.getDay()]}, ${monthDay}`;
 }
 
 // Archived pages per page in the Archived card's pager. The box holds this many
