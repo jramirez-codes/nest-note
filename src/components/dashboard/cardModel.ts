@@ -69,6 +69,15 @@ export function compareTasksByDate(a: DashboardCard, b: DashboardCard): number {
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+// Full month names for the calendar's month header, indexed the same as MONTHS.
+export const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+// Single-letter-ish weekday labels for the calendar's header row, Sunday first.
+export const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
 // Format an ISO `YYYY-MM-DD` relatively (Today / Tomorrow / Yesterday / "Jul 9"),
 // and report whether it's in the past so a task can flag itself overdue.
 export function relDate(iso: string): { label: string; overdue: boolean } {
@@ -94,8 +103,100 @@ export type TaskSort = 'priority' | 'date';
 export const compareTasksBy = (sort: TaskSort): typeof compareTasks =>
   sort === 'date' ? compareTasksByDate : compareTasks;
 
+// The Tasks section's view modes: the two sorted-list orders plus the month
+// calendar. 'priority'/'date' order the same task list; 'calendar' swaps that
+// list for the month grid. Exactly one is active at a time — the toggle is a
+// radio, not a set of independent filters.
+export type TaskView = TaskSort | 'calendar';
+
 // Tasks per page in the Tasks card's pager.
 export const TASK_PAGE_SIZE = 5;
+
+// --- Calendar view --------------------------------------------------------
+
+// Pad a 1- or 2-digit number to two digits for a `YYYY-MM-DD` key segment.
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+// The date portion ('YYYY-MM-DD') of a card's ISO `date`, or null when it's absent
+// or malformed. This is the key task cards are bucketed under for the calendar's
+// day grid, and the key a tapped day looks its tasks up by.
+export function dateKey(iso?: string): string | null {
+  if (!iso) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  return m ? `${m[1]}-${m[2]}-${m[3]}` : null;
+}
+
+// One cell in the calendar's month grid.
+export interface CalendarDay {
+  key: string; // 'YYYY-MM-DD'
+  day: number; // day-of-month (1–31)
+  inMonth: boolean; // false for the leading/trailing days borrowed from adjacent months
+}
+
+// Build the 6×7 = 42-cell month grid for `year`/`month` (month 0-based), weeks
+// starting Sunday. Always exactly 42 cells (six full weeks) so the grid's height
+// is stable from month to month, padded at both ends with the neighbouring months'
+// days (flagged `inMonth: false`).
+export function buildMonthGrid(year: number, month: number): CalendarDay[] {
+  const firstWeekday = new Date(year, month, 1).getDay(); // 0 = Sunday
+  const days: CalendarDay[] = [];
+  for (let i = 0; i < 42; i++) {
+    // Count forward from the Sunday on/before the 1st; Date normalises overflow,
+    // so day-of-month/adjacent-month rollover is handled for us.
+    const d = new Date(year, month, 1 - firstWeekday + i);
+    days.push({
+      key: `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`,
+      day: d.getDate(),
+      inMonth: d.getMonth() === month,
+    });
+  }
+  return days;
+}
+
+// Bucket task cards by their due-date key ('YYYY-MM-DD'). Cards without a valid
+// `date` are dropped. The calendar reads this for both the per-day pips (open-task
+// presence) and the tapped day's task list, so it parses dates exactly once.
+export function tasksByDueDate(cards: DashboardCard[]): Map<string, DashboardCard[]> {
+  const byDay = new Map<string, DashboardCard[]>();
+  for (const c of cards) {
+    const key = dateKey(c.date);
+    if (!key) continue;
+    const arr = byDay.get(key);
+    if (arr) arr.push(c);
+    else byDay.set(key, [c]);
+  }
+  return byDay;
+}
+
+// The highest-urgency priority among a set of tasks (defaulting to 'normal' for an
+// empty set) — drives the colour of a calendar day's pip, so a day with an urgent
+// task reads red the same way its row would in the list.
+export function topPriority(cards: DashboardCard[]): string {
+  let best = 'normal';
+  let bestRank = -1;
+  for (const c of cards) {
+    const r = rankOf(c.priority);
+    if (r > bestRank) {
+      bestRank = r;
+      best = c.priority;
+    }
+  }
+  return best;
+}
+
+// A tapped day's header label: "Today"/"Tomorrow"/"Yesterday" when near, else a
+// weekday + month/day like "Wed, Jul 22". Reuses relDate so the relative wording
+// matches the task rows' due labels.
+export function formatCalendarDay(key: string): string {
+  const rel = relDate(key);
+  if (rel.label === 'Today' || rel.label === 'Tomorrow' || rel.label === 'Yesterday') {
+    return rel.label;
+  }
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(key);
+  if (!m) return key;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return `${WEEKDAYS[d.getDay()]}, ${rel.label}`;
+}
 
 // Archived pages per page in the Archived card's pager. The box holds this many
 // rows' worth of fixed height (like Tasks), so it never resizes page to page.
