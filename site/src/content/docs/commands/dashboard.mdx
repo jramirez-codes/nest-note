@@ -64,3 +64,26 @@ failing.
 :::
 
 Requires `-root`, like `/talk`, since it works through the orchestrator.
+
+## Reviewing tasks
+
+The task cards these commands file land in the dashboard's **Tasks** section — a
+fixed-height, internally-scrolling card with a pager beneath. Tap a task's
+checkbox to complete it (it stays in place rather than jumping), or tap its title
+to expand the full text.
+
+A row of bubbles above the card chooses how you view those tasks — exactly one is
+active at a time:
+
+- **Priority** — orders the list by urgency (urgent → high → normal → low), with
+  the soonest due date breaking ties.
+- **Due date** — orders the list by the soonest due date first, with priority
+  breaking ties.
+- **Calendar** — swaps the list for a **month grid** of the same size. Days that
+  carry open tasks stand out as a filled disc tinted by that day's highest-priority
+  task, with a badge counting the tasks due — so a busy or urgent day reads at a
+  glance. Use the arrows to move between months, and **tap a day** to see the tasks
+  due on it; a back arrow returns to the grid.
+
+All three views act on the active notebook's tasks, so switching notebooks in the
+header re-scopes them.

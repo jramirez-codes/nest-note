@@ -15,6 +15,7 @@ import {
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
 import {
+  CalendarDays,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -30,7 +31,7 @@ import type { ThemeColors } from '../../theme/colors';
 import type { DashboardCard } from '../../server/controllers/aiController';
 import type { CardDragShared } from '../../hooks/useCardDrag';
 import { deriveTitle, type Note } from '../../types/note';
-import { ideaPreview, prio, relDate, type TaskSort } from './cardModel';
+import { ideaPreview, prio, relDate, type TaskView } from './cardModel';
 
 // The bundle of drag callbacks + shared values every draggable card needs. The
 // dashboard builds this once and spreads it onto each card / section, so the wiring
@@ -187,20 +188,22 @@ export function TaskRow({
   );
 }
 
-// The two-way sort toggle above the Tasks list: 'priority' leads with urgency
-// (shown as the red→orange→blue→gray legend dots, high to low), 'date' leads with
-// the soonest due date. Exactly one is always active — this is a radio, not a filter.
-export function TaskSortToggle({
-  sort,
+// The view toggle above the Tasks list: 'priority' leads with urgency (shown as
+// the red→orange→blue→gray legend dots, high to low), 'date' leads with the soonest
+// due date, and 'calendar' swaps the whole list for a month grid. Exactly one is
+// always active — this is a radio, not a set of filters.
+export function TaskViewToggle({
+  view,
   onChange,
   colors,
 }: {
-  sort: TaskSort;
-  onChange: (sort: TaskSort) => void;
+  view: TaskView;
+  onChange: (view: TaskView) => void;
   colors: ThemeColors;
 }) {
-  const priorityActive = sort === 'priority';
-  const dateActive = sort === 'date';
+  const priorityActive = view === 'priority';
+  const dateActive = view === 'date';
+  const calendarActive = view === 'calendar';
   return (
     <View className="flex-row gap-2">
       <Pressable
@@ -225,6 +228,21 @@ export function TaskSortToggle({
         <Clock size={12} color={dateActive ? colors.background : colors.muted} strokeWidth={2.5} />
         <Text className={`text-xs font-semibold ${dateActive ? 'text-background' : 'text-muted'}`}>
           Due date
+        </Text>
+      </Pressable>
+      <Pressable
+        onPress={() => onChange('calendar')}
+        className={`flex-row items-center gap-1.5 rounded-full border px-3 py-1.5 ${
+          calendarActive ? 'border-accent bg-accent' : 'border-surface1 bg-surface'
+        }`}>
+        <CalendarDays
+          size={12}
+          color={calendarActive ? colors.background : colors.muted}
+          strokeWidth={2.5}
+        />
+        <Text
+          className={`text-xs font-semibold ${calendarActive ? 'text-background' : 'text-muted'}`}>
+          Calendar
         </Text>
       </Pressable>
     </View>
