@@ -6,7 +6,7 @@
  * install-and-run card: APK on the phone, binary on the laptop).
  */
 import { Image } from 'astro:assets';
-import { ArrowRight, HardDrive, Lock, ShieldCheck, Star } from '@lucide/astro';
+import { ArrowRight, HardDrive, Lock, Server, ShieldCheck, Smartphone, Star } from '@lucide/astro';
 import shotCodeAgent from '../../assets/shots/code-agent.jpg';
 import shotCodeRun from '../../assets/shots/code-run.jpg';
 import shotCodeView from '../../assets/shots/code-view.jpg';
@@ -108,14 +108,28 @@ const flags = [
       <p class="own-head"><HardDrive size={13} class="own-ic" aria-hidden="true" />Get it running</p>
       <div class="own-body">
         <p class="own-sub">
-          Two steps, no toolchain: install the APK on your phone, run the
-          server binary on your laptop.
+          Two files off the release page — no Node, no Go, nothing to build.
         </p>
-        <pre class="code code--term"><code><span class="term-comment"># on your phone</span>
-<span class="term-ps">$</span> adb install -r nest-note-&lt;tag&gt;.apk
-
-<span class="term-comment"># on your laptop</span>
-<span class="term-ps">$</span> ./nestnote-server -root ~/nestnote-data</code></pre>
+        <!-- Two step-nodes on a dashed edge: the same port + connector
+             grammar as the section spine, sized to sit inside the card.
+             Leads with the path almost everyone takes — download the APK
+             and open it — not the adb push the terminal used to headline. -->
+        <ol class="run-steps">
+          <li class="run-step">
+            <span class="run-port">1</span>
+            <div class="run-copy">
+              <p class="run-title"><Smartphone size={14} class="run-ic" aria-hidden="true" />On your phone</p>
+              <p class="run-desc">Download the <code>.apk</code> from the release and open it — it installs like any other app.</p>
+            </div>
+          </li>
+          <li class="run-step">
+            <span class="run-port">2</span>
+            <div class="run-copy">
+              <p class="run-title"><Server size={14} class="run-ic" aria-hidden="true" />On your laptop</p>
+              <p class="run-desc">Download the server binary and run it — it prints a QR code you scan once to pair.</p>
+            </div>
+          </li>
+        </ol>
         <div class="btn-row">
           <a class="btn btn--primary" href={withBase('/start/download/')}>Download &amp; run <ArrowRight size={15} /></a>
           <a class="btn" href={REPO} rel="noopener"><Star size={15} /> Star on GitHub</a>
@@ -231,9 +245,29 @@ const flags = [
   }
   .flag p { margin: 0; font-size: 0.9rem; }
 
-  .code--term { background: var(--ctp-crust); border-color: var(--rule); }
-  .term-comment { color: var(--faint); }
-  .term-ps { color: var(--accent); user-select: none; }
+  /* ── Get it running: two numbered step-nodes on a dashed edge ──────── */
+  .run-steps { list-style: none; margin: 0; padding: 0; }
+  .run-step { position: relative; display: grid; grid-template-columns: auto 1fr; gap: 0.85rem; align-items: start; }
+  .run-step + .run-step { margin-top: 1.15rem; }
+  /* The dashed edge linking step 1's port down into step 2's — aligned to
+     the port centre (half of the port's width). */
+  .run-step + .run-step::before {
+    content: ''; position: absolute; left: 0.85rem; top: -1.15rem; height: 1.15rem;
+    border-left: 1px dashed var(--rule-hi);
+  }
+  .run-port {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 1.7rem; height: 1.7rem; border-radius: 50%;
+    background: color-mix(in srgb, var(--accent) 14%, var(--ctp-base));
+    border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--rule-hi));
+    color: var(--accent);
+    font-family: var(--font-mono); font-size: 0.82rem; font-weight: 600; line-height: 1;
+  }
+  .run-copy { min-width: 0; padding-top: 0.05rem; }
+  .run-title { display: flex; align-items: center; gap: 0.5rem; margin: 0 0 0.15rem; font-size: 0.92rem; font-weight: 600; color: var(--fg); }
+  .run-title .run-ic { color: var(--accent); }
+  .run-desc { margin: 0; font-size: 0.88rem; color: var(--muted); }
+  .run-desc code { color: var(--accent); }
 
   @media (max-width: 60rem) {
     .own-grid { grid-template-columns: 1fr; }
