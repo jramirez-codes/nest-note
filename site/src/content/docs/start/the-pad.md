@@ -50,13 +50,18 @@ the mic is live the footer's two navigation controls — the page scrubber and t
 
 | Control | Effect |
 |---|---|
-| **Delete** | One `Backspace` press per tap — removes a single character |
+| **Delete** | One `Backspace` press per tap — removes a single character. **Hold it** to repeat, like holding Backspace on a keyboard |
 | **New line** | One `Enter` press |
 
 Both act on the note being dictated into without interrupting the recognizer, so
 you can drop a misheard character or start a fresh line and keep talking. The mic
 keeps its own slot in both modes, and the two navigation controls come back as
 soon as you stop.
+
+Holding **Delete** repeats at a constant rate after a short pause — the same
+key-repeat a keyboard's Backspace gives you, so clearing a badly misheard phrase
+doesn't take one tap per character. It deletes characters for as long as you hold;
+it never escalates to deleting whole words, and lifting your finger stops it.
 
 `New line` goes through the editor's normal `Enter` handling rather than blindly
 inserting a newline — so on a list or quote line it continues the markup, on a

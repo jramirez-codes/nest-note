@@ -49,6 +49,14 @@ const FOLLOW_LIMIT = 28;
 /** How high the bubble pops up while held. */
 const LIFT_DISTANCE = 46;
 
+/** Key-repeat timings for a held recording-mode Delete button, matching a
+ * keyboard's Backspace: the press deletes one character, then a pause before the
+ * repeat kicks in (so an ordinary tap never runs on), then a steady stream. Held
+ * at a constant rate — a physical key repeat doesn't accelerate, and neither does
+ * this escalate to deleting whole words. */
+const DELETE_REPEAT_DELAY_MS = 400;
+const DELETE_REPEAT_INTERVAL_MS = 55;
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
@@ -145,6 +153,61 @@ function PageIndicator({
     const next = Math.round(w);
     setNavWidths(prev => (prev[key] === next ? prev : { ...prev, [key]: next }));
   }, []);
+
+  // Key-repeat for a held Delete button. The timers outlive the render that armed
+  // them, so they reach onBackspace through a ref rather than closing over it.
+  const holdDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const holdIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Whether the touch path already deleted for this activation — see
+  // handleDeletePress, which uses it to keep a tap from firing twice.
+  const holdFiredRef = useRef(false);
+  const backspaceRef = useRef(onBackspace);
+  backspaceRef.current = onBackspace;
+
+  const stopDeleteRepeat = useCallback(() => {
+    if (holdDelayRef.current) {
+      clearTimeout(holdDelayRef.current);
+      holdDelayRef.current = null;
+    }
+    if (holdIntervalRef.current) {
+      clearInterval(holdIntervalRef.current);
+      holdIntervalRef.current = null;
+    }
+  }, []);
+
+  // Finger down on Delete: delete one character at once (so the button feels
+  // instant), then hand over to the repeat interval once the initial delay is up.
+  const startDeleteRepeat = useCallback(() => {
+    stopDeleteRepeat();
+    holdFiredRef.current = true;
+    backspaceRef.current();
+    holdDelayRef.current = setTimeout(() => {
+      holdDelayRef.current = null;
+      holdIntervalRef.current = setInterval(
+        () => backspaceRef.current(),
+        DELETE_REPEAT_INTERVAL_MS,
+      );
+    }, DELETE_REPEAT_DELAY_MS);
+  }, [stopDeleteRepeat]);
+
+  // onPress still runs so the button works when activated without a touch (a
+  // screen reader). The touch path has already deleted on press-in by then, so
+  // consume that flag instead of deleting a second character.
+  const handleDeletePress = useCallback(() => {
+    if (holdFiredRef.current) {
+      holdFiredRef.current = false;
+      return;
+    }
+    backspaceRef.current();
+  }, []);
+
+  // A held Delete must never outlive the button. The mic stopping swaps it away
+  // (and this strip can unmount outright) mid-hold, and a live interval would go
+  // on eating characters with nothing on screen left to release it.
+  useEffect(() => {
+    if (!dictating) stopDeleteRepeat();
+    return stopDeleteRepeat;
+  }, [dictating, stopDeleteRepeat]);
 
   // Shuttle state. The gesture only sets a paging *rate*; a requestAnimationFrame
   // loop integrates that rate over time and steps the page index, so parking a
@@ -351,9 +414,12 @@ function PageIndicator({
            Width falls back to intrinsic until the first measurement lands. */
         <>
           <Pressable
-            onPress={onBackspace}
+            onPress={handleDeletePress}
+            onPressIn={startDeleteRepeat}
+            onPressOut={stopDeleteRepeat}
             accessibilityRole="button"
             accessibilityLabel="Delete previous character"
+            accessibilityHint="Hold to keep deleting"
             hitSlop={8}
             style={navWidths.gesture ? { width: navWidths.gesture } : undefined}
             className="h-9 flex-row items-center justify-center rounded-full bg-surface px-4 active:opacity-70">
