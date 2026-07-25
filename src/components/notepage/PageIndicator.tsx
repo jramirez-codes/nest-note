@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   Keyboard,
@@ -8,7 +8,7 @@ import {
   View,
 } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import { Mic } from 'lucide-react-native';
+import { CornerDownLeft, Delete, Mic } from 'lucide-react-native';
 import { useTheme } from '../../theme/colors';
 
 interface PageIndicatorProps {
@@ -33,6 +33,10 @@ interface PageIndicatorProps {
   dictationDisabled: boolean;
   /** Toggle the speech-to-text mic on/off. */
   onToggleDictation: () => void;
+  /** Recording-mode Delete — one Backspace press in the note being dictated into. */
+  onBackspace: () => void;
+  /** Recording-mode New line — one Enter press in the note being dictated into. */
+  onNewline: () => void;
 }
 
 /** Displacement (px) from the press point before paging starts — a dead zone so
@@ -44,6 +48,14 @@ const MAX_PAGES_PER_SEC = 14;
 const FOLLOW_LIMIT = 28;
 /** How high the bubble pops up while held. */
 const LIFT_DISTANCE = 46;
+
+/** Key-repeat timings for a held recording-mode Delete button, matching a
+ * keyboard's Backspace: the press deletes one character, then a pause before the
+ * repeat kicks in (so an ordinary tap never runs on), then a steady stream. Held
+ * at a constant rate — a physical key repeat doesn't accelerate, and neither does
+ * this escalate to deleting whole words. */
+const DELETE_REPEAT_DELAY_MS = 400;
+const DELETE_REPEAT_INTERVAL_MS = 55;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -81,6 +93,11 @@ function pagesPerSecond(dx: number, scrubWidth: number) {
  *
  * Built for hundreds of pages: the left bubble is a continuous progress bar
  * rather than one-dot-per-page.
+ *
+ * While dictation is live those two navigation bubbles are swapped for a Delete
+ * and a New line button — editing controls are what's wanted mid-utterance, and
+ * paging away would only redirect the transcript. The mic itself stays put (it's
+ * how the user stops), so it keeps its slot in both modes.
  */
 function PageIndicator({
   currentIndex,
@@ -93,6 +110,8 @@ function PageIndicator({
   dictating,
   dictationDisabled,
   onToggleDictation,
+  onBackspace,
+  onNewline,
 }: PageIndicatorProps) {
   const colors = useTheme();
   const onDashboard = currentIndex >= noteCount;
@@ -114,6 +133,81 @@ function PageIndicator({
   // True while the dashboard "back" button is held, for a quick press highlight
   // (the scrub lift doesn't run on the dashboard, so this is its only feedback).
   const [pressed, setPressed] = useState(false);
+
+  // Measured widths of the two navigation bubbles, so the recording-mode buttons
+  // that stand in for them can be *exactly* as wide — Delete takes the scrub
+  // bubble's width, New line the Dashboard bubble's. Both widths are content-
+  // derived (the scrub pill's grows with the digits in "n / total", and either can
+  // shift with the device font scale), so they're measured rather than hardcoded.
+  // Captured while the bubbles are mounted, which is every render that isn't
+  // recording — dictation always starts from a tap on the mic, so a width is in
+  // hand well before the swap needs it.
+  const [navWidths, setNavWidths] = useState<{ gesture: number; dashboard: number }>({
+    gesture: 0,
+    dashboard: 0,
+  });
+  // onLayout re-fires on every layout pass; only a real change is worth a render
+  // (and the equality check keeps the measure → setState → re-measure path from
+  // looping). Rounded because sub-pixel layout jitter isn't a width change.
+  const measureNav = useCallback((key: 'gesture' | 'dashboard', w: number) => {
+    const next = Math.round(w);
+    setNavWidths(prev => (prev[key] === next ? prev : { ...prev, [key]: next }));
+  }, []);
+
+  // Key-repeat for a held Delete button. The timers outlive the render that armed
+  // them, so they reach onBackspace through a ref rather than closing over it.
+  const holdDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const holdIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Whether the touch path already deleted for this activation — see
+  // handleDeletePress, which uses it to keep a tap from firing twice.
+  const holdFiredRef = useRef(false);
+  const backspaceRef = useRef(onBackspace);
+  backspaceRef.current = onBackspace;
+
+  const stopDeleteRepeat = useCallback(() => {
+    if (holdDelayRef.current) {
+      clearTimeout(holdDelayRef.current);
+      holdDelayRef.current = null;
+    }
+    if (holdIntervalRef.current) {
+      clearInterval(holdIntervalRef.current);
+      holdIntervalRef.current = null;
+    }
+  }, []);
+
+  // Finger down on Delete: delete one character at once (so the button feels
+  // instant), then hand over to the repeat interval once the initial delay is up.
+  const startDeleteRepeat = useCallback(() => {
+    stopDeleteRepeat();
+    holdFiredRef.current = true;
+    backspaceRef.current();
+    holdDelayRef.current = setTimeout(() => {
+      holdDelayRef.current = null;
+      holdIntervalRef.current = setInterval(
+        () => backspaceRef.current(),
+        DELETE_REPEAT_INTERVAL_MS,
+      );
+    }, DELETE_REPEAT_DELAY_MS);
+  }, [stopDeleteRepeat]);
+
+  // onPress still runs so the button works when activated without a touch (a
+  // screen reader). The touch path has already deleted on press-in by then, so
+  // consume that flag instead of deleting a second character.
+  const handleDeletePress = useCallback(() => {
+    if (holdFiredRef.current) {
+      holdFiredRef.current = false;
+      return;
+    }
+    backspaceRef.current();
+  }, []);
+
+  // A held Delete must never outlive the button. The mic stopping swaps it away
+  // (and this strip can unmount outright) mid-hold, and a live interval would go
+  // on eating characters with nothing on screen left to release it.
+  useEffect(() => {
+    if (!dictating) stopDeleteRepeat();
+    return stopDeleteRepeat;
+  }, [dictating, stopDeleteRepeat]);
 
   // Shuttle state. The gesture only sets a paging *rate*; a requestAnimationFrame
   // loop integrates that rate over time and steps the page index, so parking a
@@ -293,6 +387,14 @@ function PageIndicator({
     settleBack();
   };
 
+  // Recording mode unmounts the scrub bubble below. If a scrub were in flight as
+  // the mic went live (e.g. the recognizer hard-stops the session from an error
+  // mid-drag), its rAF shuttle would keep paging with no bubble left to release it
+  // — so settle the gesture as the swap happens.
+  useEffect(() => {
+    if (dictating) settleBackRef.current();
+  }, [dictating]);
+
   const translateY = lift.interpolate({
     inputRange: [0, 1],
     outputRange: [0, -LIFT_DISTANCE],
@@ -301,70 +403,115 @@ function PageIndicator({
 
   return (
     <View className="flex-row items-center justify-center gap-3 py-3">
-      {/* Progress bubble — active on a note page, and a page scrubber when held.
-          The Animated wrapper carries the pop-up transform + gesture; the inner
-          View keeps the bubble's visual styling. */}
-      <GestureDetector gesture={panGesture}>
-        <Animated.View
-          accessibilityRole="button"
-          accessibilityLabel={
-            onDashboard
-              ? 'Go to previous page'
-              : 'Hold and slide to scrub through pages'
-          }
-          style={[
-            styles.scrubWrapper,
-            scrubbing && styles.scrubWrapperActive,
-            { transform: [{ translateX: panX }, { translateY }, { scale }] },
-          ]}>
-          <View
-            className={
-              'h-9 flex-row items-center rounded-full bg-surface px-4' +
-              (onDashboard && pressed ? ' opacity-70' : '')
-            }>
-            <View className="h-1.5 w-16 overflow-hidden rounded-full bg-background">
-              <View
-                className="h-full rounded-full bg-accent"
-                style={{ width: `${progress * 100}%` }}
-              />
-            </View>
-            <Text className="ml-3 text-xs font-semibold text-muted">
-              {notePosition} / {noteCount}
+      {dictating ? (
+        /* Recording mode: the scrub + dashboard bubbles are replaced by the two
+           editing controls, so a character can be dropped or a line broken without
+           pausing dictation. Each takes the exact measured width of the bubble it
+           stands in for (Delete ← scrub, New line ← Dashboard) on top of the same
+           h-9 pill styling, so the strip is pixel-identical either side of the swap
+           — nothing shifts as the mic goes on and off. Content is centered because
+           these widths come from the other bubbles rather than from this content.
+           Width falls back to intrinsic until the first measurement lands. */
+        <>
+          <Pressable
+            onPress={handleDeletePress}
+            onPressIn={startDeleteRepeat}
+            onPressOut={stopDeleteRepeat}
+            accessibilityRole="button"
+            accessibilityLabel="Delete previous character"
+            accessibilityHint="Hold to keep deleting"
+            hitSlop={8}
+            style={navWidths.gesture ? { width: navWidths.gesture } : undefined}
+            className="h-9 flex-row items-center justify-center rounded-full bg-surface px-4 active:opacity-70">
+            <Delete size={16} strokeWidth={2.5} color={colors.faint} />
+            <Text numberOfLines={1} className="ml-2 shrink text-xs font-semibold text-faint">
+              Delete
             </Text>
-          </View>
-        </Animated.View>
-      </GestureDetector>
+          </Pressable>
 
-      {/* Dashboard bubble — jumps to the trailing dashboard page; active there.
-          The 2×2 grid glyph is drawn from four small squares (no icon dep). */}
-      <Pressable
-        onPress={onPressDashboard}
-        accessibilityRole="button"
-        accessibilityLabel="Open dashboard"
-        hitSlop={8}
-        className={
-          onDashboard
-            ? 'h-9 flex-row items-center rounded-full bg-accent px-4 active:opacity-70'
-            : 'h-9 flex-row items-center rounded-full bg-surface px-4 active:opacity-70'
-        }>
-        <View className="h-4 w-4 flex-row flex-wrap" style={styles.dashboardGrid}>
-          {[0, 1, 2, 3].map(i => (
-            <View
-              key={i}
-              className={onDashboard ? 'bg-background' : 'bg-faint'}
-              style={styles.dashboardGridCell}
-            />
-          ))}
-        </View>
-        <Text
-          className={
-            onDashboard
-              ? 'ml-2 text-xs font-semibold text-background'
-              : 'ml-2 text-xs font-semibold text-faint'
-          }>
-          Dashboard
-        </Text>
-      </Pressable>
+          <Pressable
+            onPress={onNewline}
+            accessibilityRole="button"
+            accessibilityLabel="Insert new line"
+            hitSlop={8}
+            style={navWidths.dashboard ? { width: navWidths.dashboard } : undefined}
+            className="h-9 flex-row items-center justify-center rounded-full bg-surface px-4 active:opacity-70">
+            <CornerDownLeft size={16} strokeWidth={2.5} color={colors.faint} />
+            <Text numberOfLines={1} className="ml-2 shrink text-xs font-semibold text-faint">
+              New line
+            </Text>
+          </Pressable>
+        </>
+      ) : (
+        <>
+          {/* Progress bubble — active on a note page, and a page scrubber when held.
+              The Animated wrapper carries the pop-up transform + gesture; the inner
+              View keeps the bubble's visual styling. */}
+          <GestureDetector gesture={panGesture}>
+            <Animated.View
+              accessibilityRole="button"
+              accessibilityLabel={
+                onDashboard
+                  ? 'Go to previous page'
+                  : 'Hold and slide to scrub through pages'
+              }
+              style={[
+                styles.scrubWrapper,
+                scrubbing && styles.scrubWrapperActive,
+                { transform: [{ translateX: panX }, { translateY }, { scale }] },
+              ]}>
+              <View
+                onLayout={e => measureNav('gesture', e.nativeEvent.layout.width)}
+                className={
+                  'h-9 flex-row items-center rounded-full bg-surface px-4' +
+                  (onDashboard && pressed ? ' opacity-70' : '')
+                }>
+                <View className="h-1.5 w-16 overflow-hidden rounded-full bg-background">
+                  <View
+                    className="h-full rounded-full bg-accent"
+                    style={{ width: `${progress * 100}%` }}
+                  />
+                </View>
+                <Text className="ml-3 text-xs font-semibold text-muted">
+                  {notePosition} / {noteCount}
+                </Text>
+              </View>
+            </Animated.View>
+          </GestureDetector>
+
+          {/* Dashboard bubble — jumps to the trailing dashboard page; active there.
+              The 2×2 grid glyph is drawn from four small squares (no icon dep). */}
+          <Pressable
+            onPress={onPressDashboard}
+            onLayout={e => measureNav('dashboard', e.nativeEvent.layout.width)}
+            accessibilityRole="button"
+            accessibilityLabel="Open dashboard"
+            hitSlop={8}
+            className={
+              onDashboard
+                ? 'h-9 flex-row items-center rounded-full bg-accent px-4 active:opacity-70'
+                : 'h-9 flex-row items-center rounded-full bg-surface px-4 active:opacity-70'
+            }>
+            <View className="h-4 w-4 flex-row flex-wrap" style={styles.dashboardGrid}>
+              {[0, 1, 2, 3].map(i => (
+                <View
+                  key={i}
+                  className={onDashboard ? 'bg-background' : 'bg-faint'}
+                  style={styles.dashboardGridCell}
+                />
+              ))}
+            </View>
+            <Text
+              className={
+                onDashboard
+                  ? 'ml-2 text-xs font-semibold text-background'
+                  : 'ml-2 text-xs font-semibold text-faint'
+              }>
+              Dashboard
+            </Text>
+          </Pressable>
+        </>
+      )}
 
       {/* Speech-to-text mic — starts/stops dictation into the active note. Sits
           next to the Dashboard bubble; disabled (dimmed, non-interactive) when

@@ -48,6 +48,24 @@ export function setDictationLive(on: boolean): void {
   injectIntoActiveEditor(`window.__dictateActive(${on ? 'true' : 'false'});`);
 }
 
+/**
+ * Emulate a single Backspace press in the active editor — the footer's
+ * recording-mode Delete button, which replaces a nav bubble while the mic is live
+ * so a misheard character can be dropped without pausing dictation.
+ */
+export function backspaceActiveEditor(): void {
+  injectIntoActiveEditor('window.__dictateBackspace();');
+}
+
+/**
+ * Emulate a single Enter press in the active editor — the footer's recording-mode
+ * New line button. Goes through the editor's normal Enter handling, so on a slash
+ * command line it fires the command and inside a card composer it submits the box.
+ */
+export function newlineActiveEditor(): void {
+  injectIntoActiveEditor('window.__dictateNewline();');
+}
+
 /** Whether an editable note is on screen to receive dictation right now. */
 export function hasActiveEditor(): boolean {
   return active !== null;

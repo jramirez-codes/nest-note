@@ -37,8 +37,10 @@ import {
   type SpeechError,
 } from '@dbkable/react-native-speech-to-text';
 import {
+  backspaceActiveEditor,
   injectIntoActiveEditor,
   hasActiveEditor,
+  newlineActiveEditor,
   setDictationLive,
 } from '../components/notepage/activeEditor';
 import { acquireWakeLock, releaseWakeLock, setScreenAwake } from '../native/wakeLock';
@@ -86,6 +88,10 @@ export interface Dictation {
   toggle: () => void;
   /** Force the mic off — used when navigating somewhere it can't dictate. */
   stop: () => void;
+  /** Emulate one Backspace press in the note being dictated into (footer Delete). */
+  backspace: () => void;
+  /** Emulate one Enter press in the note being dictated into (footer New line). */
+  newline: () => void;
 }
 
 export function useDictation(): Dictation {
@@ -318,5 +324,13 @@ export function useDictation(): Dictation {
   // screen's auto-stop) don't accidentally pass an event object in as the alert.
   const stop = useCallback(() => hardStop(), [hardStop]);
 
-  return { dictating, toggle, stop };
+  // The footer's recording-only Delete / New line buttons. Wrapped (rather than
+  // handed out raw) so callers can pass them straight to an onPress without the
+  // press event landing in the injector, and so the whole footer-mic surface stays
+  // on this one hook. They edit the note without touching the recognizer, so a tap
+  // never interrupts the live session.
+  const backspace = useCallback(() => backspaceActiveEditor(), []);
+  const newline = useCallback(() => newlineActiveEditor(), []);
+
+  return { dictating, toggle, stop, backspace, newline };
 }
