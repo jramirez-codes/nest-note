@@ -8,7 +8,7 @@ import {
   View,
 } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import { Mic } from 'lucide-react-native';
+import { CornerDownLeft, Delete, Mic } from 'lucide-react-native';
 import { useTheme } from '../../theme/colors';
 
 interface PageIndicatorProps {
@@ -33,6 +33,10 @@ interface PageIndicatorProps {
   dictationDisabled: boolean;
   /** Toggle the speech-to-text mic on/off. */
   onToggleDictation: () => void;
+  /** Recording-mode Delete — one Backspace press in the note being dictated into. */
+  onBackspace: () => void;
+  /** Recording-mode New line — one Enter press in the note being dictated into. */
+  onNewline: () => void;
 }
 
 /** Displacement (px) from the press point before paging starts — a dead zone so
@@ -81,6 +85,11 @@ function pagesPerSecond(dx: number, scrubWidth: number) {
  *
  * Built for hundreds of pages: the left bubble is a continuous progress bar
  * rather than one-dot-per-page.
+ *
+ * While dictation is live those two navigation bubbles are swapped for a Delete
+ * and a New line button — editing controls are what's wanted mid-utterance, and
+ * paging away would only redirect the transcript. The mic itself stays put (it's
+ * how the user stops), so it keeps its slot in both modes.
  */
 function PageIndicator({
   currentIndex,
@@ -93,6 +102,8 @@ function PageIndicator({
   dictating,
   dictationDisabled,
   onToggleDictation,
+  onBackspace,
+  onNewline,
 }: PageIndicatorProps) {
   const colors = useTheme();
   const onDashboard = currentIndex >= noteCount;
@@ -293,6 +304,14 @@ function PageIndicator({
     settleBack();
   };
 
+  // Recording mode unmounts the scrub bubble below. If a scrub were in flight as
+  // the mic went live (e.g. the recognizer hard-stops the session from an error
+  // mid-drag), its rAF shuttle would keep paging with no bubble left to release it
+  // — so settle the gesture as the swap happens.
+  useEffect(() => {
+    if (dictating) settleBackRef.current();
+  }, [dictating]);
+
   const translateY = lift.interpolate({
     inputRange: [0, 1],
     outputRange: [0, -LIFT_DISTANCE],
@@ -301,70 +320,100 @@ function PageIndicator({
 
   return (
     <View className="flex-row items-center justify-center gap-3 py-3">
-      {/* Progress bubble — active on a note page, and a page scrubber when held.
-          The Animated wrapper carries the pop-up transform + gesture; the inner
-          View keeps the bubble's visual styling. */}
-      <GestureDetector gesture={panGesture}>
-        <Animated.View
-          accessibilityRole="button"
-          accessibilityLabel={
-            onDashboard
-              ? 'Go to previous page'
-              : 'Hold and slide to scrub through pages'
-          }
-          style={[
-            styles.scrubWrapper,
-            scrubbing && styles.scrubWrapperActive,
-            { transform: [{ translateX: panX }, { translateY }, { scale }] },
-          ]}>
-          <View
-            className={
-              'h-9 flex-row items-center rounded-full bg-surface px-4' +
-              (onDashboard && pressed ? ' opacity-70' : '')
-            }>
-            <View className="h-1.5 w-16 overflow-hidden rounded-full bg-background">
-              <View
-                className="h-full rounded-full bg-accent"
-                style={{ width: `${progress * 100}%` }}
-              />
-            </View>
-            <Text className="ml-3 text-xs font-semibold text-muted">
-              {notePosition} / {noteCount}
-            </Text>
-          </View>
-        </Animated.View>
-      </GestureDetector>
+      {dictating ? (
+        /* Recording mode: the scrub + dashboard bubbles are replaced by the two
+           editing controls, so a character can be dropped or a line broken without
+           pausing dictation. Same h-9 pill as the bubbles they stand in for, so the
+           strip's geometry doesn't shift as the mic goes on and off. */
+        <>
+          <Pressable
+            onPress={onBackspace}
+            accessibilityRole="button"
+            accessibilityLabel="Delete previous character"
+            hitSlop={8}
+            className="h-9 flex-row items-center rounded-full bg-surface px-4 active:opacity-70">
+            <Delete size={16} strokeWidth={2.5} color={colors.faint} />
+            <Text className="ml-2 text-xs font-semibold text-faint">Delete</Text>
+          </Pressable>
 
-      {/* Dashboard bubble — jumps to the trailing dashboard page; active there.
-          The 2×2 grid glyph is drawn from four small squares (no icon dep). */}
-      <Pressable
-        onPress={onPressDashboard}
-        accessibilityRole="button"
-        accessibilityLabel="Open dashboard"
-        hitSlop={8}
-        className={
-          onDashboard
-            ? 'h-9 flex-row items-center rounded-full bg-accent px-4 active:opacity-70'
-            : 'h-9 flex-row items-center rounded-full bg-surface px-4 active:opacity-70'
-        }>
-        <View className="h-4 w-4 flex-row flex-wrap" style={styles.dashboardGrid}>
-          {[0, 1, 2, 3].map(i => (
-            <View
-              key={i}
-              className={onDashboard ? 'bg-background' : 'bg-faint'}
-              style={styles.dashboardGridCell}
-            />
-          ))}
-        </View>
-        <Text
-          className={
-            onDashboard
-              ? 'ml-2 text-xs font-semibold text-background'
-              : 'ml-2 text-xs font-semibold text-faint'
-          }>
-          Dashboard
-        </Text>
-      </Pressable>
+          <Pressable
+            onPress={onNewline}
+            accessibilityRole="button"
+            accessibilityLabel="Insert new line"
+            hitSlop={8}
+            className="h-9 flex-row items-center rounded-full bg-surface px-4 active:opacity-70">
+            <CornerDownLeft size={16} strokeWidth={2.5} color={colors.faint} />
+            <Text className="ml-2 text-xs font-semibold text-faint">New line</Text>
+          </Pressable>
+        </>
+      ) : (
+        <>
+          {/* Progress bubble — active on a note page, and a page scrubber when held.
+              The Animated wrapper carries the pop-up transform + gesture; the inner
+              View keeps the bubble's visual styling. */}
+          <GestureDetector gesture={panGesture}>
+            <Animated.View
+              accessibilityRole="button"
+              accessibilityLabel={
+                onDashboard
+                  ? 'Go to previous page'
+                  : 'Hold and slide to scrub through pages'
+              }
+              style={[
+                styles.scrubWrapper,
+                scrubbing && styles.scrubWrapperActive,
+                { transform: [{ translateX: panX }, { translateY }, { scale }] },
+              ]}>
+              <View
+                className={
+                  'h-9 flex-row items-center rounded-full bg-surface px-4' +
+                  (onDashboard && pressed ? ' opacity-70' : '')
+                }>
+                <View className="h-1.5 w-16 overflow-hidden rounded-full bg-background">
+                  <View
+                    className="h-full rounded-full bg-accent"
+                    style={{ width: `${progress * 100}%` }}
+                  />
+                </View>
+                <Text className="ml-3 text-xs font-semibold text-muted">
+                  {notePosition} / {noteCount}
+                </Text>
+              </View>
+            </Animated.View>
+          </GestureDetector>
+
+          {/* Dashboard bubble — jumps to the trailing dashboard page; active there.
+              The 2×2 grid glyph is drawn from four small squares (no icon dep). */}
+          <Pressable
+            onPress={onPressDashboard}
+            accessibilityRole="button"
+            accessibilityLabel="Open dashboard"
+            hitSlop={8}
+            className={
+              onDashboard
+                ? 'h-9 flex-row items-center rounded-full bg-accent px-4 active:opacity-70'
+                : 'h-9 flex-row items-center rounded-full bg-surface px-4 active:opacity-70'
+            }>
+            <View className="h-4 w-4 flex-row flex-wrap" style={styles.dashboardGrid}>
+              {[0, 1, 2, 3].map(i => (
+                <View
+                  key={i}
+                  className={onDashboard ? 'bg-background' : 'bg-faint'}
+                  style={styles.dashboardGridCell}
+                />
+              ))}
+            </View>
+            <Text
+              className={
+                onDashboard
+                  ? 'ml-2 text-xs font-semibold text-background'
+                  : 'ml-2 text-xs font-semibold text-faint'
+              }>
+              Dashboard
+            </Text>
+          </Pressable>
+        </>
+      )}
 
       {/* Speech-to-text mic — starts/stops dictation into the active note. Sits
           next to the Dashboard bubble; disabled (dimmed, non-interactive) when

@@ -2,6 +2,7 @@ import { EditorView, keymap } from '@codemirror/view';
 import { EditorState, Prec, Compartment } from '@codemirror/state';
 import {
   defaultKeymap,
+  deleteCharBackward,
   history,
   historyKeymap,
   insertNewlineAndIndent,
@@ -324,6 +325,45 @@ function enterAtCaret() {
     aiCommandOnEnter(view) || continueMarkup(view) || insertNewlineAndIndent(view);
   }
 }
+
+// Do exactly what pressing Backspace where the caret sits would: a focused card
+// composer (/chat, /run, /code) loses the selection, or the character before its
+// caret; the note body runs CM's own Backspace command, so it collapses a
+// selection, steps back out of an indent, or removes one character. Shared by the
+// footer's recording-mode Delete button (see __dictateBackspace).
+function backspaceAtCaret() {
+  const input = activeComposerInput();
+  if (input) {
+    const end = input.selectionEnd ?? input.value.length;
+    const start = input.selectionStart ?? end;
+    // A collapsed caret deletes the character before it; a selection just clears.
+    const from = start === end ? Math.max(0, end - 1) : start;
+    if (from === end) return; // caret at position 0 — nothing to delete
+    input.value = input.value.slice(0, from) + input.value.slice(end);
+    input.setSelectionRange(from, from);
+    // Keeps the composer's own submit (which reads input.value) in sync.
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  } else if (!view.state.readOnly) {
+    deleteCharBackward(view);
+  }
+}
+
+// The footer swaps its two nav bubbles for Delete / New line buttons while the mic
+// is live (see PageIndicator), so a character can be fixed or a line broken without
+// pausing dictation. Both abandon the in-progress utterance span first: the edit
+// moves the caret out from under it, so the next chunk of speech must start a fresh
+// run at wherever the caret now sits rather than overwriting a stale range.
+window.__dictateBackspace = function () {
+  dictRange = null;
+  inputDict = null;
+  backspaceAtCaret();
+};
+
+window.__dictateNewline = function () {
+  dictRange = null;
+  inputDict = null;
+  enterAtCaret();
+};
 
 // RN toggles this around a whole dictation session (not per recognizer restart).
 // On: focus the editor with the keyboard suppressed, so the caret is visible and

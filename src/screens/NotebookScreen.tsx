@@ -244,7 +244,15 @@ export default function NotebookScreen() {
   // disabled with nowhere to write: on the trailing dashboard, or on a subject
   // notebook (whose pages are read-only server pulls). Auto-stop if the user
   // navigates onto one of those while the mic is live.
-  const { dictating, toggle: toggleDictation, stop: stopDictation } = useDictation();
+  // The footer's Delete / New line buttons replace the two nav bubbles while the mic
+  // is live, editing the note being dictated into without stopping the recognizer.
+  const {
+    dictating,
+    toggle: toggleDictation,
+    stop: stopDictation,
+    backspace: dictationBackspace,
+    newline: dictationNewline,
+  } = useDictation();
   const onDashboard = currentIndex >= contentCount;
   const dictationDisabled = onDashboard || !!subjectSlug;
   useEffect(() => {
@@ -641,6 +649,8 @@ export default function NotebookScreen() {
               dictating={dictating}
               dictationDisabled={dictationDisabled}
               onToggleDictation={toggleDictation}
+              onBackspace={dictationBackspace}
+              onNewline={dictationNewline}
             />
           </View>
         </View>

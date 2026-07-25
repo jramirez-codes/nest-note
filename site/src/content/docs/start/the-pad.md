@@ -30,6 +30,40 @@ reads and writes plain markdown, so:
 - there is no data migration when the editor changes,
 - and what you'd get out of the database is exactly what you typed.
 
+## Dictation
+
+Tap the **mic** in the footer strip to dictate into the page you're on. Speech
+streams into the note at the caret as you talk — partial results update in place,
+final ones commit — and the soft keyboard stays suppressed so it never covers the
+page. The caret remains visible and tappable, so you can steer where the next
+words land. Tap the mic again to stop.
+
+The mic is disabled where there's nothing to dictate into: on the dashboard, and
+on subject-notebook pages (which are read-only pulls from the server). Walking
+onto one of those with the mic live stops it.
+
+### Footer controls while recording
+
+Reaching for the keyboard mid-sentence defeats the point of dictating, so while
+the mic is live the footer's two navigation controls — the page scrubber and the
+**Dashboard** bubble — are replaced by two editing controls:
+
+| Control | Effect |
+|---|---|
+| **Delete** | One `Backspace` press per tap — removes a single character |
+| **New line** | One `Enter` press |
+
+Both act on the note being dictated into without interrupting the recognizer, so
+you can drop a misheard character or start a fresh line and keep talking. The mic
+keeps its own slot in both modes, and the two navigation controls come back as
+soon as you stop.
+
+`New line` goes through the editor's normal `Enter` handling rather than blindly
+inserting a newline — so on a list or quote line it continues the markup, on a
+slash-command line it *fires the command*, and inside a card composer it submits
+the box. Saying **"system new line"** as its own phrase does the same thing
+hands-free.
+
 ## Titles are derived, not stored
 
 Page previews come from `deriveTitle(content)` — a pure function over the note
