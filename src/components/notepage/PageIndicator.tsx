@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   Keyboard,
@@ -125,6 +125,26 @@ function PageIndicator({
   // True while the dashboard "back" button is held, for a quick press highlight
   // (the scrub lift doesn't run on the dashboard, so this is its only feedback).
   const [pressed, setPressed] = useState(false);
+
+  // Measured widths of the two navigation bubbles, so the recording-mode buttons
+  // that stand in for them can be *exactly* as wide — Delete takes the scrub
+  // bubble's width, New line the Dashboard bubble's. Both widths are content-
+  // derived (the scrub pill's grows with the digits in "n / total", and either can
+  // shift with the device font scale), so they're measured rather than hardcoded.
+  // Captured while the bubbles are mounted, which is every render that isn't
+  // recording — dictation always starts from a tap on the mic, so a width is in
+  // hand well before the swap needs it.
+  const [navWidths, setNavWidths] = useState<{ gesture: number; dashboard: number }>({
+    gesture: 0,
+    dashboard: 0,
+  });
+  // onLayout re-fires on every layout pass; only a real change is worth a render
+  // (and the equality check keeps the measure → setState → re-measure path from
+  // looping). Rounded because sub-pixel layout jitter isn't a width change.
+  const measureNav = useCallback((key: 'gesture' | 'dashboard', w: number) => {
+    const next = Math.round(w);
+    setNavWidths(prev => (prev[key] === next ? prev : { ...prev, [key]: next }));
+  }, []);
 
   // Shuttle state. The gesture only sets a paging *rate*; a requestAnimationFrame
   // loop integrates that rate over time and steps the page index, so parking a
@@ -323,17 +343,24 @@ function PageIndicator({
       {dictating ? (
         /* Recording mode: the scrub + dashboard bubbles are replaced by the two
            editing controls, so a character can be dropped or a line broken without
-           pausing dictation. Same h-9 pill as the bubbles they stand in for, so the
-           strip's geometry doesn't shift as the mic goes on and off. */
+           pausing dictation. Each takes the exact measured width of the bubble it
+           stands in for (Delete ← scrub, New line ← Dashboard) on top of the same
+           h-9 pill styling, so the strip is pixel-identical either side of the swap
+           — nothing shifts as the mic goes on and off. Content is centered because
+           these widths come from the other bubbles rather than from this content.
+           Width falls back to intrinsic until the first measurement lands. */
         <>
           <Pressable
             onPress={onBackspace}
             accessibilityRole="button"
             accessibilityLabel="Delete previous character"
             hitSlop={8}
-            className="h-9 flex-row items-center rounded-full bg-surface px-4 active:opacity-70">
+            style={navWidths.gesture ? { width: navWidths.gesture } : undefined}
+            className="h-9 flex-row items-center justify-center rounded-full bg-surface px-4 active:opacity-70">
             <Delete size={16} strokeWidth={2.5} color={colors.faint} />
-            <Text className="ml-2 text-xs font-semibold text-faint">Delete</Text>
+            <Text numberOfLines={1} className="ml-2 shrink text-xs font-semibold text-faint">
+              Delete
+            </Text>
           </Pressable>
 
           <Pressable
@@ -341,9 +368,12 @@ function PageIndicator({
             accessibilityRole="button"
             accessibilityLabel="Insert new line"
             hitSlop={8}
-            className="h-9 flex-row items-center rounded-full bg-surface px-4 active:opacity-70">
+            style={navWidths.dashboard ? { width: navWidths.dashboard } : undefined}
+            className="h-9 flex-row items-center justify-center rounded-full bg-surface px-4 active:opacity-70">
             <CornerDownLeft size={16} strokeWidth={2.5} color={colors.faint} />
-            <Text className="ml-2 text-xs font-semibold text-faint">New line</Text>
+            <Text numberOfLines={1} className="ml-2 shrink text-xs font-semibold text-faint">
+              New line
+            </Text>
           </Pressable>
         </>
       ) : (
@@ -365,6 +395,7 @@ function PageIndicator({
                 { transform: [{ translateX: panX }, { translateY }, { scale }] },
               ]}>
               <View
+                onLayout={e => measureNav('gesture', e.nativeEvent.layout.width)}
                 className={
                   'h-9 flex-row items-center rounded-full bg-surface px-4' +
                   (onDashboard && pressed ? ' opacity-70' : '')
@@ -386,6 +417,7 @@ function PageIndicator({
               The 2×2 grid glyph is drawn from four small squares (no icon dep). */}
           <Pressable
             onPress={onPressDashboard}
+            onLayout={e => measureNav('dashboard', e.nativeEvent.layout.width)}
             accessibilityRole="button"
             accessibilityLabel="Open dashboard"
             hitSlop={8}
