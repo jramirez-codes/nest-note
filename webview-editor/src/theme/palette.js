@@ -6,6 +6,7 @@ export const c = {
   base: '#1e1e2e',
   surface0: '#313244',
   surface1: '#45475a',
+  overlay0: '#6c7086',
   overlay1: '#7f849c',
   subtext0: '#a6adc8',
   text: '#cdd6f4',

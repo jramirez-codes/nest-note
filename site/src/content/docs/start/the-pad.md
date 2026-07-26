@@ -42,6 +42,13 @@ The mic is disabled where there's nothing to dictate into: on the dashboard, and
 on subject-notebook pages (which are read-only pulls from the server). Walking
 onto one of those with the mic live stops it.
 
+The footer isn't the only mic. Cards that take typed input — a `/chat` follow-up,
+a `/code` prompt — carry their own mic button, tucked into the bottom-right
+corner of the box where a Send button used to be, and
+it drives this same session: it puts the caret in that card's box first, so the
+words land there rather than in the page. See
+[talking into a card](../commands/index.mdx#talking-into-a-card).
+
 Dictation runs on the **platform recognizer** — Android's `SpeechRecognizer`,
 iOS's Speech framework — not on the companion server, so it works unpaired. On
 Android the app holds a wake lock for the session,

@@ -12,7 +12,7 @@
 // visually drift.
 
 import { c } from '../theme/palette.js';
-import { BACK, INTERRUPT, STOP, SEND, PLAY } from '../ui/icons.js';
+import { BACK, INTERRUPT, STOP, PLAY } from '../ui/icons.js';
 import { guardTaps, blockSelection } from '../ui/events.js';
 import { post } from '../bridge.js';
 import { findAiLine, rerunRunById, appendChatTurnById, isChatKind } from './marker.js';
@@ -109,10 +109,11 @@ function readCard(view, id, kind) {
   return null;
 }
 
-// Live footer for a /run page: stdin box, interrupt (⌃C), Stop (kill).
+// Live footer for a /run page: stdin box, Stop (kill), interrupt (⌃C) — same
+// order as the card and as /code's footer.
 function runFoot(id) {
   return makeComposer({
-    footClass: 'cm-ask-foot cm-run-foot cm-ov-foot',
+    footClass: 'cm-ask-foot cm-ov-foot',
     inputClass: 'cm-ask-followup cm-run-stdin',
     placeholder: 'stdin — Enter to send…',
     draftKey: id,
@@ -122,17 +123,17 @@ function runFoot(id) {
       post({ type: 'runStdin', id, data: text + '\n' });
     },
     buttons: [
-      { className: 'cm-run-btn cm-run-intr', icon: INTERRUPT, label: 'Interrupt', onTap: () => post({ type: 'runSignal', id }) },
       { className: 'cm-run-btn cm-run-stop', icon: STOP, label: 'Stop', onTap: () => post({ type: 'runStop', id }) },
+      { className: 'cm-run-btn cm-run-intr', icon: INTERRUPT, label: 'Interrupt', onTap: () => post({ type: 'runSignal', id }) },
     ],
   });
 }
 
-// Live footer for a /code page: a prompt box (Enter sends the next turn), Send,
-// and Stop (kill the session).
+// Live footer for a /code page: a prompt box (Enter sends the next turn), the
+// dictation mic, and Stop (kill the session).
 function codeFoot(id) {
   return makeComposer({
-    footClass: 'cm-ask-foot cm-run-foot cm-ov-foot',
+    footClass: 'cm-ask-foot cm-ov-foot',
     inputClass: 'cm-ask-followup cm-code-prompt',
     placeholder: 'Message the agent — Enter to send…',
     draftKey: id,
@@ -143,15 +144,15 @@ function codeFoot(id) {
       post({ type: 'codePrompt', id, text });
     },
     buttons: [
-      { className: 'cm-run-btn cm-code-send', icon: SEND, label: 'Send', submit: true },
       { className: 'cm-run-btn cm-run-stop', icon: STOP, label: 'Stop session', onTap: () => post({ type: 'codeStop', id }) },
+      { mic: true },
     ],
   });
 }
 
 // Live footer for a /chat page: a follow-up box that appends the next turn to the
-// same thread (Enter or Send). Shown only while the thread is idle — never
-// mid-stream — so it mirrors the card's follow-up composer.
+// same thread (Enter, or tapping the dictation mic off). Shown only while the
+// thread is idle — never mid-stream — so it mirrors the card's follow-up composer.
 function chatFoot(view, id) {
   return makeComposer({
     footClass: 'cm-ask-foot cm-ov-foot',
@@ -164,7 +165,7 @@ function chatFoot(view, id) {
       input.value = '';
       appendChatTurnById(view, id, text);
     },
-    buttons: [{ tag: 'span', className: 'cm-ask-send', icon: SEND, submit: true }],
+    buttons: [{ mic: true }],
   });
 }
 

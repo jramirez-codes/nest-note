@@ -73,6 +73,7 @@ export interface EditorMessage {
   port?: number;
   query?: string;
   open?: boolean;
+  on?: boolean;
 }
 
 type WebViewRef = React.RefObject<{ injectJavaScript: (js: string) => void } | null>;
@@ -101,6 +102,11 @@ export interface BridgeContext {
    *  card) opened or closed, so the host can hide/restore chrome that would
    *  otherwise float on top of the overlay's own footer composer. */
   onWidgetExpandChange?: (expanded: boolean) => void;
+  /** A card composer's mic toggle asked to start (`true`) or stop (`false`) the
+   *  speech-to-text session. The recognizer is the footer mic's, owned by the
+   *  screen — the editor has already put the caret in the box it wants the
+   *  transcript to land in. */
+  onDictationRequest?: (on: boolean) => void;
   setPairScan: (v: { id: string } | null) => void;
   setProjectDelete: (
     v: { mode: 'confirm'; project: string } | { mode: 'error'; message: string } | null,
@@ -123,6 +129,7 @@ export function handleEditorMessage(ctx: BridgeContext, e: WebViewMessageEvent):
     onOpenPage,
     onArchived,
     onWidgetExpandChange,
+    onDictationRequest,
     setPairScan,
     setProjectDelete,
   } = ctx;
@@ -190,6 +197,11 @@ export function handleEditorMessage(ctx: BridgeContext, e: WebViewMessageEvent):
   } else if (msg.type === 'cardOverlay' && typeof msg.open === 'boolean') {
     // A card was expanded into (or closed from) its full-page overlay.
     onWidgetExpandChange?.(msg.open);
+  } else if (msg.type === 'dictate' && typeof msg.on === 'boolean') {
+    // A card composer's mic toggle: start or stop the footer's speech-to-text
+    // session. The editor has already focused that widget's box, and the
+    // transcript follows the caret, so the words land there.
+    onDictationRequest?.(msg.on);
   } else if (msg.type === 'openUrl' && typeof msg.url === 'string') {
     // Open tapped markdown links in the system browser. Restrict schemes so
     // a note can't smuggle in javascript:/file: URLs.

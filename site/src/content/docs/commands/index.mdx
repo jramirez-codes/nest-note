@@ -54,13 +54,31 @@ markdown, because the page's full markdown crosses the WebView bridge on every
 keystroke. See [storage](../architecture/storage.md).
 
 Cards that take typed input — the `/chat` follow-up box, `/run`'s stdin, `/code`'s
-prompt — share one text box. Long text **wraps onto new lines and the box grows
-taller** to keep all of it visible, up to a few lines' worth, after which the box
-scrolls internally instead of pushing the card off screen. `Enter` sends (it never
-inserts a newline), and expanding a card to its full-page view gives you the same
-box with the same behavior.
+prompt — share one text box. It spans the card's full width, and its buttons (the
+mic, `/run`'s interrupt and stop) sit **inside the box, in its bottom-right
+corner**, where they stay as the box grows. Long text **wraps onto new lines and
+the box grows taller** to keep all of it visible, up to a few lines' worth, after
+which the box scrolls internally instead of pushing the card off screen. `Enter`
+sends (it never inserts a newline), and expanding a card to its full-page view
+gives you the same box with the same behavior.
 
 Anything typed but not yet sent **follows the card**: expand a card mid-sentence
 and the full-page box picks up where you left off, close the page and the card's
 own box has it back. Only sending it (or deleting the card) clears it, so a
 streaming answer or a collapsed card can't lose it either.
+
+### Talking into a card
+
+The button in the bottom-right corner of a card's text box is a **mic**, not a
+Send button — tapping it
+starts [dictation](../start/the-pad.md#dictation) *and* drops the caret into that
+card's box, so your words go to the card instead of the page. Tapping the mic
+again while the caret is still in that box stops the session, which sends what
+you dictated (stopping the mic always does the equivalent of pressing `Enter`
+where the caret is).
+
+With the mic already running elsewhere — in the page, or in another card — the
+card's mic just moves the caret into its own box and keeps the session going, so
+you can talk into a note, then into a card, without stopping and restarting.
+
+`Enter` still sends by hand, as does saying **"system new line"**.

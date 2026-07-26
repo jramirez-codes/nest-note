@@ -74,6 +74,7 @@ import {
   isChatKind,
 } from './ai/marker.js';
 import { refreshOpenOverlay, closeOverlay } from './ai/overlay.js';
+import { setMicLive } from './ui/mic.js';
 
 /**
  * The CodeMirror 6 markdown editor that runs inside the React Native WebView.
@@ -277,6 +278,11 @@ window.__setDoc = function (text) {
 // so it never covers the note. The same suppression follows the user into a card
 // composer input (see onDictFocusIn), where dictation is routed instead.
 //
+// A session can also START from a card composer: every widget footer carries a
+// mic toggle (ui/mic.js) that focuses its own box and posts `{type:'dictate'}` to
+// RN, which drives the very same footer recognizer. That's why __dictateActive
+// leaves an already-focused composer alone rather than claiming the note body.
+//
 // Saying "system command" as the first words spoken on a fresh line doubles as
 // typing "/": see VOICE_COMMAND_RE below, near __dictate.
 let dictating = false;
@@ -309,6 +315,12 @@ function activeComposerInput() {
 function onDictFocusIn(e) {
   const el = e.target;
   if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) suppressKeyboard(el);
+  // Speech follows the caret, so moving it mid-session — tapping into a composer,
+  // back into the note, or hopping between boxes with a widget's mic button —
+  // abandons the in-progress utterance span. The next chunk then starts fresh at
+  // the new target instead of overwriting a range in whatever we just left.
+  dictRange = null;
+  inputDict = null;
 }
 
 // Do exactly what pressing Enter where the caret sits would: a focused card
@@ -372,11 +384,17 @@ window.__dictateNewline = function () {
 // registerActiveEditor) and cleared when a page is swiped away (NoteEditorWebView).
 window.__dictateActive = function (on) {
   dictating = !!on;
+  // Repaint every widget composer's mic toggle to match the session (ui/mic.js).
+  setMicLive(dictating);
   if (dictating) {
     document.addEventListener('focusin', onDictFocusIn);
     suppressKeyboard(view.contentDOM);
-    suppressKeyboard(activeComposerInput()); // a composer may already be focused
-    if (!view.state.readOnly) view.focus();
+    const input = activeComposerInput(); // a composer may already be focused
+    suppressKeyboard(input);
+    // Don't pull the caret out of a focused composer: a session started from a
+    // widget's own mic button is aimed at THAT box, and the transcript follows
+    // the caret. Only an unfocused start claims the note body.
+    if (!input && !view.state.readOnly) view.focus();
   } else {
     // The user just tapped the mic off — hand off exactly like they'd pressed
     // Enter where the caret sits (submit a composer, fire a slash command, or

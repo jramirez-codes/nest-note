@@ -249,6 +249,7 @@ export default function NotebookScreen() {
   const {
     dictating,
     toggle: toggleDictation,
+    start: startDictation,
     stop: stopDictation,
     backspace: dictationBackspace,
     newline: dictationNewline,
@@ -258,6 +259,19 @@ export default function NotebookScreen() {
   useEffect(() => {
     if (dictationDisabled && dictating) stopDictation();
   }, [dictationDisabled, dictating, stopDictation]);
+
+  // The mic toggle inside an AI card's composer drives the very same session as
+  // the footer mic — the editor has already focused that card's box, so the words
+  // land there. Gated on the same condition as the footer button, so a card on a
+  // read-only subject page can't start a session with nowhere to write.
+  const handleDictationRequest = useCallback(
+    (on: boolean) => {
+      if (dictationDisabled) return;
+      if (on) startDictation();
+      else stopDictation();
+    },
+    [dictationDisabled, startDictation, stopDictation],
+  );
 
   // Swapping notebooks while reading a page drops the reader on the new notebook's opening
   // page (its Appendix / table of contents) rather than a stale index. While a subject's
@@ -453,6 +467,7 @@ export default function NotebookScreen() {
           onArchived={handleArchived}
           onOpenPage={handleOpenPage}
           onWidgetExpandChange={setWidgetExpanded}
+          onDictationRequest={handleDictationRequest}
           notebookId={DEFAULT_NOTEBOOK_ID}
         />
       );
@@ -468,6 +483,7 @@ export default function NotebookScreen() {
       deleteNote,
       handleArchived,
       handleOpenPage,
+      handleDictationRequest,
       drag.shared,
       drag.lift,
       drag.release,
