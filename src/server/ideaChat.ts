@@ -13,7 +13,15 @@
  * text typed into the composer but never sent.
  */
 
-import { runIdeaChat, type AskHandle, type IdeaRef } from './controllers/aiController';
+import {
+  cardContent,
+  restoreCard,
+  runIdeaChat,
+  type AskHandle,
+  type CardContent,
+  type DashboardCard,
+  type IdeaRef,
+} from './controllers/aiController';
 
 /** One exchange: what the user asked, and the reply as it stands. */
 export interface IdeaChatTurn {
@@ -33,9 +41,19 @@ export interface IdeaChatThread {
    *  Kept with the thread rather than in the page so a card resized to read a
    *  long answer is still that size when the idea is reopened. */
   cardHeight?: number;
+  /** The card as it read before each turn that went on to change it, oldest
+   *  first — one entry per edit Claude has made to this idea in this session,
+   *  and what {@link undoLast} puts back. Empty until Claude actually rewrites
+   *  something, which is exactly when the page offers an undo. */
+  undo: CardContent[];
+  /** The card as it read when the running turn was sent, held until that turn's
+   *  result is seen by {@link recordCard}: it becomes an undo entry if the turn
+   *  changed the card, and is dropped if it didn't (most turns are questions and
+   *  answers that leave the idea alone — those must not offer an undo). */
+  pending?: CardContent;
 }
 
-const EMPTY: IdeaChatThread = { turns: [], draft: '' };
+const EMPTY: IdeaChatThread = { turns: [], draft: '', undo: [] };
 
 // Immutable snapshots: every mutation replaces the thread object, so a
 // useSyncExternalStore subscriber re-renders exactly when its thread changed and
@@ -107,7 +125,8 @@ export function setCardHeight(id: string, cardHeight: number): void {
  * are the page's state, not the transcript's.
  *
  * Only the transcript goes. Anything Claude already wrote to the card during the
- * conversation is on the card, and stays there.
+ * conversation is on the card, and stays there — so the undo history stays too:
+ * those edits are still there to be reverted.
  */
 export function clear(id: string): void {
   handles.get(id)?.cancel();
@@ -129,8 +148,14 @@ export function send(idea: IdeaRef, question: string): void {
   const prev = getThread(id);
   const context = { turns: prev.turns.map(t => ({ q: t.q, a: t.a })) };
   update(id, {
+    ...prev,
     draft: '',
     turns: [...prev.turns, { q: text, a: '', status: 'streaming' }],
+    // How the idea reads going into this turn, so whatever Claude writes to the
+    // card can be undone. An earlier pending snapshot survives: it predates this
+    // turn too, and a turn whose result was never seen (the page was closed)
+    // would otherwise lose its undo.
+    pending: prev.pending ?? cardContent(idea),
   });
 
   const handle = runIdeaChat(
@@ -154,6 +179,60 @@ export function send(idea: IdeaRef, question: string): void {
   );
   handles.set(id, handle);
   emit(id); // isRunning() flipped — repaint the composer's Stop control
+}
+
+function sameContent(a: CardContent, b: CardContent): boolean {
+  return (
+    a.title === b.title &&
+    a.body === b.body &&
+    a.priority === b.priority &&
+    a.tags.length === b.tags.length &&
+    a.tags.every((t, i) => t === b.tags[i])
+  );
+}
+
+/**
+ * Take the card as the server now has it — the page re-reads it whenever a turn
+ * lands — and settle the snapshot taken when that turn was sent: kept as an undo
+ * entry if Claude changed the idea, dropped if the turn only talked about it.
+ *
+ * Idempotent, which matters because the page also re-reads on open: with no
+ * pending snapshot there's nothing to settle and this is a no-op. A read taken
+ * while a turn is still streaming is ignored for the same reason — the edit that
+ * turn is about to make hasn't landed yet, and settling on it would leave that
+ * edit with no way back.
+ */
+export function recordCard(card: DashboardCard): void {
+  const id = card.id;
+  const t = getThread(id);
+  if (!t.pending || handles.has(id)) return;
+  const now = cardContent(card);
+  const undo = sameContent(t.pending, now) ? t.undo : [...t.undo, t.pending];
+  update(id, { ...t, undo, pending: undefined });
+}
+
+/** Whether Claude has edited this idea (so the page can offer to undo it). */
+export function canUndo(id: string): boolean {
+  return getThread(id).undo.length > 0;
+}
+
+/**
+ * Revert the most recent edit Claude made to this idea, writing the snapshot from
+ * before it back over the card. Steps back one edit at a time, so undoing twice
+ * walks back two of Claude's rewrites.
+ *
+ * The entry is only dropped once the server has taken the write, so a failed undo
+ * (server unreachable) can be retried rather than being silently spent; the caller
+ * sees the failure as a rejected promise and re-reads the card either way.
+ */
+export async function undoLast(card: DashboardCard): Promise<void> {
+  const id = card.id;
+  const t = getThread(id);
+  const snapshot = t.undo[t.undo.length - 1];
+  if (!snapshot) return;
+  await restoreCard(id, snapshot, card.source);
+  const after = getThread(id);
+  update(id, { ...after, undo: after.undo.filter(s => s !== snapshot) });
 }
 
 /** Cancel the streaming turn (the user hit Stop), keeping what arrived so far. */

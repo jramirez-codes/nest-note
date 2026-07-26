@@ -342,6 +342,48 @@ export async function dismissCard(id: string, source?: string): Promise<void> {
   return postAction({ action: 'dismiss', id, source });
 }
 
+/**
+ * Everything about a card the idea page puts on screen — and so everything an
+ * undo has to put back. Deliberately not the whole card: id, kind, dates and
+ * done/dismissed aren't content, and restoring them would undo more than the
+ * edit the user is reverting.
+ */
+export interface CardContent {
+  title: string;
+  body: string;
+  tags: string[];
+  priority: string;
+}
+
+/** Snapshot a card's content, filling the absent fields the same way the page does. */
+export function cardContent(card: {
+  title: string;
+  body?: string;
+  tags?: string[];
+  priority?: string;
+}): CardContent {
+  return {
+    title: card.title,
+    body: card.body ?? '',
+    tags: card.tags ?? [],
+    priority: card.priority ?? 'normal',
+  };
+}
+
+/**
+ * Write a content snapshot back over a card, replacing the four fields
+ * {@link CardContent} carries and leaving the rest of the card alone — how the
+ * idea page reverts an edit Claude made to the idea it's showing. `source` (the
+ * card's notebook slug) saves the server a scan, as with the other card writes.
+ */
+export async function restoreCard(
+  id: string,
+  content: CardContent,
+  source?: string,
+): Promise<void> {
+  return postAction({ action: 'restore', id, source, ...content });
+}
+
 // Re-exported so `import type { PairedServer }` consumers that reached it through
 // this API keep working; the canonical definition lives in ./store.
 export type { PairedServer };
