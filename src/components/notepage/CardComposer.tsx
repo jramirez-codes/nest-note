@@ -24,10 +24,10 @@ interface CardComposerProps {
 }
 
 // The box is sized from the text alone: the border and padding live on the frame
-// around the input, and the input itself carries none, so `contentSize` is the
-// text's height and nothing else. (Measured padding differs between the two
-// platforms — Android reports it, iOS's border isn't in there — and a one-row box
-// that's out by even a few pixels stops framing its buttons.)
+// around the input, and the input itself carries none, so the bounds below are
+// the text's height and nothing else. (Padding differs between the two platforms
+// — Android has font padding of its own — and a one-row box that's out by even a
+// few pixels stops framing its buttons.)
 /** One row of 14px text at the editor's 1.4 leading. */
 const LINE_HEIGHT = 20;
 /** The frame's own height: 8px padding and a 1px border, top and bottom. Added to
@@ -72,7 +72,6 @@ export default function CardComposer({
 }: CardComposerProps) {
   const colors = useTheme();
   const inputRef = useRef<TextInput>(null);
-  const [height, setHeight] = useState(LINE_HEIGHT);
   const [focused, setFocused] = useState(false);
 
   // Latest props, read by the dictation sink and the mic-off submit — both fire
@@ -84,7 +83,6 @@ export default function CardComposer({
     const text = latest.current.value.trim();
     if (!text) return;
     latest.current.onSubmit(text);
-    setHeight(LINE_HEIGHT); // clearing the box gets no `contentSize` event of its own
   }, []);
 
   // The committed text and the utterance in progress, kept apart exactly as the
@@ -211,15 +209,7 @@ export default function CardComposer({
           editable={!running}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
-          onContentSizeChange={e =>
-            setHeight(
-              Math.min(
-                MAX_TEXT_HEIGHT,
-                Math.max(LINE_HEIGHT, Math.round(e.nativeEvent.contentSize.height)),
-              ),
-            )
-          }
-          style={[styles.input, { height }]}
+          style={styles.input}
           textAlignVertical="top"
           className="w-full p-0 text-text"
         />
@@ -261,5 +251,18 @@ export default function CardComposer({
 const styles = StyleSheet.create({
   // An explicit leading — and no font padding under it on Android — is what makes
   // a row measure the same on both platforms, so the height math above holds.
-  input: { fontSize: 14, lineHeight: LINE_HEIGHT, includeFontPadding: false },
+  //
+  // The box grows by NOT being given a height: the input sizes itself to its own
+  // wrapped text, exactly as the editor's `.cm-ask-followup` does, with these two
+  // bounds standing in for its min-height/max-height. Measuring the text in JS
+  // (onContentSizeChange → a height in state) is the obvious alternative and the
+  // one to avoid: Android never fires that event for text set from JS, so a box
+  // being dictated into stayed one row while the words wrapped out of sight.
+  input: {
+    fontSize: 14,
+    lineHeight: LINE_HEIGHT,
+    includeFontPadding: false,
+    minHeight: LINE_HEIGHT,
+    maxHeight: MAX_TEXT_HEIGHT,
+  },
 });
