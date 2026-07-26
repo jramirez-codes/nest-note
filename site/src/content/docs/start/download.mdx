@@ -102,7 +102,8 @@ first run needs `xattr -d com.apple.quarantine ./nestnote-server`, or an
 
 - **No emulator, no iOS from here.** The APK carries no x86 ABIs, so it won't
   install on a typical emulator, and there's no prebuilt iOS artifact — unsigned
-  IPAs aren't installable. Both are [source-only](./install.md).
+  IPAs aren't installable. Both are [source-only](./install.md), and iOS doesn't
+  have every device feature yet: see [Android & iOS](./platforms.md).
 - **No Windows server build.** The server manages Claude and `/run` subprocesses
   through POSIX process groups, which have no Windows equivalent. Use WSL.
 

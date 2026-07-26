@@ -152,7 +152,7 @@ function codeFoot(id) {
 
 // Update a live, open, still-running /code card in place instead of letting CM
 // rebuild the whole card via toDOM. This matters for interaction, not just speed:
-// a full rebuild replaces the footer's prompt <input> (dropping its focus AND any
+// a full rebuild replaces the footer's prompt box (dropping its focus AND any
 // half-typed follow-up) and swaps out the header mid-tap — so while the agent
 // streams tool calls/results, the user couldn't reliably send a follow-up and the
 // header's collapse tap got eaten. We keep the header + footer DOM untouched and

@@ -31,9 +31,10 @@ export function blockSelection(el) {
   return el;
 }
 
-// Wire a text `input` inside a card footer: keep its pointer/key events off CM
-// (which would move the caret or toggle the card) while typing normally, and run
-// `onEnter` when Enter is pressed.
+// Wire a card footer's text box (a growing <textarea>, see makeComposer): keep
+// its pointer/key events off CM (which would move the caret or toggle the card)
+// while typing normally, and run `onEnter` when Enter is pressed. Enter is
+// preventDefaulted, so the textarea submits instead of taking a newline.
 export function guardInput(input, onEnter) {
   const stop = e => e.stopPropagation();
   input.addEventListener('mousedown', stop);

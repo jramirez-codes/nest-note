@@ -5,6 +5,11 @@ sidebar:
   order: 5
 ---
 
+This page covers only the two modules the **companion server** needs. For the
+whole picture of what each platform can do — including the Android-only recorder
+and wake-lock modules, and the rest of the iOS build-out — see
+[Android & iOS](../start/platforms.md).
+
 Two capabilities need **native** code, and therefore a **device build** — a
 JS-only reload will not pick them up:
 

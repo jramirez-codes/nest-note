@@ -13,7 +13,7 @@
 // the accordion collapsing, and CM rebuilding the card widget on an update.
 // Only a send clears it (the composer writes back the emptied value).
 
-const drafts = new Map(); // card id -> { text, boxes: Set<input> }
+const drafts = new Map(); // card id -> { text, boxes: Set<{ el, refit }> }
 
 function slot(key) {
   let s = drafts.get(key);
@@ -25,13 +25,15 @@ function slot(key) {
 }
 
 // Register a composer box under `key`, seeding it with the unsent text (if any)
-// and returning it. Boxes are never explicitly unregistered — they're dropped
-// lazily once they leave the DOM (see syncDraft), which covers every teardown
-// path: a closed overlay, a collapsed accordion, a rebuilt widget.
-export function bindDraft(key, el) {
+// and returning it. `refit` re-measures the box after the store writes into it
+// (the composer's autoGrow), since a mirrored value can be taller than one line.
+// Boxes are never explicitly unregistered — they're dropped lazily once they
+// leave the DOM (see sweep), which covers every teardown path: a closed overlay,
+// a collapsed accordion, a rebuilt widget.
+export function bindDraft(key, el, refit) {
   if (!key) return el;
   const s = slot(key);
-  s.boxes.add(el);
+  s.boxes.add({ el, refit });
   el.value = s.text;
   return el;
 }
@@ -45,13 +47,13 @@ export function syncDraft(key, el) {
   if (!s) return;
   s.text = el.value;
   for (const box of s.boxes) {
-    if (!box.isConnected) {
+    if (!box.el.isConnected) {
       s.boxes.delete(box); // gone from the DOM — stop mirroring into it
       continue;
     }
-    // Never write into the box being typed in: assigning .value would drop the
-    // caret to the end mid-sentence.
-    if (box !== el && box.value !== s.text) box.value = s.text;
+    if (box.el === el || box.el.value === s.text) continue;
+    box.el.value = s.text;
+    box.refit();
   }
   // Nothing typed and nothing mounted: drop the slot rather than leaving an
   // empty row behind for every card the user has ever opened.

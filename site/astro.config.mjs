@@ -92,6 +92,7 @@ export default defineConfig({
             // prebuilt download, and only some want a toolchain.
             { label: 'Download & run', link: '/start/download/' },
             { label: 'Build from source', link: '/start/install/' },
+            { label: 'Android & iOS', link: '/start/platforms/' },
             { label: 'Using the pad', link: '/start/the-pad/' },
             { label: 'Rebuilding the editor', link: '/start/editor-bundle/' },
           ],

@@ -49,6 +49,13 @@ device build — a Metro reload will not pick them up. See
 [native setup](../server/native-setup.md) for the details, including the
 one-time Xcode step iOS still needs.
 
+:::note[iOS doesn't have everything yet]
+Android is the primary target. An iOS build gives you the pad, storage, search
+and (after the Xcode step) pairing — but `/record` and dictation have no iOS
+native modules yet. [Android & iOS](./platforms.md) has the full matrix and
+what's left to do.
+:::
+
 :::note[Physical device recommended]
 Pairing uses the camera to scan a QR code, and the connection is to a host on
 your network. Neither works well in a simulator.

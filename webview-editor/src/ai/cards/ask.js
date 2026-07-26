@@ -143,19 +143,32 @@ export const styles = {
   '.cm-ask-answer-err': { color: c.red },
 
   // The composer chrome shared by every card footer (chat follow-up, run stdin,
-  // code prompt): a one-line input plus trailing button(s), separated from the
+  // code prompt): a growing text box plus trailing button(s), separated from the
   // body by a hairline rule. /run and /code layer their own overrides on top.
+  // Bottom-aligned, so the buttons stay level with the box's last line as it
+  // grows rather than drifting to the middle of a tall box.
   '.cm-ask-foot': {
     display: 'flex',
-    alignItems: 'center',
+    alignItems: 'flex-end',
     gap: '8px',
     marginTop: '12px',
     paddingTop: '12px',
     borderTop: `1px solid ${c.surface0}`,
   },
+  // A one-row <textarea> that autoGrow (composer.js) resizes to its content:
+  // typed text wraps and the box gets taller, up to the cap below — past that it
+  // scrolls internally so a pasted wall of text can't swallow the card or, in the
+  // overlay, the transcript above it.
   '.cm-ask-followup': {
     flex: '1',
     minWidth: '0',
+    boxSizing: 'border-box',
+    display: 'block',
+    resize: 'none',
+    maxHeight: '160px',
+    overflowY: 'auto',
+    whiteSpace: 'pre-wrap',
+    overflowWrap: 'break-word',
     backgroundColor: c.base,
     border: `1px solid ${c.surface1}`,
     borderRadius: '9px',
