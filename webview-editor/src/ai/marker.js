@@ -1,5 +1,6 @@
 import { post } from '../bridge.js';
 import { payloadField, setPayload, clearPayload } from '../state.js';
+import { dropDraft } from './shared/drafts.js';
 
 // --- /ask + /pair markers ---------------------------------------------------
 // An ask/pair block is persisted as a multi-line HTML comment so the raw text
@@ -473,6 +474,7 @@ export function deleteCardLine(view, el) {
     ...(id ? { effects: clearPayload.of(id) } : {}),
   });
   if (id && EXTERNAL_KINDS.has(block.obj.kind)) post({ type: 'cardDelete', id });
+  dropDraft(id); // no composer will ever show this card's unsent text again
 }
 
 // Reject a /clean review: swap the whole document back to the stored backup

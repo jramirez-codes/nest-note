@@ -137,7 +137,7 @@ export function renderChat(view, widget) {
 
     // The follow-up composer threads the whole transcript, so a reply genuinely
     // continues the convo. Shown only when the thread is idle, never mid-stream.
-    if (status !== 'streaming') body.appendChild(followupFoot(view, card));
+    if (status !== 'streaming') body.appendChild(followupFoot(view, card, obj.id));
     card.appendChild(body);
   }
   card._askSig = { id: obj.id, open, status, turns: turns.length };
@@ -147,11 +147,12 @@ export function renderChat(view, widget) {
 // Footer input that fires a follow-up question — appends a new turn to this chat
 // card and re-streams it (appendChatTurn threads the whole prior transcript as
 // context so the server answers in-conversation).
-function followupFoot(view, card) {
+function followupFoot(view, card, id) {
   return makeComposer({
     footClass: 'cm-ask-foot',
     inputClass: 'cm-ask-followup',
     placeholder: 'Ask a follow-up…',
+    draftKey: id,
     onSubmit: input => {
       const text = input.value.trim();
       if (!text) return;

@@ -52,3 +52,10 @@ Bulky card bodies — a `/code` transcript, `/run` output, a `/clean` backup —
 are stored in a separate `card_payloads` table rather than inline in the page
 markdown, because the page's full markdown crosses the WebView bridge on every
 keystroke. See [storage](../architecture/storage.md).
+
+Cards that take typed input — the `/chat` follow-up box, `/run`'s stdin,
+`/code`'s prompt — keep whatever you've typed but not yet sent. The draft
+**follows the card**: expand a card mid-sentence and the full-page view picks up
+where you left off, close the page and the card's own box has it back. Only
+sending it (or deleting the card) clears it, so a streaming answer or a
+collapsed card can't lose it either.

@@ -128,6 +128,7 @@ function codeFoot(id) {
     footClass: 'cm-ask-foot cm-run-foot',
     inputClass: 'cm-ask-followup cm-code-prompt',
     placeholder: 'Message the agent — Enter to send…',
+    draftKey: id,
     // RN echoes this into the transcript (window.__codeEvent user) and feeds it
     // to the running session as the next turn.
     onSubmit: input => {

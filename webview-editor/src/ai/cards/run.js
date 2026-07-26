@@ -114,6 +114,7 @@ function runFoot(id) {
     footClass: 'cm-ask-foot cm-run-foot',
     inputClass: 'cm-ask-followup cm-run-stdin',
     placeholder: 'stdin — Enter to send…',
+    draftKey: id,
     // A submitted line carries its newline, matching what a terminal sends.
     onSubmit: input => {
       const text = input.value;
