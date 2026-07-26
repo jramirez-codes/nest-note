@@ -522,6 +522,16 @@ window.__dictateEnd = function () {
   inputDict = null;
 };
 
+// RN calls this when Android's hardware/system Back button is pressed while a
+// card is expanded into its full-page view: collapse it back to the inline card
+// instead of letting Back do its usual thing (leaving the note). The host only
+// routes Back here while it knows a view is open — it tracks the `cardOverlay`
+// messages the overlay posts — and closing posts the matching `{open: false}`
+// straight back, so the two never drift. Safe to call with nothing expanded.
+window.__closeCardOverlay = function () {
+  closeOverlay();
+};
+
 // RN calls this whenever the soft keyboard hides (see NoteEditorWebView). Blur the
 // editor so the next tap reliably re-raises the keyboard — EXCEPT while dictating,
 // where we deliberately keep focus (caret visible, keyboard suppressed) and any
