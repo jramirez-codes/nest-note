@@ -32,6 +32,7 @@ is Android-specific — the work simply hasn't been done yet.
 | [`/record`](../commands/capture.mdx) background audio | ✅ | ❌ no native recorder module |
 | Exporting a clip to the device's audio library | ✅ MediaStore | ❌ no equivalent yet |
 | Wake lock / keep-screen-on during dictation | ✅ | ❌ no-ops |
+| System Back collapses an [expanded card](../commands/index.mdx#how-cards-behave) | ✅ | — no hardware back; use the header's Back arrow |
 
 A ⚠️ means the feature is one contained step away; an ❌ means the native code
 doesn't exist yet.

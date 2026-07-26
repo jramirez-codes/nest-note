@@ -69,3 +69,11 @@ Speech-to-text is the clearest case: the recognizer is native and the footer mic
 owns the session, but a card composer's own mic button posts across the bridge to
 start or stop that same session — the editor only decides where the caret sits,
 and the transcript follows it back in through `window.__dictate`.
+
+Android's hardware Back button runs the same loop in reverse. The WebView never
+sees the press, so the editor tells the app when a card is expanded into its
+full-page view (the `cardOverlay` message it already sends so the host can hide
+its floating chrome); while that's open, the app intercepts Back and calls
+`window.__closeCardOverlay` instead of letting it pop the screen. Closing posts
+the matching `cardOverlay: false` straight back out, so neither side can be left
+believing something is expanded when it isn't.

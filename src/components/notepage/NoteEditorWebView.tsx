@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Keyboard, StyleSheet, View } from 'react-native';
+import { BackHandler, Keyboard, Platform, StyleSheet, View } from 'react-native';
 import {
   WebView as RNWebView,
   type WebViewMessageEvent,
@@ -114,6 +114,19 @@ export default function NoteEditorWebView({
   const [projectDelete, setProjectDelete] = useState<
     { mode: 'confirm'; project: string } | { mode: 'error'; message: string } | null
   >(null);
+  // Mirrors the editor's own overlay state (a card expanded into its full-page
+  // view), reported over the bridge. Kept here — not just forwarded to the host —
+  // because Android's Back button is native: the WebView never sees it, so this
+  // component has to know an overlay is open to intercept Back for it.
+  const [overlayOpen, setOverlayOpen] = useState(false);
+
+  const handleWidgetExpandChange = useCallback(
+    (expanded: boolean) => {
+      setOverlayOpen(expanded);
+      onWidgetExpandChange?.(expanded);
+    },
+    [onWidgetExpandChange],
+  );
 
   // Page-coupled callbacks the registry may fire long after this render (a run
   // that finishes while detached, then re-attaches). Held in a ref so the stable
@@ -147,7 +160,7 @@ export default function NoteEditorWebView({
           onChangeContent,
           onOpenPage,
           onArchived,
-          onWidgetExpandChange,
+          onWidgetExpandChange: handleWidgetExpandChange,
           onDictationRequest,
           setPairScan,
           setProjectDelete,
@@ -160,7 +173,7 @@ export default function NoteEditorWebView({
       onChangeContent,
       onOpenPage,
       onArchived,
-      onWidgetExpandChange,
+      handleWidgetExpandChange,
       onDictationRequest,
       readOnly,
       notebookId,
@@ -215,6 +228,25 @@ export default function NoteEditorWebView({
   // own WebView state is gone with it, so no `cardOverlay` close message will
   // ever arrive.
   useEffect(() => () => onWidgetExpandChange?.(false), [onWidgetExpandChange]);
+
+  // Android hardware/system Back while a card is expanded into its full-page
+  // view: collapse it back to the inline card instead of running Back's default
+  // (leaving the note / the screen). Returning true from the handler is what
+  // swallows the press. Only the on-screen page subscribes, and only while its
+  // overlay is actually open — the editor posts `cardOverlay: false` as it
+  // closes, which tears this listener down again — so Back behaves normally
+  // everywhere else. (iOS has no hardware back; there the header's Back arrow
+  // is the only way out of the expanded view, as before.)
+  useEffect(() => {
+    if (Platform.OS !== 'android' || !isActive || !overlayOpen) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      ref.current?.injectJavaScript(
+        'window.__closeCardOverlay && window.__closeCardOverlay(); true;',
+      );
+      return true;
+    });
+    return () => sub.remove();
+  }, [isActive, overlayOpen]);
 
   // Drop focus (and dismiss the keyboard) when swiped away from. Also end any
   // dictation focus-mode on this page: if the mic is still live the user is being
