@@ -49,6 +49,12 @@ it drives this same session: it puts the caret in that card's box first, so the
 words land there rather than in the page. See
 [talking into a card](../commands/index.mdx#talking-into-a-card).
 
+An [idea page](../commands/dashboard.mdx#working-on-an-idea) opened from the
+dashboard carries that same composer, and its mic works there too — the page is
+reached from the dashboard, but its chat box is somewhere to write, so the rule
+above doesn't apply while it's open. Closing the page stops a session left
+running.
+
 Dictation runs on the **platform recognizer** — Android's `SpeechRecognizer`,
 iOS's Speech framework — not on the companion server, so it works unpaired. On
 Android the app holds a wake lock for the session,

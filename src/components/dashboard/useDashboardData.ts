@@ -23,7 +23,7 @@ const reorgKey = (subject: string) => `reorg:${subject}`;
  * of the component so DashboardPage stays a presentational shell over this plus its
  * own UI-only selection state (which notebook/task-sort/expanded-row is active).
  */
-export function useDashboardData(isActive: boolean) {
+export function useDashboardData(isActive: boolean, cardsVersion = 0) {
   // Seed from the module cache so a remount (the common case — swiping back to the
   // dashboard, which the pager unmounts at rest) paints the last-known cards at once
   // instead of flashing the spinner. A silent background refresh then reconciles.
@@ -76,6 +76,16 @@ export function useDashboardData(isActive: boolean) {
     if (isActive && !wasActive.current) load('silent');
     wasActive.current = isActive;
   }, [isActive, load]);
+  // A card changed somewhere else in the app — an idea page's chat had Claude rewrite
+  // one — while this page stayed mounted behind it. Re-read silently so the grid shows
+  // the new title/tags/body instead of the copy it opened with.
+  const seenVersion = useRef(cardsVersion);
+  useEffect(() => {
+    if (cardsVersion === seenVersion.current) return;
+    seenVersion.current = cardsVersion;
+    load('silent');
+  }, [cardsVersion, load]);
+
   useEffect(() => {
     // A cold start with no cache shows the loader; a cache hit reconciles silently.
     load(getCachedDashboardState() ? 'silent' : 'initial');

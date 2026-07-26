@@ -1,11 +1,24 @@
-import React from 'react';
-import { Modal, Pressable, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
+import { Modal, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import Animated, {
+  interpolateColor,
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronLeft } from 'lucide-react-native';
+import { mocha } from '../../theme/catppuccin';
 import { useTheme } from '../../theme/colors';
+import { useKeyboardHeight } from '../../hooks/useKeyboardHeight';
 import type { Note } from '../../types/note';
-import type { DashboardCard } from '../../server/controllers/aiController';
+import { fetchCard, type DashboardCard } from '../../server/controllers/aiController';
+import * as ideaChat from '../../server/ideaChat';
 import { prio } from '../dashboard/cardModel';
+import CardComposer from './CardComposer';
+import IdeaChatCard, { DEFAULT_CARD_HEIGHT, MIN_CARD_HEIGHT } from './IdeaChatCard';
 import NotePage from './NotePage';
 
 interface IdeaPageOverlayProps {
@@ -15,6 +28,13 @@ interface IdeaPageOverlayProps {
   width: number;
   /** Close the page and return to the dashboard. */
   onClose: () => void;
+  /** Whether the speech-to-text session is live (owned by the screen). */
+  dictating: boolean;
+  /** Ask the screen to start/stop that session for the chat composer. */
+  onDictate: (on: boolean) => void;
+  /** Claude edited this card; hand back the re-read copy so the page — and the
+   *  dashboard behind it — show the new body rather than the one opened with. */
+  onCardUpdated: (card: DashboardCard) => void;
 }
 
 const noop = () => {};
@@ -22,19 +42,141 @@ const noop = () => {};
 /**
  * A card (an idea) opened from the dashboard's card grid, shown full-screen over
  * everything — the same shape as ArchivedPageOverlay, so opening an idea feels
- * identical to reopening an archived page. The difference is ownership: ideas are
- * server cards authored by Claude, so the page is READ-ONLY (no caret, no edits,
- * nothing to persist). The body — the "## Problem / ## Idea / ## Project plan /
- * ## Next steps" template — renders through the very same NotePage editor the pad
- * uses, so the Markdown looks exactly as it does on an archived page. The header
- * carries the kind, title, priority, and the idea's tags.
+ * identical to reopening an archived page. The body — the "## Problem / ## Idea /
+ * ## Project plan / ## Next steps" template — renders through the very same
+ * NotePage editor the pad uses, so the Markdown looks exactly as it does on an
+ * archived page. The header carries the kind, title, priority, and the idea's tags.
+ *
+ * The page is read-only to the *user* (ideas are server cards authored by Claude —
+ * no caret, no edits, nothing to persist), but it isn't a dead end: the composer
+ * pinned to the bottom is a chat with Claude about this one idea, which is how the
+ * idea gets changed. Agreed tweaks are written back to the same card server-side
+ * (upsert_card, reusing its id), so the body under the chat is re-read and repaints
+ * as the conversation firms the idea up into a project plan. Claude's side of that
+ * conversation — typically a question it needs answered — sits in a card in the
+ * header, under the tags.
+ *
+ * The thread itself lives in ../../server/ideaChat, not here: closing this page
+ * mid-answer must not kill the run or lose the transcript later turns are threaded
+ * with.
  */
-export default function IdeaPageOverlay({ card, width, onClose }: IdeaPageOverlayProps) {
+export default function IdeaPageOverlay({
+  card,
+  width,
+  onClose,
+  dictating,
+  onDictate,
+  onCardUpdated,
+}: IdeaPageOverlayProps) {
   const insets = useSafeAreaInsets();
   const colors = useTheme();
+  // This sheet is a Modal — its own window on Android — so nothing lifts the
+  // composer off the keyboard by itself. Pad the sheet by the keyboard instead.
+  const keyboard = useKeyboardHeight();
   const p = prio(card.priority);
   const tags = card.tags ?? [];
   const kindLabel = card.kind === 'idea' ? 'Idea' : card.kind;
+
+  const id = card.id;
+  const thread = useSyncExternalStore(
+    useCallback(cb => ideaChat.subscribe(id, cb), [id]),
+    useCallback(() => ideaChat.getThread(id), [id]),
+  );
+  const running = ideaChat.isRunning(id);
+
+  // The card as Claude has left it. Re-read whenever a turn ends (it may have
+  // rewritten the body mid-answer) and once on open, in case a turn finished
+  // while this page was closed. Failures are ignored: the page keeps showing what
+  // it has rather than blanking on a dropped connection.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const latestUpdated = useRef(onCardUpdated);
+  latestUpdated.current = onCardUpdated;
+  const refresh = useCallback(async () => {
+    try {
+      const fresh = await fetchCard(id);
+      if (fresh && mounted.current) latestUpdated.current(fresh);
+    } catch {
+      /* keep the copy we have */
+    }
+  }, [id]);
+
+  const hadTurns = useRef(thread.turns.length > 0);
+  useEffect(() => {
+    if (hadTurns.current) refresh();
+  }, [refresh]);
+
+  const wasRunning = useRef(running);
+  useEffect(() => {
+    if (wasRunning.current && !running) refresh();
+    wasRunning.current = running;
+  }, [running, refresh]);
+
+  // How much of the header the reply card may take. Driven on the UI thread so
+  // the edge tracks the finger, and written back to the thread on release —
+  // which is also what survives closing the page. The ceiling leaves the idea
+  // itself a readable strip no matter how far the drag goes.
+  const { height: screenH } = useWindowDimensions();
+  const maxCardHeight = Math.max(MIN_CARD_HEIGHT, screenH * 0.55);
+  const cardHeight = useSharedValue(thread.cardHeight ?? DEFAULT_CARD_HEIGHT);
+  const dragStart = useSharedValue(0);
+  /** 0 → 1 while the edge is being dragged; the handle takes the accent color so
+   *  it's clear the finger has hold of it and not the page behind it. */
+  const dragging = useSharedValue(0);
+  // Opening a different idea reuses this component, so take the new card's height.
+  useEffect(() => {
+    cardHeight.value = ideaChat.getThread(id).cardHeight ?? DEFAULT_CARD_HEIGHT;
+  }, [id, cardHeight]);
+
+  const commitHeight = useCallback((h: number) => ideaChat.setCardHeight(id, h), [id]);
+  const resize = useMemo(
+    () =>
+      Gesture.Pan()
+        // A hairline is a small target; take the drag from either side of it.
+        .hitSlop({ top: 12, bottom: 12 })
+        .onStart(() => {
+          dragStart.value = cardHeight.value;
+          dragging.value = withTiming(1, { duration: 120 });
+        })
+        .onUpdate(e => {
+          const next = dragStart.value + e.translationY;
+          cardHeight.value = Math.min(maxCardHeight, Math.max(MIN_CARD_HEIGHT, next));
+        })
+        // Finalize, not end: a drag interrupted partway still leaves the card
+        // where the finger left it, so what's on screen is what gets remembered.
+        .onFinalize(() => {
+          dragging.value = withTiming(0, { duration: 160 });
+          runOnJS(commitHeight)(cardHeight.value);
+        }),
+    [cardHeight, dragStart, dragging, maxCardHeight, commitHeight],
+  );
+  const cardStyle = useAnimatedStyle(() => ({ maxHeight: cardHeight.value }));
+
+  // Both halves of the handle — the hairline and the grip riding it — light up
+  // together, so the edge reads as one control that's been picked up.
+  const edgeColor = useAnimatedStyle(() => ({
+    borderBottomColor: interpolateColor(dragging.value, [0, 1], [mocha.surface1, colors.accent]),
+  }));
+  const gripColor = useAnimatedStyle(() => ({
+    backgroundColor: interpolateColor(dragging.value, [0, 1], [mocha.surface1, colors.accent]),
+  }));
+
+  // The same resize by keyboard/screen reader, a step at a time.
+  const nudgeHeight = useCallback(
+    (by: number) => {
+      const next = Math.min(maxCardHeight, Math.max(MIN_CARD_HEIGHT, cardHeight.value + by));
+      cardHeight.value = next;
+      commitHeight(next);
+    },
+    [cardHeight, maxCardHeight, commitHeight],
+  );
+
+  const hasReplies = thread.turns.length > 0;
 
   // The card presented as a Note so the shared editor can render its Markdown body.
   // Timestamps are best-effort (0 when absent) — read-only, so they're never written.
@@ -48,60 +190,130 @@ export default function IdeaPageOverlay({ card, width, onClose }: IdeaPageOverla
 
   return (
     <Modal visible animationType="slide" statusBarTranslucent onRequestClose={onClose}>
-      <View
-        className="flex-1 bg-background"
-        style={{ paddingTop: insets.top, paddingBottom: insets.bottom }}>
-        {/* Header: back to the dashboard, the kind + title, and a priority pill. */}
-        <View className="flex-row items-center px-3 pb-2 pt-1">
-          <Pressable
-            onPress={onClose}
-            hitSlop={8}
-            accessibilityRole="button"
-            accessibilityLabel="Back to dashboard"
-            className="mr-1 h-9 w-9 items-center justify-center rounded-full active:bg-surface">
-            <ChevronLeft size={24} color={colors.text} strokeWidth={2} />
-          </Pressable>
-          <View className="flex-1 pr-2">
-            <Text className="text-[11px] font-bold uppercase tracking-wider text-faint">
-              {kindLabel}
-            </Text>
-            <Text numberOfLines={1} className="text-lg font-bold text-text">
-              {card.title}
-            </Text>
+      {/* A Modal is its own view hierarchy, so the app's root gesture handler
+          doesn't reach into it — the header's drag needs one in here. */}
+      <GestureHandlerRootView style={styles.root}>
+        <View
+          className="flex-1 bg-background"
+          style={{
+            paddingTop: insets.top,
+            paddingBottom: Math.max(insets.bottom, keyboard),
+          }}>
+          {/* The page header — title row, tags, and Claude's side of the chat. */}
+          <View>
+            {/* Back to the dashboard, the kind + title, and a priority pill. */}
+            <View className="flex-row items-center px-3 pb-2 pt-1">
+              <Pressable
+                onPress={onClose}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="Back to dashboard"
+                className="mr-1 h-9 w-9 items-center justify-center rounded-full active:bg-surface">
+                <ChevronLeft size={24} color={colors.text} strokeWidth={2} />
+              </Pressable>
+              <View className="flex-1 pr-2">
+                <Text className="text-[11px] font-bold uppercase tracking-wider text-faint">
+                  {kindLabel}
+                </Text>
+                <Text numberOfLines={1} className="text-lg font-bold text-text">
+                  {card.title}
+                </Text>
+              </View>
+              <View className={`flex-row items-center gap-1 rounded-full px-2.5 py-1 ${p.chip}`}>
+                <View className={`h-1.5 w-1.5 rounded-full ${p.pip}`} />
+                <Text className={`text-[10px] font-bold uppercase tracking-wide ${p.text}`}>
+                  {p.label}
+                </Text>
+              </View>
+            </View>
+
+            {/* Tags, when present — the same chips as the card, under the title. */}
+            {tags.length > 0 && (
+              <View className="flex-row flex-wrap items-center gap-1.5 px-3 pb-2">
+                {tags.map(t => (
+                  <View
+                    key={t}
+                    className="flex-row items-center rounded-full bg-surface1/60 px-2 py-0.5">
+                    <Text className="text-[10px] font-bold text-faint">#</Text>
+                    <Text className="text-[10px] font-semibold text-muted">{t}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {/* Claude's side of the conversation, under the tags, as tall as the
+                header's edge has been dragged. */}
+            {hasReplies && (
+              <Animated.View style={[styles.cardWrap, cardStyle]}>
+                <IdeaChatCard turns={thread.turns} onDelete={() => ideaChat.clear(id)} />
+              </Animated.View>
+            )}
           </View>
-          <View className={`flex-row items-center gap-1 rounded-full px-2.5 py-1 ${p.chip}`}>
-            <View className={`h-1.5 w-1.5 rounded-full ${p.pip}`} />
-            <Text className={`text-[10px] font-bold uppercase tracking-wide ${p.text}`}>
-              {p.label}
-            </Text>
+
+          {/* The header's bottom edge: the same hairline the dashboard's cards use,
+              so the idea's body below reads as its own surface. With replies in the
+              header it's also the grab handle that sizes them — drag it down for
+              more of the conversation, up for more of the idea. */}
+          {hasReplies ? (
+            <GestureDetector gesture={resize}>
+              <Animated.View
+                accessibilityRole="adjustable"
+                accessibilityLabel="Resize Claude's replies"
+                accessibilityActions={ADJUST_ACTIONS}
+                onAccessibilityAction={e =>
+                  nudgeHeight(e.nativeEvent.actionName === 'increment' ? 40 : -40)
+                }
+                style={[styles.edge, edgeColor]}>
+                <Animated.View style={[styles.grip, gripColor]} />
+              </Animated.View>
+            </GestureDetector>
+          ) : (
+            <View className="border-b border-surface1" />
+          )}
+
+          {/* Keyed on the body: the editor takes its content at boot, so a card
+              Claude has just rewritten needs a fresh one to repaint. */}
+          <NotePage
+            key={note.content}
+            note={note}
+            width={width}
+            isActive
+            readOnly
+            onChangeContent={noop}
+            onSetTitle={noop}
+            onIngested={noop}
+            notebookId={card.source ?? ''}
+          />
+
+          {/* The chat, pinned under the idea it's about — the only writable thing
+              on the page, and how the idea itself gets changed. */}
+          <View className="border-t border-border px-3 pb-1">
+            <CardComposer
+              value={thread.draft}
+              onChangeText={text => ideaChat.setDraft(id, text)}
+              placeholder="Work on this idea…"
+              onSubmit={text => ideaChat.send(card, text)}
+              dictating={dictating}
+              onDictate={onDictate}
+              running={running}
+              onStop={() => ideaChat.stop(id)}
+            />
           </View>
         </View>
-
-        {/* Tags, when present — the same chips as the card, reading under the title. */}
-        {tags.length > 0 && (
-          <View className="flex-row flex-wrap items-center gap-1.5 px-3 pb-2">
-            {tags.map(t => (
-              <View
-                key={t}
-                className="flex-row items-center rounded-full bg-surface1/60 px-2 py-0.5">
-                <Text className="text-[10px] font-bold text-faint">#</Text>
-                <Text className="text-[10px] font-semibold text-muted">{t}</Text>
-              </View>
-            ))}
-          </View>
-        )}
-
-        <NotePage
-          note={note}
-          width={width}
-          isActive
-          readOnly
-          onChangeContent={noop}
-          onSetTitle={noop}
-          onIngested={noop}
-          notebookId={card.source ?? ''}
-        />
-      </View>
+      </GestureHandlerRootView>
     </Modal>
   );
 }
+
+/** Resize by 40px a step for anyone driving the handle from a screen reader. */
+const ADJUST_ACTIONS = [{ name: 'increment' }, { name: 'decrement' }];
+
+const styles = StyleSheet.create({
+  root: { flex: 1 },
+  // The reply card's margins live out here, on the box whose height is dragged.
+  cardWrap: { marginHorizontal: 12, marginBottom: 8 },
+  // The draggable edge. Colors come from the animated styles above — these are
+  // the same metrics the plain hairline has, plus room for the grip.
+  edge: { alignItems: 'center', paddingVertical: 6, borderBottomWidth: 1 },
+  grip: { height: 4, width: 36, borderRadius: 2 },
+});

@@ -36,6 +36,9 @@ interface DashboardPageProps {
   onOpenArchived: (note: Note) => void;
   /** Open a card (an idea) as a full read-only page. */
   onOpenIdea: (card: DashboardCard) => void;
+  /** Bumped when a card changed elsewhere (an idea page's chat rewrote one), so this
+   *  page re-reads rather than keeping the copy it last fetched. */
+  cardsVersion: number;
 }
 
 /**
@@ -62,10 +65,11 @@ function DashboardPage({
   archivedPages,
   onOpenArchived,
   onOpenIdea,
+  cardsVersion,
 }: DashboardPageProps) {
   const colors = useTheme();
   const { state, error, loading, refreshing, busy, load, act, actReorg, onToggle, onDismiss } =
-    useDashboardData(isActive);
+    useDashboardData(isActive, cardsVersion);
   // The card currently lifted, kept locally so only this page dims its source row
   // (the screen tracks its own copy for the floating clone).
   const [liftedId, setLiftedId] = useState<string | null>(null);

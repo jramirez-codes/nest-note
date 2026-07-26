@@ -56,7 +56,9 @@ keystroke. See [storage](../architecture/storage.md).
 Cards that take typed input — the `/chat` follow-up box, `/run`'s stdin, `/code`'s
 prompt — share one text box. It spans the card's full width, and its buttons (the
 mic, `/run`'s interrupt and stop) sit **inside the box, in its bottom-right
-corner**, where they stay as the box grows. Long text **wraps onto new lines and
+corner**, where they stay as the box grows. Empty, the box is **exactly one row
+tall** — the height of those buttons plus an even inset around them, so it frames
+them rather than floating them in space. Long text **wraps onto new lines and
 the box grows taller** to keep all of it visible, up to a few lines' worth, after
 which the box scrolls internally instead of pushing the card off screen. `Enter`
 sends (it never inserts a newline), and expanding a card to its full-page view
@@ -88,3 +90,6 @@ card's mic just moves the caret into its own box and keeps the session going, so
 you can talk into a note, then into a card, without stopping and restarting.
 
 `Enter` still sends by hand, as does saying **"system new line"**.
+
+The chat box on an [idea page](./dashboard.mdx#working-on-an-idea) is the same
+widget and behaves identically, even though it isn't a card in a note.

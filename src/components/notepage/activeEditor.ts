@@ -12,10 +12,31 @@
  * Only one page is active at a time, so this is a single slot, not a map — and
  * read-only subject pages never register, so dictation into them no-ops rather
  * than silently mutating an immutable page.
+ *
+ * Not every dictation target is a WebView, though: an idea page's chat composer
+ * is a plain React Native TextInput sitting in a Modal over the whole pad. Such a
+ * target registers a {@link DictationSink} instead, which takes precedence over
+ * the editor slot for as long as it's mounted — it's on top of the pad, so the
+ * page underneath must not receive the words (or be armed into dictation mode).
  */
 type Injector = (js: string) => void;
 
+/**
+ * A non-WebView dictation target. It receives the same session semantics the
+ * editor's `window.__dictate*` hooks implement: each partial `text` REPLACES the
+ * utterance in progress, an `isFinal` one commits it, and `endUtterance` freezes
+ * whatever landed when a session ends without a final (a no-match).
+ */
+export interface DictationSink {
+  text(chunk: string, isFinal: boolean): void;
+  endUtterance(): void;
+  backspace(): void;
+  /** One Enter press — for a composer box, that submits it. */
+  newline(): void;
+}
+
 let active: Injector | null = null;
+let sink: DictationSink | null = null;
 
 // Whether a dictation session is currently live. Held here (not just in the hook)
 // so that when the user swipes to a different note mid-session, the incoming
@@ -39,13 +60,51 @@ export function registerActiveEditor(inject: Injector): () => void {
 }
 
 /**
+ * Mark `s` as the dictation target, ahead of any editor. Returns an unregister
+ * that only clears the slot if it still points at this same sink, mirroring
+ * {@link registerActiveEditor}.
+ */
+export function registerDictationSink(s: DictationSink): () => void {
+  sink = s;
+  return () => {
+    if (sink === s) sink = null;
+  };
+}
+
+/**
  * Toggle dictation mode on the active editor (focus + soft-keyboard suppression),
  * and remember it so page swaps re-arm the incoming editor. Driven by useDictation
- * at the start/end of a session.
+ * at the start/end of a session. A registered sink owns the session instead, and
+ * the editor underneath is deliberately left alone.
  */
 export function setDictationLive(on: boolean): void {
   dictationLive = on;
+  if (sink) return;
   injectIntoActiveEditor(`window.__dictateActive(${on ? 'true' : 'false'});`);
+}
+
+/**
+ * Deliver a chunk of transcript to the current target: a partial replaces the
+ * utterance in progress, a final one commits it.
+ */
+export function dictateChunk(text: string, isFinal: boolean): void {
+  if (sink) {
+    sink.text(text, isFinal);
+    return;
+  }
+  injectIntoActiveEditor(`window.__dictate(${JSON.stringify(text)}, ${isFinal ? 'true' : 'false'});`);
+}
+
+/**
+ * Close the utterance in progress before the recognizer re-listens, freezing any
+ * partial text a session left behind with no final to replace it.
+ */
+export function endDictationUtterance(): void {
+  if (sink) {
+    sink.endUtterance();
+    return;
+  }
+  injectIntoActiveEditor('window.__dictateEnd();');
 }
 
 /**
@@ -54,6 +113,10 @@ export function setDictationLive(on: boolean): void {
  * so a misheard character can be dropped without pausing dictation.
  */
 export function backspaceActiveEditor(): void {
+  if (sink) {
+    sink.backspace();
+    return;
+  }
   injectIntoActiveEditor('window.__dictateBackspace();');
 }
 
@@ -63,12 +126,16 @@ export function backspaceActiveEditor(): void {
  * command line it fires the command and inside a card composer it submits the box.
  */
 export function newlineActiveEditor(): void {
+  if (sink) {
+    sink.newline();
+    return;
+  }
   injectIntoActiveEditor('window.__dictateNewline();');
 }
 
-/** Whether an editable note is on screen to receive dictation right now. */
+/** Whether anything is on screen to receive dictation right now. */
 export function hasActiveEditor(): boolean {
-  return active !== null;
+  return active !== null || sink !== null;
 }
 
 /** Inject JS into the active editor's WebView; a no-op when none is active. */

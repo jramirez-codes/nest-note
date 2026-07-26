@@ -10,7 +10,9 @@
  * The same session is also driven from inside the notes: every AI card composer
  * (the /chat follow-up box, the /code prompt box) carries a mic toggle that posts
  * over the editor bridge into `start`/`stop` here, having first put the caret in
- * its own box so the transcript lands there instead of in the note body.
+ * its own box so the transcript lands there instead of in the note body. The idea
+ * page's chat composer has the same mic but isn't a WebView at all — it registers
+ * a DictationSink (activeEditor), which the transcript routes to instead.
  *
  * Android's SpeechRecognizer ends a session on each natural pause, so to feel
  * continuous we restart it while the user still wants to dictate and only truly
@@ -43,7 +45,8 @@ import {
 } from '@dbkable/react-native-speech-to-text';
 import {
   backspaceActiveEditor,
-  injectIntoActiveEditor,
+  dictateChunk,
+  endDictationUtterance,
   hasActiveEditor,
   newlineActiveEditor,
   setDictationLive,
@@ -207,7 +210,7 @@ export function useDictation(): Dictation {
     restartTimerRef.current = setTimeout(() => {
       restartTimerRef.current = null;
       if (!wantOnRef.current) return;
-      injectIntoActiveEditor('window.__dictateEnd();');
+      endDictationUtterance();
       start({ language: LANGUAGE }).catch(() => hardStop('Dictation stopped unexpectedly.'));
       // Guard the freshly-started session too, so a restart that hears only
       // silence (no callback) re-listens rather than going stale.
@@ -228,9 +231,7 @@ export function useDictation(): Dictation {
       // A blank partial early in a phrase carries no text — skip it so we don't
       // open an empty utterance span.
       if (!text.trim() && !r.isFinal) return;
-      injectIntoActiveEditor(
-        `window.__dictate(${JSON.stringify(text)}, ${r.isFinal ? 'true' : 'false'});`,
-      );
+      dictateChunk(text, r.isFinal);
       // The final result closes the utterance (the editor resets its span on
       // isFinal); the recognizer is now idle, so line up the next session.
       if (r.isFinal) scheduleRestart();

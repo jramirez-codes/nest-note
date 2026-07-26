@@ -275,6 +275,19 @@ export async function fetchDashboardState(): Promise<DashboardState> {
   };
 }
 
+/**
+ * Re-read a single card by id from the server's dashboard state — how the idea
+ * page picks up the edits Claude just wrote to the card it's showing. Resolves
+ * `null` when the card is gone (dismissed since it was opened). The freshly
+ * fetched state also refreshes the module cache, so the dashboard's next remount
+ * paints the updated card rather than the copy it opened with.
+ */
+export async function fetchCard(id: string): Promise<DashboardCard | null> {
+  const state = await fetchDashboardState();
+  setCachedDashboardState(state);
+  return state.cards.find(c => c.id === id) ?? null;
+}
+
 // postAction is the shared POST /action path: same pinned tunnel, bearer token, and
 // 200-or-throw contract every dashboard write uses. Callers pass the verb-specific
 // body (suggestion merges key on `into`, card actions on `id`).
