@@ -27,7 +27,7 @@ rather than just the LAN IP, so it also listens on the tailnet interface.
 | `-dir`       | `~/.nestnote-server` | Directory for the cert, key and token.                                        |
 | `-workdir`   | current directory    | Directory Claude runs in. **Ignored when `-root` is set.**                     |
 | `-root`      | *(disabled)*         | Scaffold `projects/`, `mcp/`, `orchestrator/` under this dir and enable MCP; Claude runs in `<root>/projects`. |
-| `-repo-dir`  | `<root>/nest-note`  | The nest-note git checkout that `/update-server` pulls and rebuilds.          |
+| `-repo-dir`  | `<root>/nest-note`  | The nest-note git checkout that `/update server` fetches, checks out and rebuilds. |
 
 ### Pre-rebrand installs keep working
 
@@ -41,7 +41,7 @@ defaults fall back to the old names when those are the ones on disk:
   certificate *and* its saved token at once. Recovering from that needs a QR
   re-pair at the machine.
 - `-repo-dir` falls back to `<root>/ai-notepad` when `<root>/nest-note` doesn't
-  exist, so [`/update-server`](../commands/admin.mdx) still finds the checkout.
+  exist, so [`/update server`](../commands/admin.mdx) still finds the checkout.
 
 When both names exist the current one wins. Pass either flag explicitly to
 override the search entirely.

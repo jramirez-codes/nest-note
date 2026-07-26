@@ -2,8 +2,8 @@ import { c } from '../../theme/palette.js';
 import { guardTaps } from '../../ui/events.js';
 import { deleteCardLine } from '../marker.js';
 
-// The /update-server card: a compact status chip for a paired-laptop self-update
-// (pull → rebuild → restart). Like the /pair chip it only reflects status the RN
+// The /update server card: a compact status chip for a paired-laptop self-update
+// (fetch → rebuild → restart). Like the /pair chip it only reflects status the RN
 // side commits back via __aiDone — running (⏳) while pulling/rebuilding/restarting,
 // ok (✅) once the server reconnects, error (⚠️) if a step failed. When output is
 // present (a build log, especially on failure) it's shown beneath in a <pre>.

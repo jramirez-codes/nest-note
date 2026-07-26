@@ -22,7 +22,7 @@ func main() {
 		advHost    = flag.String("advertise-host", "", "host to put in the pairing QR (e.g. a Tailscale IP or DDNS name for off-LAN access); default: bind address")
 		dir        = flag.String("dir", defaultStateDir(), "directory for cert/key/token")
 		workdir    = flag.String("workdir", mustCwd(), "directory Claude runs in (ignored when -root is set)")
-		repoDir    = flag.String("repo-dir", "", "path to the nest-note git checkout that /update-server pulls & rebuilds; empty = <root>/nest-note, falling back to the pre-rebrand <root>/ai-notepad if that's what exists")
+		repoDir    = flag.String("repo-dir", "", "path to the nest-note git checkout that /update server fetches & rebuilds; empty = <root>/nest-note, falling back to the pre-rebrand <root>/ai-notepad if that's what exists")
 		root       = flag.String("root", "", "scaffold projects/, mcp/, orchestrator/ under this dir and enable MCP; Claude runs in <root>/projects. Empty = disabled")
 		threshold  = flag.Int("subject-threshold", 4, "mentions before the orchestrator proposes a dedicated server for a subject (with -root)")
 		runTimeout = flag.Duration("run-timeout", 8*time.Minute, "max time for a single Claude run before it is killed and reported as failed (/agg-tasks sweeps a whole notebook and can need several minutes)")
@@ -48,7 +48,7 @@ func main() {
 		if err != nil {
 			// Don't die here. This scaffold is a warm-up — every /run re-scaffolds,
 			// so a failure now is reported again (with the same error) at the next
-			// message, and staying up keeps /update-server reachable. Exiting instead
+			// message, and staying up keeps /update server reachable. Exiting instead
 			// would strand a remote machine: the process that just restarted into a
 			// bad build is the only way anyone could push the fix.
 			log.Printf("root scaffold failed, continuing without MCP (retried on the next /run): %v", err)
@@ -136,10 +136,11 @@ func main() {
 	// phone which port to point its iframe at. See server/view.go.
 	viewMgr := newViewManager(bindIP)
 	mux.HandleFunc("/viewstart", viewStartHandler(token, *allowView, viewMgr))
-	// Self-update: pull the latest code, rebuild this binary, and restart into it.
-	// Driven by a note's `/update-server`. Always enabled — it runs one fixed
-	// recipe (never caller-supplied commands), gated by the pinned tunnel + token
-	// like everything else. See server/update.go.
+	// Self-update: check out a branch (main by default), rebuild this binary, and
+	// restart into it. Driven by a note's `/update server [branch]`. Always enabled
+	// — it runs one fixed recipe (never caller-supplied commands, only a validated
+	// branch name), gated by the pinned tunnel + token like everything else. See
+	// server/update.go.
 	mux.HandleFunc("/update", updateHandler(token, *root, *repoDir))
 	mux.HandleFunc("/state", stateHandler(token, *root))
 	mux.HandleFunc("/notebook", notebookHandler(token, *root))

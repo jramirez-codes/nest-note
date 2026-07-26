@@ -55,9 +55,9 @@ quarantine step and the missing Windows build are all covered on
 [download & run](../start/download.md).
 
 One difference worth knowing here: a prebuilt binary is *not* self-updating the way a checkout is:
-[`/update-server`](../commands/admin.mdx) does `git pull` + `go build` against a
-real clone. If you want that command, run from a checkout — or keep one and
-point the binary at it with `-repo-dir`.
+[`/update server`](../commands/admin.mdx) does `git fetch` + `git checkout` +
+`go build` against a real clone. If you want that command, run from a checkout —
+or keep one and point the binary at it with `-repo-dir`.
 
 ## The `-root` layout
 
@@ -84,7 +84,7 @@ If that startup scaffold fails — a capability server under `mcp/` that doesn't
 compile, say — the server logs the error and keeps running with MCP disabled
 rather than exiting. Every `/run` re-scaffolds, so the fix is picked up on the
 next message, and a server that stays up is one you can still reach with
-[`/update-server`](../commands/admin.mdx).
+[`/update server`](../commands/admin.mdx).
 
 Roots created before the rebrand are migrated in place on the next scaffold:
 the generated `go.mod` files move to the `nestnote-*` module names, and stale

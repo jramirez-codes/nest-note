@@ -27,25 +27,49 @@ directly:
 This is the one command that works on an **unpaired** device — it's how a
 device becomes paired. Full details on [the pairing page](../server/pairing.md).
 
-## `/update-server`
+## `/update server`
 
-> Update the paired laptop: pull the latest code, rebuild the Go server, and
+> Update the paired laptop: check out a branch, rebuild the Go server, and
 > restart it.
 
 ```text
-/update-server
+/update server
+/update server BRANCH
 ```
 
 From your phone, this makes the laptop:
 
-1. `git pull` the nest-note checkout (`-repo-dir`, defaulting to
-   `<root>/nest-note`),
-2. rebuild the Go server,
-3. restart into the new binary.
+1. `git fetch origin BRANCH` in the nest-note checkout (`-repo-dir`, defaulting
+   to `<root>/nest-note`),
+2. check that branch out at exactly what was fetched,
+3. rebuild the Go server,
+4. restart into the new binary.
 
-The card streams each step. The connection drops briefly during the restart and
-the app reconnects on its own — you don't need to re-pair, since the
-certificate and token are persisted in the server's `-dir`.
+With no argument the branch is **`main`** — the normal "get me the latest
+release" update. Naming a branch instead builds that branch, which is how you
+try a fix from a PR branch without touching the laptop:
+
+```text
+/update server jramirez-codes/fix-dictation
+```
+
+The branch doesn't have to exist on the laptop yet; it's fetched from `origin`
+either way. Branch names are limited to letters, digits and `. _ - /`.
+
+The card streams each step and names the branch it landed on. The connection
+drops briefly during the restart and the app reconnects on its own — you don't
+need to re-pair, since the certificate and token are persisted in the server's
+`-dir`.
+
+:::caution[Checkout is a reset, not a merge]
+The checkout points the local branch at `origin/BRANCH`, so local commits on
+that branch in the laptop's clone are left behind. Uncommitted edits in the
+working tree are never discarded — git refuses the checkout and the card shows
+the error instead.
+
+Remember to `/update server` (back to main) when you're done testing a branch;
+the laptop stays on whatever branch you last built.
+:::
 
 :::note[Updating a server installed before the rebrand]
 Servers set up when the project was called ai-notepad self-update normally, with
@@ -57,7 +81,7 @@ script pointing at that path starts the new code after a reboot instead of the
 pre-rebrand build.
 
 The one thing to check is the git remote: GitHub redirects the renamed repo, so
-`git pull` keeps working, but running `git remote set-url origin` to the
+`git fetch` keeps working, but running `git remote set-url origin` to the
 `nest-note` URL when you next have access removes the dependency on that
 redirect.
 :::

@@ -45,12 +45,12 @@ dist/
 #
 .astro/
 
-# Companion server runtime artifacts. update-restart.log records /update-server
+# Companion server runtime artifacts. update-restart.log records /update server
 # runs and embeds the advertised host (e.g. a tailnet IP) — never commit it.
 #
 server/update-restart.log
 server/nestnote-server
-# Pre-rebrand binary name: /update-server keeps it in sync on machines installed
+# Pre-rebrand binary name: /update server keeps it in sync on machines installed
 # before the rename, so it can still be present in a checkout.
 server/ainotepad-server
 

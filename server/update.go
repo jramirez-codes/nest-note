@@ -17,17 +17,21 @@ import (
 )
 
 // The /update feature lets a paired phone pull the latest code, rebuild this Go
-// server, and restart it into the new binary — all from a note's `/update-server`
+// server, and restart it into the new binary — all from a note's `/update server`
 // command. Like /exec it runs arbitrary local tooling (git, the Go compiler) as
 // the server's user, but it's always enabled: it only ever runs this one fixed
 // recipe (never caller-supplied commands), and it's still gated by the pinned
-// tunnel + token like every other endpoint.
+// tunnel + token like every other endpoint. The one thing the caller does choose
+// is *which branch* to build — `/update server` takes main, `/update server foo`
+// takes foo — and that name is validated (see validateBranch) before it ever
+// reaches git.
 //
 // The hard part is a running server rebuilding and relaunching ITSELF. We can't
 // hold the client connection across the restart, so the flow is:
 //
-//  1. `git pull` then `go build` into a *temporary* binary. If either fails the
-//     running process and its current binary are untouched — we just report why.
+//  1. Fetch + check out the requested branch, then `go build` into a *temporary*
+//     binary. If any step fails the running process and its current binary are
+//     untouched — we just report why.
 //  2. Atomically rename the fresh binary over our own (safe while we're running;
 //     Linux keeps our inode alive until we exit).
 //  3. Reply {ok, restarting} to the phone and flush it.
@@ -69,16 +73,25 @@ const (
 	legacyRepoDirName = "ai-notepad"
 )
 
+// defaultUpdateBranch is what a bare `/update server` builds: the branch the
+// deployment is expected to track. `/update server <branch>` overrides it.
+const defaultUpdateBranch = "main"
+
+// maxBranchLen bounds a caller-supplied branch name. Nothing real is close to
+// this; it just keeps a silly value out of a git command line.
+const maxBranchLen = 200
+
 // updateHandler runs on the pinned mux. A plain authed POST triggers the
-// pull/build/restart recipe; `?probe=1` is a cheap liveness check the phone polls
-// after a restart to learn the new process is up. Always enabled — the recipe is
-// fixed, not caller-controlled.
+// fetch/checkout/build/restart recipe; `?branch=<name>` picks the branch to build
+// (default main); `?probe=1` is a cheap liveness check the phone polls after a
+// restart to learn the new process is up. Always enabled — the recipe is fixed,
+// only the branch is caller-controlled, and that's validated.
 //
 // root is the server's -root scaffold dir; the nest-note checkout lives at
 // <root>/nest-note. repoOverride is the optional -repo-dir flag that points
 // straight at the checkout instead. Resolving the repo this way (not from the
-// running binary's location) is what lets `git pull` run in the real checkout
-// even when the binary lives elsewhere (a temp `go run` build, a copied binary).
+// running binary's location) is what lets git run in the real checkout even when
+// the binary lives elsewhere (a temp `go run` build, a copied binary).
 func updateHandler(token, root, repoOverride string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !authOK(r, token) {
@@ -94,38 +107,64 @@ func updateHandler(token, root, repoOverride string) http.HandlerFunc {
 			return
 		}
 
+		// Which branch to build. Bare `/update server` means main.
+		branch, err := validateBranch(r.URL.Query().Get("branch"))
+		if err != nil {
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "phase": "branch", "out": err.Error()})
+			return
+		}
+
 		// Locate the nest-note git checkout to update. This is the step that was
 		// failing: the repo is <root>/nest-note, not necessarily next to the
 		// running binary.
 		repoDir, err := resolveRepo(root, repoOverride)
 		if err != nil {
-			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "phase": "locate", "out": err.Error()})
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "phase": "locate", "branch": branch, "out": err.Error()})
 			return
 		}
 		serverDir := filepath.Join(repoDir, "server") // holds go.mod and the binary
 		targetBin := filepath.Join(serverDir, serverBinaryName)
 
-		// 1a. Pull, from the repo root. GIT_TERMINAL_PROMPT=0 turns a would-be
-		// credential prompt into an immediate error instead of a hung process.
-		pullOut, err := runUpdateStep(repoDir, 60*time.Second, []string{"GIT_TERMINAL_PROMPT=0"}, "git", "pull")
+		// 1a. Fetch the branch, from the repo root. The explicit refspec updates
+		// origin/<branch> even for a branch this checkout has never seen, so step 1b
+		// has a ref to point the local branch at. GIT_TERMINAL_PROMPT=0 turns a
+		// would-be credential prompt into an immediate error instead of a hung
+		// process.
+		fetchArgs := []string{"fetch", "origin", "+refs/heads/" + branch + ":refs/remotes/origin/" + branch}
+		fetchOut, err := runUpdateStep(repoDir, 60*time.Second, []string{"GIT_TERMINAL_PROMPT=0"}, "git", fetchArgs...)
 		if err != nil {
-			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "phase": "pull", "out": tailStr("in " + repoDir + "\n$ git pull\n" + pullOut + "\n" + err.Error())})
+			out := "in " + repoDir + "\n$ git " + strings.Join(fetchArgs, " ") + "\n" + fetchOut + "\n" + err.Error()
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "phase": "fetch", "branch": branch, "out": tailStr(out)})
 			return
 		}
 
-		// 1b. Build to a temp path so a broken build never clobbers the live binary.
+		// 1b. Move onto exactly what we just fetched. `-B` creates the local branch
+		// or resets an existing one, so the build always matches origin/<branch>
+		// rather than whatever this checkout happened to be sitting on. It aborts
+		// (rather than discarding anything) if uncommitted local edits are in the
+		// way — that's a clear error, not a silent data loss.
+		coArgs := []string{"checkout", "-B", branch, "refs/remotes/origin/" + branch}
+		coOut, err := runUpdateStep(repoDir, 60*time.Second, nil, "git", coArgs...)
+		if err != nil {
+			out := "in " + repoDir + "\n$ git " + strings.Join(coArgs, " ") + "\n" + coOut + "\n" + err.Error()
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "phase": "checkout", "branch": branch, "out": tailStr(out)})
+			return
+		}
+		gitOut := strings.TrimSpace(fetchOut + "\n" + coOut)
+
+		// 1c. Build to a temp path so a broken build never clobbers the live binary.
 		newBin := targetBin + ".new"
 		buildOut, err := runUpdateStep(serverDir, 3*time.Minute, nil, "go", "build", "-o", newBin, ".")
 		if err != nil {
 			_ = os.Remove(newBin)
-			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "phase": "build", "out": tailStr(pullOut + "\n" + buildOut + "\n" + err.Error())})
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "phase": "build", "branch": branch, "out": tailStr(gitOut + "\n" + buildOut + "\n" + err.Error())})
 			return
 		}
 
 		// 2. Swap the fresh binary into place.
 		if err := os.Rename(newBin, targetBin); err != nil {
 			_ = os.Remove(newBin)
-			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "phase": "swap", "out": tailStr(err.Error())})
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "phase": "swap", "branch": branch, "out": tailStr(err.Error())})
 			return
 		}
 
@@ -138,8 +177,8 @@ func updateHandler(token, root, repoOverride string) http.HandlerFunc {
 
 		// 3. Tell the phone we're going down for a restart, and make sure it's on
 		// the wire before we sever the connection.
-		out := tailStr(pullOut + "\n" + buildOut)
-		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "restarting": true, "out": out})
+		out := tailStr(gitOut + "\n" + buildOut)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "restarting": true, "branch": branch, "out": out})
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}
@@ -148,6 +187,41 @@ func updateHandler(token, root, repoOverride string) http.HandlerFunc {
 		// response fully drains first.
 		go restartInto(targetBin)
 	}
+}
+
+// validateBranch turns the caller's `?branch=` into the branch name to build,
+// defaulting to main when it's absent or blank.
+//
+// The branch is the only part of the update recipe a note can steer, so it's
+// checked rather than trusted. We never go through a shell — every step is
+// exec'd with an argument list — so the risk isn't shell metacharacters, it's
+// *git argument* injection: a name starting with `-` would be read as a flag
+// (`--upload-pack=…` runs a command of the caller's choosing on fetch). So we
+// require a conservative shape: a non-empty run of letters, digits, `.`, `_`,
+// `-` and `/`, not starting with `-` or `/`, no `..` and no trailing `/` —
+// which is a subset of what git itself accepts as a branch name.
+func validateBranch(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return defaultUpdateBranch, nil
+	}
+	if len(name) > maxBranchLen {
+		return "", fmt.Errorf("branch name is too long (max %d characters)", maxBranchLen)
+	}
+	bad := fmt.Errorf("%q is not a valid branch name: use letters, digits, and . _ - / (not starting with - or /)", name)
+	if strings.HasPrefix(name, "-") || strings.HasPrefix(name, "/") ||
+		strings.HasSuffix(name, "/") || strings.Contains(name, "..") {
+		return "", bad
+	}
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '.' || r == '_' || r == '-' || r == '/':
+		default:
+			return "", bad
+		}
+	}
+	return name, nil
 }
 
 // resolveRepo finds the nest-note git checkout to self-update: the -repo-dir
@@ -159,7 +233,7 @@ func resolveRepo(root, override string) (string, error) {
 	repo := override
 	if repo == "" {
 		if root == "" {
-			return "", fmt.Errorf("/update-server needs the repo location: start the server with -root <dir> (the checkout is <root>/%s), or pass -repo-dir <path>", repoDirName)
+			return "", fmt.Errorf("/update server needs the repo location: start the server with -root <dir> (the checkout is <root>/%s), or pass -repo-dir <path>", repoDirName)
 		}
 		repo = filepath.Join(root, repoDirName)
 		if !isDir(repo) {
