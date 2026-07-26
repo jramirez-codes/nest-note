@@ -2,7 +2,7 @@
 title: Using the pad
 description: The paging model, the live-preview markdown editor, and how notes are titled and stored.
 sidebar:
-  order: 3
+  order: 4
 ---
 
 The interface is deliberately small. There is no file browser, no note list, no
@@ -41,6 +41,14 @@ words land. Tap the mic again to stop.
 The mic is disabled where there's nothing to dictate into: on the dashboard, and
 on subject-notebook pages (which are read-only pulls from the server). Walking
 onto one of those with the mic live stops it.
+
+Dictation runs on the **platform recognizer** — Android's `SpeechRecognizer`,
+iOS's Speech framework — not on the companion server, so it works unpaired. On
+Android the app holds a wake lock for the session,
+keeping the CPU alive and the screen lit so a long dictation isn't cut short by a
+screen timeout or Doze. That wake lock is Android-only, and dictation needs two
+`Info.plist` keys added before it works on iOS at all — see
+[Android & iOS](./platforms.md).
 
 ### Footer controls while recording
 

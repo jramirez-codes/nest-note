@@ -16,6 +16,11 @@ dependencies.
 | `server/`         | Go 1.26                  | Go modules      | `go build`             |
 | `site/`           | Astro 7 + Starlight      | npm             | `npm run build`        |
 
+The app's native code sits alongside `src/` in `android/` and `ios/`. Those two
+are **not** mirror images — the recorder and wake-lock modules exist on Android
+only, and iOS is a later build-out. See
+[Android & iOS](../start/platforms.md) for what each platform has.
+
 That independence is a property worth preserving. Two places enforce it:
 
 **`metro.config.js`** block-lists `webview-editor/` and `site/` so Metro never

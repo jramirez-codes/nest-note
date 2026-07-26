@@ -29,6 +29,17 @@ while recording so the OS doesn't suspend it.
 with a clip may.
 :::
 
+:::caution[Android only]
+Recording is backed by a native module that exists for Android only — capture
+runs in a microphone-typed foreground service (hence the ongoing notification),
+and export writes into the shared audio library via MediaStore. On an iOS build
+the card reports that the recorder module isn't present. See
+[Android & iOS](../start/platforms.md).
+
+On Android, `/record` captures **this device's microphone only** — your own side
+of a call, never the remote party, which the OS reserves for system apps.
+:::
+
 ## `/talk`
 
 > Chat about a subject — the orchestrator keeps its notes updated as you talk.

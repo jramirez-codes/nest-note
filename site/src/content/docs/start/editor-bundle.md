@@ -2,7 +2,7 @@
 title: Rebuilding the editor
 description: How the CodeMirror 6 editor is bundled into the app, and when you need to rebuild it.
 sidebar:
-  order: 4
+  order: 5
 ---
 
 The editor is a small, isolated web app under `webview-editor/`. It is bundled
