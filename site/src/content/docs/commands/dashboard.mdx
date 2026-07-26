@@ -65,6 +65,62 @@ failing.
 
 Requires `-root`, like `/talk`, since it works through the orchestrator.
 
+## Working on an idea
+
+Ideas — the cards Claude files with `kind="idea"` rather than `kind="task"` —
+get their own section under Tasks, with a tag-filter bar above the grid. Tap a
+card to open the idea as a **full-screen page**: the same editor the pad uses,
+rendering the card's `## Problem` / `## Idea` / `## Project plan` /
+`## Next steps` body, with its tags and priority in the header.
+
+You can't type into that body — Claude owns it. You change it by **talking to
+Claude about it**, in the composer pinned to the bottom of the page:
+
+```text
+Split the project plan into a v1 and a v2 — v1 shouldn't need the server.
+```
+
+Each turn goes to Claude with the whole card as context, and Claude writes
+anything you settle on back to that same card (`upsert_card`, reusing its id, so
+an idea is refined rather than duplicated). The page re-reads the card as each
+turn lands, so the body under the chat updates in place — that's the loop:
+talk, watch the plan firm up.
+
+Claude's side of the conversation appears in a card in the **page header**,
+under the tags — usually a question it needs you to answer before it can go
+further, or a one-line note of what it just changed. The full back-and-forth
+scrolls inside that card, so the idea itself stays readable underneath, and a
+hairline under the header separates it from the idea's body.
+
+Replies are **rendered Markdown**, drawn the same way the editor draws it: list
+markers become real bullets, `- [ ]` becomes a checkbox, fenced code sits in its
+own recessed block, and links are blue and open on tap.
+
+With a reply card in the header, that hairline becomes a **drag handle** (it
+grows a grip): drag it **down** to give the conversation more room, **up** to
+give it back to the idea. The line and its grip turn the accent color while
+you're dragging, so it's clear you have hold of the edge and not the page behind
+it. The card stops at just over half the screen, and the
+height you leave it at is remembered per idea — reopen it later and the card is
+the size you set. With no replies, the edge is just a hairline.
+
+The **✕** in the card's top-right corner **deletes the conversation**, after a
+confirmation. That's a real reset: the transcript is the context each new turn is
+threaded with, so the next question starts Claude fresh on this idea. Anything
+Claude already wrote into the card stays — only the chat goes. A reply still
+streaming is cancelled.
+
+The composer is the same widget as a `/chat` follow-up box, mic and all:
+`Enter` sends, the box grows as you type, and the mic in its corner dictates
+into it — stopping the mic sends what you said. See
+[talking into a card](./index.mdx#talking-into-a-card). While a reply is
+streaming the box waits, and a **Stop** control appears beside the mic.
+
+Closing the page doesn't cancel anything: an answer keeps arriving, and the
+thread (plus anything typed and unsent) is still there when you reopen the idea.
+
+Needs a paired server — it's a conversation with Claude.
+
 ## Reviewing tasks
 
 The task cards these commands file land in the dashboard's **Tasks** section — a

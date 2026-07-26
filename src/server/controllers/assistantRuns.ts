@@ -349,6 +349,84 @@ export function runNotesChat(
   return runAsk(buildTalkPrompt(subject, question, context), cb, session);
 }
 
+/**
+ * The idea card a {@link runIdeaChat} turn is about — everything the prompt needs
+ * to talk about it and to write back to the same card (its `id` is what makes an
+ * edit an update rather than a duplicate).
+ */
+export interface IdeaRef {
+  id: string;
+  title: string;
+  priority?: string;
+  tags?: string[];
+  /** The subject notebook the card belongs to, when it has one. */
+  source?: string;
+  /** The card's current Markdown body (the four-section idea template). */
+  body?: string;
+}
+
+// Frame one idea card as the whole subject of the conversation. Unlike /chat
+// (open-ended) or /talk (pinned to a notebook), this is pinned to a single card:
+// the model discusses it with the user and writes agreed changes back to that
+// exact card with upsert_card, so the page under the chat updates in place. The
+// reply lands in a small card in the page header, so it's asked to stay short and
+// to never echo the rewritten body — the page already shows it.
+function buildIdeaPrompt(idea: IdeaRef, question: string, context?: AskContext): string {
+  const tags = (idea.tags ?? []).join(', ');
+  const instructions =
+    'You are helping the user refine ONE idea of theirs, filed as an idea card on their ' +
+    'dashboard and managed by the orchestrator MCP. They have the idea open as a page and are ' +
+    'talking to you about it. Work with them on tweaks and, over the conversation, toward a ' +
+    'concrete project plan.\n\n' +
+    'The card:\n' +
+    `- id: ${idea.id}\n` +
+    `- title: ${idea.title}\n` +
+    `- priority: ${idea.priority || 'normal'}\n` +
+    `- tags: ${tags || '(none)'}\n` +
+    `- subject: ${idea.source || '(none)'}\n\n` +
+    `Its current body:\n\n<idea>\n${idea.body ?? ''}\n</idea>\n\n` +
+    'How to work:\n' +
+    '1. Reply conversationally and BRIEFLY. Your reply is shown in a small card at the top of ' +
+    "the idea's page — a few sentences, or a short list. Never paste the rewritten card body " +
+    'into your reply; the page below it already shows the card.\n' +
+    '2. Ask the user for input whenever a decision is genuinely theirs to make (scope, which ' +
+    'approach, what matters most) — one question at a time, and make it easy to answer.\n' +
+    "3. When something is settled, write it into the card: call the orchestrator's upsert_card " +
+    `with id="${idea.id}", kind="idea"` +
+    (idea.source ? `, source="${idea.source}"` : '') +
+    ', and the FULL updated Markdown body, keeping the sections "## Problem", "## Idea", ' +
+    '"## Project plan", and "## Next steps". Preserve everything still true — only change what ' +
+    'the conversation changed. Update the title, tags (1–4 short lowercase), and priority too ' +
+    "when the user's steer implies it.\n" +
+    `4. NEVER file a second card for this idea — always reuse id="${idea.id}". Do not create ` +
+    'task cards unless the user asks for them.\n' +
+    '5. As the plan firms up, fill "## Project plan" with concrete steps and "## Next steps" ' +
+    'with the immediate ones. Whenever you write to the card, say in one short line what you ' +
+    'changed.\n\n';
+  const turns = context?.turns?.filter(t => t.q);
+  if (turns && turns.length) {
+    const history = turns.map(t => `User: ${t.q}\n\nAssistant: ${t.a || ''}`).join('\n\n');
+    return instructions + `Conversation so far:\n\n${history}\n\nNow reply to:\n\n${question}`;
+  }
+  return instructions + question;
+}
+
+/**
+ * Stream a reply for one turn of an idea page's chat. Runs on the same proven
+ * path as {@link runAsk} (reconnect, cancellation, delta/done handling); the
+ * prompt keeps the orchestrator pointed at this one card the whole thread, so
+ * every agreed tweak lands on it via upsert_card instead of spawning duplicates.
+ */
+export function runIdeaChat(
+  idea: IdeaRef,
+  question: string,
+  cb: AskCallbacks,
+  session: SessionOpts,
+  context?: AskContext,
+): AskHandle {
+  return runAsk(buildIdeaPrompt(idea, question, context), cb, session);
+}
+
 export interface IngestCallbacks {
   /** The run finished cleanly; `summary` is Claude's one-line report of what it filed. */
   onDone: (summary: string) => void;

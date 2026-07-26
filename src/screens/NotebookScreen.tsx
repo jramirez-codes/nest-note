@@ -90,6 +90,17 @@ export default function NotebookScreen() {
   // over the whole pad.
   const [openIdea, setOpenIdea] = useState<DashboardCard | null>(null);
 
+  // Bumped whenever a card changes behind the dashboard's back, so a grid that's
+  // still mounted underneath an open page re-reads instead of painting a stale copy.
+  const [cardsVersion, setCardsVersion] = useState(0);
+
+  // Claude rewrote the open idea's card (through the page's chat): show the re-read
+  // copy on the page, and tell the dashboard its cards moved on.
+  const handleIdeaUpdated = useCallback((card: DashboardCard) => {
+    setOpenIdea(prev => (prev && prev.id === card.id ? card : prev));
+    setCardsVersion(n => n + 1);
+  }, []);
+
   // `/archive` fired on a pad note: the editor bridge already persisted the archived
   // copy, so just lift the note off the pad and refresh the dashboard's Archived list.
   const handleArchived = useCallback(
@@ -254,8 +265,12 @@ export default function NotebookScreen() {
     backspace: dictationBackspace,
     newline: dictationNewline,
   } = useDictation();
+  // An open idea page is the exception: it's a Modal over the pad carrying its own
+  // composer, which registers itself as the dictation target — so there IS
+  // somewhere to write even though the page behind it is the dashboard. Closing it
+  // re-applies the gate, which stops a session left running.
   const onDashboard = currentIndex >= contentCount;
-  const dictationDisabled = onDashboard || !!subjectSlug;
+  const dictationDisabled = !openIdea && (onDashboard || !!subjectSlug);
   useEffect(() => {
     if (dictationDisabled && dictating) stopDictation();
   }, [dictationDisabled, dictating, stopDictation]);
@@ -440,6 +455,7 @@ export default function NotebookScreen() {
             archivedPages={archive.archived}
             onOpenArchived={archive.openArchived}
             onOpenIdea={setOpenIdea}
+            cardsVersion={cardsVersion}
           />
         );
       }
@@ -489,6 +505,7 @@ export default function NotebookScreen() {
       drag.release,
       archive.archived,
       archive.openArchived,
+      cardsVersion,
     ],
   );
 
@@ -700,10 +717,18 @@ export default function NotebookScreen() {
         />
       )}
 
-      {/* A card (an idea) opened from the dashboard, shown full-screen and read-only
-          over the pad — Claude owns the content, so it's viewed, not edited here. */}
+      {/* A card (an idea) opened from the dashboard, shown full-screen over the pad.
+          Claude owns the content, so the body is read-only — it's changed by talking
+          to Claude in the page's chat composer, not by typing into it. */}
       {openIdea && (
-        <IdeaPageOverlay card={openIdea} width={width} onClose={() => setOpenIdea(null)} />
+        <IdeaPageOverlay
+          card={openIdea}
+          width={width}
+          onClose={() => setOpenIdea(null)}
+          dictating={dictating}
+          onDictate={handleDictationRequest}
+          onCardUpdated={handleIdeaUpdated}
+        />
       )}
     </View>
   );
