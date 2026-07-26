@@ -6,6 +6,7 @@ import { chrome, answerChrome } from './chrome.js';
 // isn't load-bearing — it mirrors the original single-file order to keep the
 // generated CSS diffable.
 import { styles as buttonStyles } from '../ui/buttons.js';
+import { styles as micStyles } from '../ui/mic.js';
 import { styles as checkboxStyles } from '../markdown/widgets/checkbox.js';
 import { styles as bulletStyles } from '../markdown/widgets/bullet.js';
 import { styles as codeBlockStyles } from '../markdown/codeBlocks.js';
@@ -33,6 +34,7 @@ export { highlight } from './highlight.js';
 
 const components = {
   ...buttonStyles,
+  ...micStyles,
   ...checkboxStyles,
   ...bulletStyles,
   ...codeBlockStyles,

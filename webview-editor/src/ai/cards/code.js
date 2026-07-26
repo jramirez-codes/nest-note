@@ -1,5 +1,5 @@
 import { c } from '../../theme/palette.js';
-import { EXPAND, SEND, STOP } from '../../ui/icons.js';
+import { EXPAND, STOP } from '../../ui/icons.js';
 import { makeCornerButton } from '../../ui/buttons.js';
 import { blockSelection } from '../../ui/events.js';
 import { post } from '../../bridge.js';
@@ -121,11 +121,13 @@ export function renderCode(view, widget) {
   return card;
 }
 
-// Footer for a live /code card: a prompt box (Enter sends the next turn) and a
-// Stop button that kills the whole session.
+// Footer for a live /code card: a prompt box (Enter sends the next turn), a Stop
+// button that kills the whole session, and the dictation mic (ui/mic.js — talk
+// the turn into this box, tap it off to send). The mic sits last, in the corner
+// itself, since it's the one that's tapped every turn.
 function codeFoot(id) {
   return makeComposer({
-    footClass: 'cm-ask-foot cm-run-foot',
+    footClass: 'cm-ask-foot',
     inputClass: 'cm-ask-followup cm-code-prompt',
     placeholder: 'Message the agent — Enter to send…',
     draftKey: id,
@@ -138,7 +140,6 @@ function codeFoot(id) {
       post({ type: 'codePrompt', id, text });
     },
     buttons: [
-      { className: 'cm-run-btn cm-code-send', icon: SEND, title: 'Send', label: 'Send', submit: true },
       {
         className: 'cm-run-btn cm-run-stop',
         icon: STOP,
@@ -146,6 +147,7 @@ function codeFoot(id) {
         label: 'Stop session',
         onTap: () => post({ type: 'codeStop', id }),
       },
+      { mic: true },
     ],
   });
 }
@@ -251,5 +253,5 @@ export const styles = {
   },
   '.cm-code-prompt': { fontSize: '14px' },
   '.cm-code-prompt:focus': { borderColor: c.mauve },
-  '.cm-code-send': { borderColor: c.mauve, color: c.mauve },
+  // The footer's other button is the dictation mic, styled in ui/mic.js.
 };

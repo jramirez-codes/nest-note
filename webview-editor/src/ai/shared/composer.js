@@ -1,4 +1,5 @@
 import { guardInput, guardTaps } from '../../ui/events.js';
+import { makeMicButton } from '../../ui/mic.js';
 import { bindDraft, syncDraft } from './drafts.js';
 
 // One footer factory for every card composer: the /chat follow-up box, the /run
@@ -12,6 +13,18 @@ import { bindDraft, syncDraft } from './drafts.js';
 // submit logic (trim vs. raw, skip-empty, clear, dispatch). Each button spec is
 // `{ tag?, className, icon, title?, label?, submit?, onTap? }`: `submit: true`
 // wires the button to the same primary submit as Enter; otherwise `onTap` runs.
+// `mic: true` is the exception — it takes no other field and builds the shared
+// dictation toggle for THIS box (see ui/mic.js), which brings its own styling
+// and needs the input itself.
+//
+// The buttons don't sit beside the box, they sit OVER it: the input spans the
+// footer's full width and the button row is absolutely positioned against the
+// footer's bottom-right corner, which is the input's bottom-right corner (the
+// input is the footer's only in-flow child, and the footer has no bottom
+// padding). So the row stays pinned to the last line as the box grows taller.
+// Nothing is reserved for it — text wraps at the box's real right edge and runs
+// under the buttons, which are opaque. That's the deliberate trade: a full-width
+// line beats keeping the tail of a long last line visible.
 //
 // `draftKey` (the card's id) ties this box to any other box for the same card —
 // its twin in the full-page overlay — so unsent text survives expanding and
@@ -53,8 +66,13 @@ export function makeComposer({ footClass, inputClass, placeholder, draftKey, onS
   if (input.value) requestAnimationFrame(() => autoGrow(input));
   foot.appendChild(input);
 
-  for (const spec of buttons) {
-    foot.appendChild(makeButton(spec, submit));
+  if (buttons.length) {
+    const actions = document.createElement('div');
+    actions.className = 'cm-foot-actions';
+    for (const spec of buttons) {
+      actions.appendChild(spec.mic ? makeMicButton(input) : makeButton(spec, submit));
+    }
+    foot.appendChild(actions);
   }
   return foot;
 }

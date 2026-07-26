@@ -7,6 +7,11 @@
  * window.__dictate (see activeEditor + the editor bundle). Tapping it again
  * stops.
  *
+ * The same session is also driven from inside the notes: every AI card composer
+ * (the /chat follow-up box, the /code prompt box) carries a mic toggle that posts
+ * over the editor bridge into `start`/`stop` here, having first put the caret in
+ * its own box so the transcript lands there instead of in the note body.
+ *
  * Android's SpeechRecognizer ends a session on each natural pause, so to feel
  * continuous we restart it while the user still wants to dictate and only truly
  * stop on their tap (or a hard error). The result lands wherever the caret is at
@@ -86,6 +91,10 @@ export interface Dictation {
   dictating: boolean;
   /** Toggle the mic on (permissions + start) or off. */
   toggle: () => void;
+  /** Force the mic on — used by a card composer's own mic toggle, which has
+   *  already decided the direction (and put the caret in its box). A no-op if a
+   *  session is already running, so it can never restart one mid-flight. */
+  start: () => void;
   /** Force the mic off — used when navigating somewhere it can't dictate. */
   stop: () => void;
   /** Emulate one Backspace press in the note being dictated into (footer Delete). */
@@ -320,6 +329,14 @@ export function useDictation(): Dictation {
     }
   }, [hardStop, startDictation]);
 
+  // Directional counterpart to toggle, for callers that already know which way
+  // they want the mic to go (a widget's mic button). Reads the intent ref rather
+  // than `dictating` so a tap that lands in the same tick as a state change can't
+  // start a second session over a live one.
+  const startIfIdle = useCallback(() => {
+    if (!wantOnRef.current) startDictation();
+  }, [startDictation]);
+
   // hardStop takes an optional reason; expose a no-arg stop so callers (e.g. the
   // screen's auto-stop) don't accidentally pass an event object in as the alert.
   const stop = useCallback(() => hardStop(), [hardStop]);
@@ -332,5 +349,5 @@ export function useDictation(): Dictation {
   const backspace = useCallback(() => backspaceActiveEditor(), []);
   const newline = useCallback(() => newlineActiveEditor(), []);
 
-  return { dictating, toggle, stop, backspace, newline };
+  return { dictating, toggle, start: startIfIdle, stop, backspace, newline };
 }

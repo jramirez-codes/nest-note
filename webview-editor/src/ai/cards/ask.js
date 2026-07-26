@@ -143,14 +143,13 @@ export const styles = {
   '.cm-ask-answer-err': { color: c.red },
 
   // The composer chrome shared by every card footer (chat follow-up, run stdin,
-  // code prompt): a growing text box plus trailing button(s), separated from the
-  // body by a hairline rule. /run and /code layer their own overrides on top.
-  // Bottom-aligned, so the buttons stay level with the box's last line as it
-  // grows rather than drifting to the middle of a tall box.
+  // code prompt): a full-width growing text box with its button(s) overlaid in
+  // the bottom-right corner, separated from the body by a hairline rule. /run and
+  // /code layer their own overrides on top. The box is the only in-flow child, so
+  // the footer's bottom-right corner *is* the box's — which is what the buttons
+  // anchor to.
   '.cm-ask-foot': {
-    display: 'flex',
-    alignItems: 'flex-end',
-    gap: '8px',
+    position: 'relative',
     marginTop: '12px',
     paddingTop: '12px',
     borderTop: `1px solid ${c.surface0}`,
@@ -158,13 +157,20 @@ export const styles = {
   // A one-row <textarea> that autoGrow (composer.js) resizes to its content:
   // typed text wraps and the box gets taller, up to the cap below — past that it
   // scrolls internally so a pasted wall of text can't swallow the card or, in the
-  // overlay, the transcript above it.
+  // overlay, the transcript above it. Text wraps at the box's own right edge —
+  // the buttons sitting over the bottom-right corner get no reserved room.
+  //
+  // The min-height is the corner buttons' 30px plus their 4px inset top and
+  // bottom, so a one-line box frames them evenly. It also makes that first row
+  // the same height in every card: /run's stdin box sets a smaller monospace
+  // font, and without the floor its single line would come out shorter than the
+  // button it holds.
   '.cm-ask-followup': {
-    flex: '1',
-    minWidth: '0',
+    width: '100%',
     boxSizing: 'border-box',
     display: 'block',
     resize: 'none',
+    minHeight: '38px',
     maxHeight: '160px',
     overflowY: 'auto',
     whiteSpace: 'pre-wrap',
@@ -181,18 +187,16 @@ export const styles = {
   },
   '.cm-ask-followup::placeholder': { color: c.overlay1 },
   '.cm-ask-followup:focus': { borderColor: c.mauve },
-  '.cm-ask-send': {
-    flexShrink: '0',
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: '34px',
-    height: '34px',
-    color: c.base,
-    backgroundColor: c.mauve,
-    borderRadius: '9px',
-    cursor: 'pointer',
-    userSelect: 'none',
+  // The composer's buttons, parked over the box's bottom-right corner: pinned to
+  // the bottom so they ride the last line as the box grows. They're opaque, so
+  // they cover any text that wraps under them. The buttons themselves bring their
+  // own styling — ui/mic.js for the dictation mic, `.cm-run-btn` (run.js) for
+  // /run's and /code's controls.
+  '.cm-foot-actions': {
+    position: 'absolute',
+    right: '4px',
+    bottom: '4px',
+    display: 'flex',
+    gap: '6px',
   },
-  '.cm-ask-send svg': { display: 'block', width: '17px', height: '17px' },
 };

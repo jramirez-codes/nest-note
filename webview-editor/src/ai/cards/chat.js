@@ -1,5 +1,5 @@
 import { c } from '../../theme/palette.js';
-import { SEND, EXPAND, CHAT } from '../../ui/icons.js';
+import { EXPAND, CHAT } from '../../ui/icons.js';
 import { makeCopyButton, makeCornerButton } from '../../ui/buttons.js';
 import { updateAiMarker, deleteCardLine, appendChatTurn } from '../marker.js';
 import { openCardOverlay } from '../overlay.js';
@@ -146,7 +146,9 @@ export function renderChat(view, widget) {
 
 // Footer input that fires a follow-up question — appends a new turn to this chat
 // card and re-streams it (appendChatTurn threads the whole prior transcript as
-// context so the server answers in-conversation).
+// context so the server answers in-conversation). Enter sends it; the trailing
+// button is the dictation mic (ui/mic.js), which talks the follow-up into this
+// box and sends it when the mic is tapped off.
 function followupFoot(view, card, id) {
   return makeComposer({
     footClass: 'cm-ask-foot',
@@ -159,7 +161,7 @@ function followupFoot(view, card, id) {
       input.value = '';
       appendChatTurn(view, card, text);
     },
-    buttons: [{ tag: 'span', className: 'cm-ask-send', icon: SEND, submit: true }],
+    buttons: [{ mic: true }],
   });
 }
 

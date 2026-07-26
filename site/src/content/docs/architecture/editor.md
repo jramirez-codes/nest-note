@@ -63,3 +63,9 @@ a character. See [storage](./storage.md).
 Cards are correlated by **card id** — the same id the
 [run registry](./protocol.md) keys on, which is what lets a run survive the
 page being unmounted.
+
+The bridge also carries the device capabilities the editor can't reach itself.
+Speech-to-text is the clearest case: the recognizer is native and the footer mic
+owns the session, but a card composer's own mic button posts across the bridge to
+start or stop that same session — the editor only decides where the caret sits,
+and the transcript follows it back in through `window.__dictate`.

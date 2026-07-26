@@ -20,6 +20,8 @@ interface NotePageProps {
   onOpenPage?: (slug: string, title: string) => void;
   /** An AI card's full-page overlay opened/closed — see NoteEditorWebView. */
   onWidgetExpandChange?: (expanded: boolean) => void;
+  /** A card composer's mic toggle asked to start/stop dictation — see NoteEditorWebView. */
+  onDictationRequest?: (on: boolean) => void;
   /** Notebook this page lives in — /record clips are bucketed by notebook + page id. */
   notebookId: string;
   /** Render the page read-only (no caret, no edits) — used for server-owned pages
@@ -44,6 +46,7 @@ function NotePage({
   onArchived,
   onOpenPage,
   onWidgetExpandChange,
+  onDictationRequest,
   notebookId,
   readOnly = false,
 }: NotePageProps) {
@@ -79,6 +82,7 @@ function NotePage({
           onArchived={handleArchived}
           onOpenPage={onOpenPage}
           onWidgetExpandChange={onWidgetExpandChange}
+          onDictationRequest={onDictationRequest}
           notebookId={notebookId}
           pageId={note.id}
           readOnly={readOnly}

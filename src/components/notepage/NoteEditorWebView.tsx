@@ -50,6 +50,13 @@ interface NoteEditorWebViewProps {
    */
   onWidgetExpandChange?: (expanded: boolean) => void;
   /**
+   * A mic toggle in a card composer (the /chat follow-up or /code prompt box)
+   * asked to start (`true`) or stop (`false`) dictation. The recognizer belongs
+   * to the footer mic, so the screen owns this; the editor has already put the
+   * caret in the box the transcript should land in.
+   */
+  onDictationRequest?: (on: boolean) => void;
+  /**
    * Render the content read-only: no caret, no typing, no edits (CM6 editable off +
    * EditorState.readOnly). Used for subject-notebook pages pulled from the server, which
    * are viewable but not editable on the phone — only the local Sandbox is edited.
@@ -87,6 +94,7 @@ export default function NoteEditorWebView({
   onArchived,
   onOpenPage,
   onWidgetExpandChange,
+  onDictationRequest,
   readOnly = false,
   notebookId,
   pageId,
@@ -140,6 +148,7 @@ export default function NoteEditorWebView({
           onOpenPage,
           onArchived,
           onWidgetExpandChange,
+          onDictationRequest,
           setPairScan,
           setProjectDelete,
         },
@@ -152,6 +161,7 @@ export default function NoteEditorWebView({
       onOpenPage,
       onArchived,
       onWidgetExpandChange,
+      onDictationRequest,
       readOnly,
       notebookId,
       pageId,

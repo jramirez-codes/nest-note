@@ -108,10 +108,12 @@ export function renderRun(view, widget) {
   return card;
 }
 
-// Footer for a live /run card: a stdin box, an interrupt (⌃C), and a Stop.
+// Footer for a live /run card: a stdin box, a Stop, and an interrupt (⌃C). Stop
+// sits inboard and the interrupt takes the corner, matching /code — the killer is
+// the one you reach past, the everyday control is the one under your thumb.
 function runFoot(id) {
   return makeComposer({
-    footClass: 'cm-ask-foot cm-run-foot',
+    footClass: 'cm-ask-foot',
     inputClass: 'cm-ask-followup cm-run-stdin',
     placeholder: 'stdin — Enter to send…',
     draftKey: id,
@@ -123,18 +125,18 @@ function runFoot(id) {
     },
     buttons: [
       {
-        className: 'cm-run-btn cm-run-intr',
-        icon: INTERRUPT,
-        title: 'Interrupt (⌃C)',
-        label: 'Interrupt',
-        onTap: () => post({ type: 'runSignal', id }),
-      },
-      {
         className: 'cm-run-btn cm-run-stop',
         icon: STOP,
         title: 'Stop (kill)',
         label: 'Stop',
         onTap: () => post({ type: 'runStop', id }),
+      },
+      {
+        className: 'cm-run-btn cm-run-intr',
+        icon: INTERRUPT,
+        title: 'Interrupt (⌃C)',
+        label: 'Interrupt',
+        onTap: () => post({ type: 'runSignal', id }),
       },
     ],
   });
@@ -224,27 +226,29 @@ export const styles = {
     wordBreak: 'break-word',
     WebkitOverflowScrolling: 'touch',
   },
-  '.cm-run-foot': { gap: '6px' },
   '.cm-run-stdin': {
     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
     fontSize: '13px',
   },
   '.cm-run-stdin:focus': { borderColor: c.teal },
+  // Sized to sit over the composer box's bottom-right corner (`.cm-foot-actions`
+  // in ask.js), which is also why the background stays opaque.
   '.cm-run-btn': {
     flexShrink: '0',
+    boxSizing: 'border-box', // 30px total, borders in — see `.cm-ask-followup`
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
-    width: '34px',
-    height: '34px',
+    width: '30px',
+    height: '30px',
     padding: '0',
     border: `1px solid ${c.surface1}`,
-    borderRadius: '9px',
+    borderRadius: '8px',
     backgroundColor: c.surface0,
     color: c.text,
     cursor: 'pointer',
     userSelect: 'none',
   },
-  '.cm-run-btn svg': { width: '18px', height: '18px' },
+  '.cm-run-btn svg': { width: '17px', height: '17px' },
   '.cm-run-stop': { borderColor: c.red, color: c.red },
 };
