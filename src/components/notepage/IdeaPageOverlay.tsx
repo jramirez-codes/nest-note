@@ -1,4 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import { Modal, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, {
@@ -9,7 +16,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronLeft } from 'lucide-react-native';
+import { ChevronLeft, Undo2 } from 'lucide-react-native';
 import { mocha } from '../../theme/catppuccin';
 import { useTheme } from '../../theme/colors';
 import { useKeyboardHeight } from '../../hooks/useKeyboardHeight';
@@ -17,6 +24,7 @@ import type { Note } from '../../types/note';
 import { fetchCard, type DashboardCard } from '../../server/controllers/aiController';
 import * as ideaChat from '../../server/ideaChat';
 import { prio } from '../dashboard/cardModel';
+import ConfirmDialog from '../modals/ConfirmDialog';
 import CardComposer from './CardComposer';
 import IdeaChatCard, { DEFAULT_CARD_HEIGHT, MIN_CARD_HEIGHT } from './IdeaChatCard';
 import NotePage from './NotePage';
@@ -56,6 +64,12 @@ const noop = () => {};
  * conversation — typically a question it needs answered — sits in a card in the
  * header, under the tags.
  *
+ * Because those writes are Claude's and not the user's, they're undoable: once a
+ * turn has changed the card, an Undo control appears over the body's top-right
+ * corner, below the header's edge, and — after a confirmation — puts the idea back
+ * the way it read before that change.
+ *
+
  * The thread itself lives in ../../server/ideaChat, not here: closing this page
  * mid-answer must not kill the run or lose the transcript later turns are threaded
  * with.
@@ -100,7 +114,11 @@ export default function IdeaPageOverlay({
   const refresh = useCallback(async () => {
     try {
       const fresh = await fetchCard(id);
-      if (fresh && mounted.current) latestUpdated.current(fresh);
+      if (!fresh) return;
+      // Settle the turn's undo snapshot first — that's a store fact, true whether
+      // or not this page is still on screen to show the button it enables.
+      ideaChat.recordCard(fresh);
+      if (mounted.current) latestUpdated.current(fresh);
     } catch {
       /* keep the copy we have */
     }
@@ -177,6 +195,29 @@ export default function IdeaPageOverlay({
   );
 
   const hasReplies = thread.turns.length > 0;
+
+  // Claude has rewritten this idea at least once, so there's something to put
+  // back. Hidden mid-turn: a restore racing the edit Claude is streaming would
+  // have them writing over each other on the same card.
+  const canUndo = ideaChat.canUndo(id) && !running;
+  const [confirmUndo, setConfirmUndo] = useState(false);
+  const [undoing, setUndoing] = useState(false);
+  const [undoError, setUndoError] = useState<string | null>(null);
+  const undo = useCallback(async () => {
+    setUndoing(true);
+    try {
+      await ideaChat.undoLast(card);
+      await refresh();
+    } catch (e) {
+      // The snapshot is still in the thread — the button stays, so this is a
+      // retry rather than a lost revert.
+      if (mounted.current) {
+        setUndoError(e instanceof Error ? e.message : 'The idea could not be restored.');
+      }
+    } finally {
+      if (mounted.current) setUndoing(false);
+    }
+  }, [card, refresh]);
 
   // The card presented as a Note so the shared editor can render its Markdown body.
   // Timestamps are best-effort (0 when absent) — read-only, so they're never written.
@@ -271,19 +312,47 @@ export default function IdeaPageOverlay({
             <View className="border-b border-surface1" />
           )}
 
-          {/* Keyed on the body: the editor takes its content at boot, so a card
-              Claude has just rewritten needs a fresh one to repaint. */}
-          <NotePage
-            key={note.content}
-            note={note}
-            width={width}
-            isActive
-            readOnly
-            onChangeContent={noop}
-            onSetTitle={noop}
-            onIngested={noop}
-            notebookId={card.source ?? ''}
-          />
+          {/* The idea's body, with the undo control parked over its top-right
+              corner rather than sitting in a row of its own — the way the editor's
+              cards carry their action buttons. That leaves the header's surface
+              ending at the edge above, and starts the Markdown at the button's own
+              height instead of pushing it down past a strip of empty page. */}
+          <View className="relative flex-1">
+            {/* Keyed on the body: the editor takes its content at boot, so a card
+                Claude has just rewritten needs a fresh one to repaint. */}
+            <NotePage
+              key={note.content}
+              note={note}
+              width={width}
+              isActive
+              readOnly
+              onChangeContent={noop}
+              onSetTitle={noop}
+              onIngested={noop}
+              notebookId={card.source ?? ''}
+            />
+
+            {/* Claude rewrote the idea in this conversation: offer to put it back.
+                Opaque and raised, so the body's text runs under it. */}
+            {canUndo && (
+              <Pressable
+                onPress={() => setConfirmUndo(true)}
+                disabled={undoing}
+                hitSlop={6}
+                accessibilityRole="button"
+                accessibilityLabel="Undo Claude's changes to this idea"
+                accessibilityState={{ disabled: undoing }}
+                style={styles.undoFloat}
+                className={`absolute right-3 top-2 flex-row items-center gap-1.5 rounded-full border border-surface1 bg-surface px-2.5 py-1 active:opacity-70 ${
+                  undoing ? 'opacity-50' : ''
+                }`}>
+                <Undo2 size={13} color={colors.faint} strokeWidth={2.5} />
+                <Text className="text-[11px] font-semibold text-muted">
+                  {undoing ? 'Undoing…' : 'Undo AI changes'}
+                </Text>
+              </Pressable>
+            )}
+          </View>
 
           {/* The chat, pinned under the idea it's about — the only writable thing
               on the page, and how the idea itself gets changed. */}
@@ -300,6 +369,39 @@ export default function IdeaPageOverlay({
             />
           </View>
         </View>
+
+        {/* Reverting rewrites the card server-side, so it's confirmed first — and
+            the message says what "undo" means here: one step back, not a reset to
+            how the idea was filed. */}
+        <ConfirmDialog
+          visible={confirmUndo}
+          title="Undo AI changes"
+          message={`Put this idea back the way it read before Claude's last change to it? ${
+            thread.undo.length > 1
+              ? `That's one of ${thread.undo.length} changes from this conversation — undo again to step further back.`
+              : 'The conversation itself is kept.'
+          }`}
+          confirmLabel="Undo"
+          cancelLabel="Cancel"
+          destructive
+          onConfirm={() => {
+            setConfirmUndo(false);
+            undo();
+          }}
+          onCancel={() => setConfirmUndo(false)}
+        />
+
+        {/* The revert didn't take (server gone, card deleted). The snapshot is
+            still held, so the button is still there to try again. */}
+        <ConfirmDialog
+          visible={undoError !== null}
+          title="Couldn't undo"
+          message={undoError ?? ''}
+          confirmLabel="OK"
+          hideCancel
+          onConfirm={() => setUndoError(null)}
+          onCancel={() => setUndoError(null)}
+        />
       </GestureHandlerRootView>
     </Modal>
   );
@@ -316,4 +418,8 @@ const styles = StyleSheet.create({
   // the same metrics the plain hairline has, plus room for the grip.
   edge: { alignItems: 'center', paddingVertical: 6, borderBottomWidth: 1 },
   grip: { height: 4, width: 36, borderRadius: 2 },
+  // The undo pill floats over the editor. Android draws a WebView on its own
+  // layer, so raise the pill with elevation as well as zIndex or it ends up
+  // behind the body it sits on.
+  undoFloat: { zIndex: 10, elevation: 4 },
 });

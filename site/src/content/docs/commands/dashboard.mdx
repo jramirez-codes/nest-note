@@ -86,6 +86,28 @@ an idea is refined rather than duplicated). The page re-reads the card as each
 turn lands, so the body under the chat updates in place — that's the loop:
 talk, watch the plan firm up.
 
+### Undoing a change Claude made
+
+Because those writes are Claude's rather than yours, they can be taken back. Once
+a turn has actually changed the idea, an **Undo AI changes** button appears in the
+**top-right corner of the idea's body**, just under the hairline — parked over the
+body it reverts, the way the editor's cards carry their own buttons, so it doesn't
+push the idea down the page. Tap it and you get a confirmation first — the revert
+rewrites the card on the server, so it isn't something a stray tap should do —
+and on **Undo** the idea goes back to the way it read before that change: title,
+body, tags and priority.
+
+It steps back **one change at a time**. If Claude has rewritten the idea three
+times over the conversation, undoing three times walks back all three, and the
+dialog says how many changes are still behind you. Turns that only answered a
+question don't count — nothing changed, so there's nothing to undo, and the
+button doesn't appear for them.
+
+The conversation itself is untouched by an undo, and the button stays hidden
+while a reply is streaming (a revert racing a live edit would have the two
+writing over each other). The history lasts as long as the app is running: a
+change Claude made in an earlier session isn't undoable from here.
+
 Claude's side of the conversation appears in a card in the **page header**,
 under the tags — usually a question it needs you to answer before it can go
 further, or a one-line note of what it just changed. The full back-and-forth

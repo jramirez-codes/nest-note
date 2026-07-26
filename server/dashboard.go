@@ -339,8 +339,10 @@ func pageHandler(token, root string) http.HandlerFunc {
 
 // actionHandler answers POST /action for the optional yes/no loop. "merge" turns a
 // suggestion into a real consolidation request (drained by materializeConsolidations
-// on the next run) and clears the suggestion; "dismiss" just clears it. Subject
-// slugs are validated (validSlug) so an action can't write outside the state dir.
+// on the next run) and clears the suggestion; "dismiss" just clears it. Card verbs
+// ("complete"/"uncomplete", "dismiss" with an id, and "restore", which writes a
+// content snapshot back over a card) mutate a single card file. Subject slugs and
+// card ids are validated (validSlug) so an action can't write outside the state dir.
 func actionHandler(token, root string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !authOK(r, token) {
@@ -358,6 +360,11 @@ func actionHandler(token, root string) http.HandlerFunc {
 			ID      string   `json:"id"`
 			Source  string   `json:"source"`  // optional notebook slug the card lives under
 			Subject string   `json:"subject"` // notebook slug a reorg action targets
+			// The snapshot a "restore" action puts back on a card.
+			Title    string   `json:"title"`
+			Body     string   `json:"body"`
+			Tags     []string `json:"tags"`
+			Priority string   `json:"priority"`
 		}
 		if json.NewDecoder(r.Body).Decode(&req) != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
@@ -401,6 +408,27 @@ func actionHandler(token, root string) http.HandlerFunc {
 				writeOK(w)
 				return
 			}
+		case "restore":
+			// Put a card's user-visible content back to a snapshot the phone is
+			// holding — the idea page's undo, which reverts what Claude wrote to
+			// the card while the user was chatting about it. Only the four fields
+			// that page renders are written; the card's id, kind, dates and
+			// done/dismissed state are whatever they are now and stay that way.
+			if !validSlug(req.ID) || len(req.Priority) > 32 {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			if _, ok := updateCard(mcpDir, req.Source, req.ID, func(c *dashCard) {
+				c.Title = req.Title
+				c.Body = req.Body
+				c.Tags = req.Tags
+				c.Priority = req.Priority
+			}); !ok {
+				http.Error(w, "card not found", http.StatusNotFound)
+				return
+			}
+			writeOK(w)
+			return
 		case "reorg", "reorg-dismiss":
 			// A page-reorganization proposal is keyed on its notebook slug. "reorg"
 			// applies it now (pure notes/*.md rewriting — no next-run drain needed),
