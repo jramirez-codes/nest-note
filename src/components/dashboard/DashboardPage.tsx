@@ -178,15 +178,6 @@ function DashboardPage({
 
             {nothingAtAll && <EmptyState colors={colors} />}
 
-            {/* Archived — pages lifted off the pad by /archive. Above Tasks; Sandbox only. */}
-            {showArchived && (
-              <ArchivedSection
-                archivedPages={archivedPages}
-                onOpenArchived={onOpenArchived}
-                colors={colors}
-              />
-            )}
-
             {tasks.length > 0 && (
               <TasksSection
                 tasks={tasks}
@@ -197,6 +188,15 @@ function DashboardPage({
                 dragProps={dragProps}
                 liftedId={liftedId}
                 subjectTitleFor={subjectTitleFor}
+              />
+            )}
+
+            {/* Archived — pages lifted off the pad by /archive. Below Tasks; Sandbox only. */}
+            {showArchived && (
+              <ArchivedSection
+                archivedPages={archivedPages}
+                onOpenArchived={onOpenArchived}
+                colors={colors}
               />
             )}
 
