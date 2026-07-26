@@ -31,7 +31,7 @@ There are **15** commands. Source of truth:
 | `/archive`       | Archive this page into the dashboard's Archived section                           | — *(on-device)*          |
 | `/agg-tasks`     | Sweep a subject's notebook for action items, file one task card per item          | Server + `-root`         |
 | `/pair`          | Pair a device by QR code or payload                                              | —                        |
-| `/update-server` | Pull, rebuild and restart the Go server on the paired laptop                       | Server                   |
+| `/update server` | Rebuild and restart the Go server on the paired laptop — `/update server [BRANCH]` | Server                   |
 
 ## Grouped by what they do
 
@@ -40,7 +40,7 @@ There are **15** commands. Source of truth:
   `/view`. **All gated behind capability flags that are off by default.**
 - **[Capture](./capture.md)** — `/record`, `/talk`
 - **[Dashboard](./dashboard.md)** — `/ingest`, `/archive`, `/agg-tasks`
-- **[Admin](./admin.md)** — `/pair`, `/update-server`
+- **[Admin](./admin.md)** — `/pair`, `/update server`
 
 ## How cards behave
 

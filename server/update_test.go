@@ -130,6 +130,47 @@ func TestMirrorLegacyBinary(t *testing.T) {
 	}
 }
 
+// The branch is the only caller-controlled part of the update recipe, so it has
+// to default to main when absent and reject anything git could read as a flag.
+func TestValidateBranch(t *testing.T) {
+	ok := map[string]string{
+		"":                    defaultUpdateBranch,
+		"  ":                  defaultUpdateBranch,
+		"main":                "main",
+		" feature/foo ":       "feature/foo",
+		"release-1.2.3":       "release-1.2.3",
+		"jramirez-codes/fix_": "jramirez-codes/fix_",
+	}
+	for in, want := range ok {
+		got, err := validateBranch(in)
+		if err != nil {
+			t.Fatalf("validateBranch(%q): unexpected error %v", in, err)
+		}
+		if got != want {
+			t.Fatalf("validateBranch(%q) = %q, want %q", in, got, want)
+		}
+	}
+
+	bad := []string{
+		"--upload-pack=touch /tmp/pwned", // would be read as a git flag, not a ref
+		"-b",
+		"/main",
+		"main/",
+		"../etc",
+		"a..b",
+		"main branch",
+		"main;reboot",
+		"$(reboot)",
+		"main\n--exec=x",
+		strings.Repeat("a", maxBranchLen+1),
+	}
+	for _, in := range bad {
+		if got, err := validateBranch(in); err == nil {
+			t.Fatalf("validateBranch(%q) = %q, want an error", in, got)
+		}
+	}
+}
+
 func TestResolveRepoErrors(t *testing.T) {
 	// No -root and no -repo-dir: must explain how to point us at the checkout.
 	if _, err := resolveRepo("", ""); err == nil || !strings.Contains(err.Error(), "-root") {

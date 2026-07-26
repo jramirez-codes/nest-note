@@ -74,9 +74,10 @@ const SLASH_COMMANDS = [
     apply: '/talk ',
   },
   {
-    label: '/update-server',
-    detail: 'Update the paired laptop: pull the latest code, rebuild the Go server, and restart it',
-    apply: '/update-server',
+    label: '/update server',
+    detail:
+      'Update the paired laptop — /update server [BRANCH]: check out the branch (main by default), rebuild the Go server, restart it',
+    apply: '/update server',
   },
   {
     label: '/view',
@@ -514,18 +515,21 @@ export function aiCommandOnEnter(view) {
     return true;
   }
 
-  // `/update-server`: tell the paired laptop to pull the latest code, rebuild its
-  // Go server, and restart into the new binary. Takes no argument. Drops a status
-  // card; the actual pull/build/restart and the reconnect polling live on the RN
+  // `/update server [BRANCH]`: tell the paired laptop to check out a branch,
+  // rebuild its Go server, and restart into the new binary. Bare `/update server`
+  // builds main; a branch argument builds that branch instead. Drops a status
+  // card; the actual fetch/build/restart and the reconnect polling live on the RN
   // side (updateController), which commits phases back via __aiDone.
-  if (/^\/update-server\s*$/.test(text)) {
+  const updateCmd = /^\/update\s+server(?:\s+(\S+))?\s*$/.exec(text);
+  if (updateCmd) {
     const id = genId();
+    const branch = updateCmd[1] || '';
     const marker = encodeAiMarker({
       v: 1,
       kind: 'update',
       id,
       status: 'running',
-      msg: 'Pulling & rebuilding…',
+      msg: branch ? `Fetching ${branch} & rebuilding…` : 'Fetching main & rebuilding…',
     });
     // Trailing blank line under the card's closing `-->` so there's always a
     // clickable, typeable spot directly beneath the widget (the card decoration
@@ -535,7 +539,7 @@ export function aiCommandOnEnter(view) {
       changes: { from: line.from, to: line.to, insert },
       selection: { anchor: line.from + marker.length + 1 },
     });
-    post({ type: 'updateServer', id });
+    post({ type: 'updateServer', id, branch });
     return true;
   }
 

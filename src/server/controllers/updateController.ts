@@ -1,13 +1,13 @@
 /**
- * Bridges the editor's `/update-server` command to the paired laptop's self-update
- * endpoint (server/update.go).
+ * Bridges the editor's `/update server [branch]` command to the paired laptop's
+ * self-update endpoint (server/update.go).
  *
- * The laptop pulls the latest code, rebuilds its Go server, and restarts into the
- * new binary. Because the server tears its own connection down to relaunch, this
- * is two phases: `updateServer` triggers the pull/build/restart and returns the
- * build result, then `waitForServerBack` polls the (cheap, authed) liveness probe
- * until the freshly-launched process answers — that's how the card confirms the
- * reconnect.
+ * The laptop checks out the requested branch (main by default), rebuilds its Go
+ * server, and restarts into the new binary. Because the server tears its own
+ * connection down to relaunch, this is two phases: `updateServer` triggers the
+ * fetch/build/restart and returns the build result, then `waitForServerBack` polls
+ * the (cheap, authed) liveness probe until the freshly-launched process answers —
+ * that's how the card confirms the reconnect.
  *
  * Sibling to ./viewController: it reuses aiController's shared transport and
  * paired-server singletons so "which laptop" stays single-sourced. Never throws —
@@ -20,9 +20,14 @@ import { setServerStatus } from '../transport/status';
 export interface UpdateResult {
   /** True once the rebuild succeeded and the restart was kicked off. */
   ok?: boolean;
-  /** Which step failed, when ok is false: 'pull' | 'build' | 'swap' | 'locate'. */
+  /**
+   * Which step failed, when ok is false:
+   * 'branch' | 'locate' | 'fetch' | 'checkout' | 'build' | 'swap'.
+   */
   phase?: string;
-  /** Tail of the combined git-pull + go-build output, for the card to show. */
+  /** The branch the server actually built (main when the note named none). */
+  branch?: string;
+  /** Tail of the combined git + go-build output, for the card to show. */
   out?: string;
   /** True when the server is going down to relaunch into the new binary. */
   restarting?: boolean;
@@ -31,20 +36,24 @@ export interface UpdateResult {
 }
 
 /**
- * Trigger a self-update on the paired laptop: pull, rebuild, restart. Posts to
- * /update over the pinned tunnel and returns the server's build result. A dropped
+ * Trigger a self-update on the paired laptop: fetch + check out `branch` (the
+ * server's default, main, when it's omitted), rebuild, restart. Posts to /update
+ * over the pinned tunnel and returns the server's build result. A dropped
  * connection is reported as an error, but note the server may still be mid-restart
  * — the caller should fall back to waitForServerBack to find out.
  */
-export async function updateServer(): Promise<UpdateResult> {
+export async function updateServer(branch?: string): Promise<UpdateResult> {
   const t = getTransport();
   if (!t) return { error: NO_MODULE };
   const server = await currentServer();
   if (!server) return { error: 'Not connected. Pair first with “/pair <payload>”.' };
+  const query = branch ? `?branch=${encodeURIComponent(branch)}` : '';
   try {
-    const res = await t.postPinned(`https://${server.host}:${server.port}/update`, server.pin, {
-      headers: { Authorization: `Bearer ${server.token}` },
-    });
+    const res = await t.postPinned(
+      `https://${server.host}:${server.port}/update${query}`,
+      server.pin,
+      { headers: { Authorization: `Bearer ${server.token}` } },
+    );
     if (res.status !== 200) {
       setServerStatus(res.status === 401 ? 'disconnected' : 'connected');
       return { error: `The laptop rejected the update (${res.status}).` };

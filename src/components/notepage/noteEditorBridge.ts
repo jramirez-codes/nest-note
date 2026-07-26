@@ -72,6 +72,7 @@ export interface EditorMessage {
   project?: string;
   port?: number;
   query?: string;
+  branch?: string;
   open?: boolean;
   on?: boolean;
 }
@@ -436,36 +437,45 @@ export function handleEditorMessage(ctx: BridgeContext, e: WebViewMessageEvent):
       }
     });
   } else if (msg.type === 'updateServer' && typeof msg.id === 'string') {
-    // Tell the paired laptop to pull, rebuild its Go server, and restart. The
-    // card shows the build output and tracks the phases: running → (on success)
-    // "restarting…" while the server relaunches, then "reconnected" once its
-    // liveness probe answers again; on failure it shows which step broke.
+    // Tell the paired laptop to check out a branch (main unless the note named
+    // one), rebuild its Go server, and restart. The card shows the build output
+    // and tracks the phases: running → (on success) "restarting…" while the
+    // server relaunches, then "reconnected" once its liveness probe answers
+    // again; on failure it shows which step broke.
     const id = msg.id;
+    const branch = typeof msg.branch === 'string' && msg.branch ? msg.branch : undefined;
     const done = (patch: { status: string; msg: string; out?: string }) =>
       inject(`window.__aiDone(${JSON.stringify(id)}, ${JSON.stringify(patch)});`);
-    updateServer().then(res => {
+    updateServer(branch).then(res => {
       if (res.error) {
         done({ status: 'error', msg: res.error });
         return;
       }
+      // Name the branch in every outcome — with a branch argument in play, "which
+      // code is this laptop now running" is the whole point of the card.
+      const on = res.branch ? ` (${res.branch})` : '';
       if (!res.ok) {
         const label =
-          res.phase === 'pull'
-            ? 'git pull failed'
-            : res.phase === 'build'
-              ? 'Rebuild failed'
-              : 'Update failed';
+          res.phase === 'branch'
+            ? 'Bad branch name'
+            : res.phase === 'fetch'
+              ? `git fetch failed${on}`
+              : res.phase === 'checkout'
+                ? `Checkout failed${on}`
+                : res.phase === 'build'
+                  ? `Rebuild failed${on}`
+                  : `Update failed${on}`;
         done({ status: 'error', msg: label, out: res.out });
         return;
       }
       // Rebuilt; the server is relaunching into the new binary. Keep the card
       // in-flight (status 'running' preserves its id) until the probe answers.
-      done({ status: 'running', msg: 'Rebuilt — restarting server…', out: res.out });
+      done({ status: 'running', msg: `Rebuilt${on} — restarting server…`, out: res.out });
       waitForServerBack().then(back => {
         done({
           status: back ? 'ok' : 'error',
           msg: back
-            ? 'Server updated & reconnected'
+            ? `Server updated${on} & reconnected`
             : 'Rebuilt, but the server didn’t come back — check the laptop',
           out: res.out,
         });
