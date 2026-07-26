@@ -115,6 +115,7 @@ function runFoot(id) {
     footClass: 'cm-ask-foot cm-run-foot cm-ov-foot',
     inputClass: 'cm-ask-followup cm-run-stdin',
     placeholder: 'stdin — Enter to send…',
+    draftKey: id,
     onSubmit: input => {
       const text = input.value;
       input.value = '';
@@ -134,6 +135,7 @@ function codeFoot(id) {
     footClass: 'cm-ask-foot cm-run-foot cm-ov-foot',
     inputClass: 'cm-ask-followup cm-code-prompt',
     placeholder: 'Message the agent — Enter to send…',
+    draftKey: id,
     onSubmit: input => {
       const text = input.value.trim();
       if (!text) return;
@@ -155,6 +157,7 @@ function chatFoot(view, id) {
     footClass: 'cm-ask-foot cm-ov-foot',
     inputClass: 'cm-ask-followup',
     placeholder: 'Ask a follow-up…',
+    draftKey: id,
     onSubmit: input => {
       const text = input.value.trim();
       if (!text) return;
