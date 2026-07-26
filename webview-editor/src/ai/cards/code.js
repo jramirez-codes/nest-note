@@ -232,7 +232,10 @@ export const styles = {
   '.cm-code-spacer': { flex: '1', minWidth: '0' },
   '.cm-code-log': {
     margin: '10px 0 0 0',
-    padding: '4px 2px',
+    // Horizontal inset only — the 10px margin above and the body's 12px below are
+    // this transcript's vertical space, same as /run's and /ask's. Padding here
+    // stacked on both and pushed the card's inset off the 10/12 the shell uses.
+    padding: '0 2px',
     maxHeight: '420px',
     overflow: 'auto',
     display: 'flex',

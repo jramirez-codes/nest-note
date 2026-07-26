@@ -236,8 +236,14 @@ export const styles = {
     padding: '0 12px 12px 12px',
     borderTop: `1px solid ${c.surface0}`,
   },
+  // Block-level flex, NOT inline-flex: as an inline-level box this sat on the
+  // parent's text baseline, so the line box reserved descender + half-leading room
+  // (~6px of the 17px/1.5 note text) *under* the dots that nothing filled. Against
+  // the 12px above them the card read bottom-heavy while thinking. Blockifying
+  // drops the line box entirely, leaving the padding as the only vertical space.
+  // /clean and /ingest render these as a flex item, which is blockified anyway.
   '.cm-ask-thinking': {
-    display: 'inline-flex',
+    display: 'flex',
     gap: '4px',
     alignItems: 'center',
     paddingTop: '12px',

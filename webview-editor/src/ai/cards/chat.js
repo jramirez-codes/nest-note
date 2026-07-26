@@ -194,10 +194,14 @@ export const styles = {
   // The inline transcript scroller: capped at the same height as the /run log so a
   // long thread scrolls in place instead of stretching the card past the screen.
   // The overlay's own `.cm-ov .cm-chat-log` rule lifts this cap for the full page.
+  // No bottom padding: the follow-up composer below brings its own 12px top margin
+  // (`.cm-ask-foot`), and while a turn streams there is no composer at all — the
+  // padding then stacked on the body's 12px and left the "Thinking…" dots floating
+  // in ~32px of space with 12px above them. The overlay's rule adds its own
+  // generous scroll room for the full page.
   '.cm-chat-log': {
     maxHeight: '340px',
     overflow: 'auto',
-    paddingBottom: '20px',
     WebkitOverflowScrolling: 'touch',
   },
   // Each follow-up turn shows its question as a small prompt bubble above the
