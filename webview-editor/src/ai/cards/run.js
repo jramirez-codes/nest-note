@@ -210,9 +210,11 @@ export const styles = {
   },
   '.cm-run-log': {
     margin: '10px 0 0 0',
-    // Extra bottom padding is scroll room so the last line lifts clear of the
-    // stdin footer below instead of butting right against it.
-    padding: '10px 10px 28px 10px',
+    // Even inset all round. The stdin footer is outside this bordered box and
+    // already sits 12px below it, so extra bottom padding bought nothing — it just
+    // made a short (or finished) log look bottom-heavy inside its own border. The
+    // overlay adds real scroll room for the full-page log.
+    padding: '10px',
     maxHeight: '340px',
     overflow: 'auto',
     backgroundColor: c.crust,
