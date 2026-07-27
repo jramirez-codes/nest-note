@@ -62,9 +62,12 @@ func TestProjectsHandler(t *testing.T) {
 // TestDeleteProjectHandler covers the destructive /projects/delete: it removes
 // the slugged folder when enabled, refuses without the token (401) or with /code
 // off (403), 404s an unknown project, and never touches anything outside the
-// projects base — a traversal-y name just slugs down to a sibling folder.
+// projects base — a traversal-y name just slugs down to a sibling folder. It also
+// takes out any scheduled build's crontab line, without which cron would keep
+// firing at a directory that no longer exists.
 func TestDeleteProjectHandler(t *testing.T) {
 	const token = "secret"
+	cron := &fakeCrontab{}
 	post := func(base, name string, enabled, auth bool) int {
 		req := httptest.NewRequest(http.MethodPost, "/projects/delete",
 			strings.NewReader(`{"project":`+strconv.Quote(name)+`}`))
@@ -72,7 +75,7 @@ func TestDeleteProjectHandler(t *testing.T) {
 			req.Header.Set("Authorization", "Bearer "+token)
 		}
 		rec := httptest.NewRecorder()
-		deleteProjectHandler(token, base, enabled).ServeHTTP(rec, req)
+		deleteProjectHandler(token, base, enabled, cron.io()).ServeHTTP(rec, req)
 		return rec.Code
 	}
 
@@ -82,11 +85,18 @@ func TestDeleteProjectHandler(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	cron.content = "0 4 * * * /usr/bin/backup\n" + cronLineFor("/srv/nest", "alpha") + "\n"
 	if code := post(base, "Alpha", true, true); code != http.StatusOK {
 		t.Fatalf("delete: want 200, got %d", code)
 	}
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Fatalf("delete: folder still present (err=%v)", err)
+	}
+	if strings.Contains(cron.content, cronMarker("alpha")) {
+		t.Fatalf("delete: crontab line survived:\n%s", cron.content)
+	}
+	if !strings.Contains(cron.content, "/usr/bin/backup") {
+		t.Fatalf("delete: the user's own crontab line was eaten:\n%s", cron.content)
 	}
 
 	// Unknown project: 404, not a silent success.

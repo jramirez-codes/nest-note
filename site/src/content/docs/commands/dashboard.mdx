@@ -108,6 +108,26 @@ while a reply is streaming (a revert racing a live edit would have the two
 writing over each other). The history lasts as long as the app is running: a
 change Claude made in an earlier session isn't undoable from here.
 
+### Building the idea
+
+Once the plan reads the way you want it, **Build** in the idea page's header
+hands it to the server as a real project it builds one feature at a time — see
+[scheduled builds](../server/builds.mdx). It needs `-allow-code` and
+`-allow-exec` together.
+
+Two things change on this page while a build is live:
+
+- **The chat locks.** The idea's wording is what the project plan was written
+  from, so further edits would diverge from what's actually being built. Stopping
+  the build hands it back.
+- **The header becomes a toggle.** Tapping it swaps the body between the idea and
+  the build's plan, with each feature's state beside it.
+
+Each finished feature files a **`build-step`** card here asking you to check it.
+Completing that card starts the next feature; dismissing it stops the build. It's
+an ordinary card — the same complete and dismiss buttons every other card has do
+the whole job.
+
 Claude's side of the conversation appears in a card in the **page header**,
 under the tags — usually a question it needs you to answer before it can go
 further, or a one-line note of what it just changed. The full back-and-forth

@@ -75,7 +75,14 @@ That creates and manages:
   projects/       Claude runs here; /code <name> gets projects/<name>
   mcp/            MCP servers, built on startup
   orchestrator/   subject notes maintained by /talk and /agg-tasks
+  bin/            generated helpers — currently the scheduled-build tick driver
 ```
+
+`bin/nestnote-tick` appears the first time you start a
+[scheduled build](./builds.md); it is regenerated on every start, and it is the
+one script every build's crontab entry points at. A build's own bookkeeping lives
+in `projects/<slug>/.nestnote/` and is gitignored, since project folders become
+repos you push.
 
 Without `-root`, Claude runs in `-workdir` (defaulting to the current
 directory) and MCP is disabled.
@@ -118,3 +125,5 @@ somewhere that makes sense for you rather than copying it verbatim.
 2. [Understand the security model](./security.md) — especially before enabling
    any `-allow-*` flag.
 3. [Full flag reference](./flags.md).
+4. [Scheduled builds](./builds.md) — what `-allow-code` and `-allow-exec`
+   together additionally unlock.

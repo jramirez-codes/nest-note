@@ -1,0 +1,140 @@
+---
+title: Scheduled builds
+description: Turn an idea card into a real project the server builds one feature at a time, pausing for you to validate each one.
+sidebar:
+  order: 6
+requiresServer: true
+requiresFlag:
+  - allow-code
+  - allow-exec
+---
+
+import Requires from '../../../components/Requires.astro';
+
+<Requires />
+
+An idea on your dashboard can be handed to the server as a **project it builds
+for you**. It writes a plan, then builds one feature every half hour — stopping
+after each one until you've looked at the result and said to carry on.
+
+Nothing runs unwatched for longer than a single feature. That's the whole design.
+
+## Starting one
+
+Open an idea from the dashboard's card grid and tap **Build** in the header.
+After a confirmation, the server:
+
+1. creates `projects/<slug>/` under your [`-root`](./flags.md), slugged from the
+   idea's title exactly the way `/code <name>` slugs it;
+2. seeds `CLAUDE.md` and a `.gitignore`;
+3. runs a planning agent that writes `PROJECT_PLAN.md` — the plan of record, with
+   one `## Feature N` section per build step;
+4. installs a crontab entry that will build those features in order.
+
+You can watch the planning run live from the phone, the same way you watch a
+[`/code`](../commands/projects.mdx) session.
+
+## The loop
+
+Every 30 minutes, cron pokes the server and one of these happens:
+
+| Build state | What the tick does |
+| --- | --- |
+| A run is in flight | Nothing. One agent per project, ever. |
+| A feature just finished | Puts a **`build-step` card** on the dashboard asking you to validate it. |
+| That card is untouched | Nothing. The build waits — indefinitely, if that's how long you take. |
+| You **completed** the card | Builds the next feature in the plan. |
+| You **dismissed** the card | Stops the build for good. |
+| The plan has no more features | Marks the build done and gives up its schedule. |
+
+The gate is a hard block: no feature ever starts until you've approved the one
+before it. Approving and rejecting are just the **complete** and **dismiss**
+buttons every dashboard card already has — there is no separate approval UI to
+learn.
+
+## The idea locks
+
+While a build is live, the idea page's chat composer is disabled. The idea's
+wording is what `PROJECT_PLAN.md` was written from, so editing it afterwards
+would quietly diverge from what's actually being built.
+
+Tapping the idea's header swaps the body between the idea and the plan, with each
+feature's state beside it. Stopping the build — or letting it finish — hands the
+idea back.
+
+## Stopping one
+
+The **stop** button in the idea page's header removes the crontab entry, cancels
+any run in flight, and unlocks the idea. The project folder and every feature
+already built stay exactly where they are.
+
+Deleting the project with [`/delete`](../commands/projects.mdx) also removes its
+crontab entry, so a deleted project can't leave cron firing at a folder that no
+longer exists.
+
+## `.nestnote/` never reaches GitHub
+
+Build bookkeeping — the build's status and its run logs — lives in
+`projects/<slug>/.nestnote/`. These project folders become real repos that you
+push, so the `.nestnote/` rule is **re-asserted in `.gitignore` on every tick**,
+not just written once at creation.
+
+That matters more than it sounds. The first thing a feature agent often does is
+scaffold a framework, and `npx create-next-app`, `cargo new` and friends write
+their *own* `.gitignore` over the top. A one-shot seed would vanish on feature 1
+and nobody would notice until the run logs were public.
+
+## Why cron only pokes the server
+
+The crontab line runs `<root>/bin/nestnote-tick <slug>`, and that script does
+exactly one thing: read the server's token and `POST /build/tick` on localhost.
+The agent itself runs **inside the server process**.
+
+This is deliberate. Cron gives its children `PATH=/usr/bin:/bin` and almost
+nothing else — no login profile, so no nvm, no `~/.local/bin`, and very likely no
+`claude` at all. A build driven from cron's own environment would fail at the
+first command with a confusing "not found". Poking the server instead makes the
+environment identical to the one every other run gets, by construction.
+
+It also means no copy of your environment is written to disk, and that a
+scheduled build streams to your phone like any other session.
+
+The cost: a tick that fires while the server is down does nothing, and the next
+one picks it up.
+
+### Debugging a build
+
+```bash
+NESTNOTE_TICK_DRY_RUN=1 <root>/bin/nestnote-tick my-project
+```
+
+Reports what the tick *would* do — including the prompt it would send — and
+changes nothing. Without it, iterating on a misbehaving build means waiting 30
+minutes per attempt.
+
+The driver is regenerated on every `Build`, so upgrading the server upgrades the
+one script every project's crontab entry already points at.
+
+## Crontab entries are managed for you
+
+Only the Go server ever edits your crontab — never the agent. Each managed line
+carries a marker:
+
+```text
+*/30 * * * * /srv/nest/bin/nestnote-tick greenhouse  # nestnote:greenhouse
+```
+
+which makes entries greppable and individually removable. Your own crontab lines
+are passed through untouched. Entries are removed when a build is stopped,
+rejected, finished, or its project deleted.
+
+## Limits worth knowing
+
+- **A feature run is capped by [`-run-timeout`](./flags.md)** (8 minutes by
+  default). A project whose features need longer wants that raised.
+- **The agent runs with `bypassPermissions`**, unattended, as your user — the
+  same power `/code` and `/run` have together, which is why it takes both flags.
+  See [the security model](./security.md).
+- **The tick interval is fixed at 30 minutes.** It's a constant, not a flag: a
+  faster machine doesn't want a different cadence, it just reaches the same gate
+  sooner.

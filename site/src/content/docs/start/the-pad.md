@@ -55,6 +55,11 @@ reached from the dashboard, but its chat box is somewhere to write, so the rule
 above doesn't apply while it's open. Closing the page stops a session left
 running.
 
+The exception is an idea with a [scheduled build](../server/builds.mdx) running:
+its composer — and so its mic — is replaced by a note saying the idea is locked,
+because the idea's wording is what that build's plan was written from. Stopping
+the build brings the composer back.
+
 Dictation runs on the **platform recognizer** — Android's `SpeechRecognizer`,
 iOS's Speech framework — not on the companion server, so it works unpaired. On
 Android the app holds a wake lock for the session,

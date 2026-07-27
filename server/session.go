@@ -53,9 +53,19 @@ func writeGone(c *websocket.Conn) {
 // elapsing with no socket attached — 30 min in general, 10 min for /code, whose
 // bypassPermissions process runs arbitrary code and shouldn't idle unattended.
 
+// sessionKindBuild marks a scheduled build's run. It is a distinct kind purely
+// for its orphan TTL: see sessionTTLBuild.
+const sessionKindBuild = "build"
+
 const (
 	sessionTTLDefault = 30 * time.Minute
 	sessionTTLCode    = 10 * time.Minute
+	// A scheduled build run has no watcher by design — nobody is holding a socket
+	// open at 3am — so the orphan TTL that protects an idle /code session would
+	// instead kill the very runs this exists to perform. Its real ceiling is the
+	// -run-timeout the process itself carries; this only has to outlast that, and
+	// a finished session is still swept promptly by the linger rule above.
+	sessionTTLBuild = 24 * time.Hour
 	// Keep a finished session briefly so a client reconnecting right as it ends
 	// still replays the terminal (exit/result) frame instead of getting `gone`.
 	sessionLinger = 60 * time.Second
@@ -97,10 +107,22 @@ type session struct {
 }
 
 func (s *session) ttlLocked() time.Duration {
-	if s.kind == "code" {
+	switch s.kind {
+	case "code":
 		return sessionTTLCode
+	case sessionKindBuild:
+		return sessionTTLBuild
 	}
 	return sessionTTLDefault
+}
+
+// running reports whether the owning process is still going. The build tick uses
+// it to tell "a feature run is in flight" from "the run ended and the session is
+// only lingering so a late reconnect can replay its result".
+func (s *session) running() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return !s.done
 }
 
 // emit buffers a frame for replay and, if a socket is attached, writes it live.

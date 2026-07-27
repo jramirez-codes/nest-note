@@ -72,6 +72,10 @@ Removes `projects/my-api` from the laptop. The card asks for confirmation
 first. This is a real recursive delete on your filesystem — there is no trash
 bin.
 
+If the project had a [scheduled build](../server/builds.mdx), its crontab entry
+is removed too. Without that, cron would keep firing every 30 minutes at a
+directory that no longer exists.
+
 ## `/view`
 
 > Preview a web page from a localhost dev server on the paired laptop.

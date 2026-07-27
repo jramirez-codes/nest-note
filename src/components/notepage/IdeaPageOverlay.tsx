@@ -16,12 +16,21 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronLeft, Undo2 } from 'lucide-react-native';
+import { ChevronLeft, CircleStop, Hammer, Lightbulb, ListChecks, Undo2 } from 'lucide-react-native';
 import { mocha } from '../../theme/catppuccin';
 import { useTheme } from '../../theme/colors';
 import { useKeyboardHeight } from '../../hooks/useKeyboardHeight';
 import type { Note } from '../../types/note';
 import { fetchCard, type DashboardCard } from '../../server/controllers/aiController';
+import {
+  buildIsLive,
+  cardBuild,
+  fetchBuild,
+  planMarkdown,
+  startBuild,
+  stopBuild,
+  type BuildInfo,
+} from '../../server/controllers/buildApi';
 import * as ideaChat from '../../server/ideaChat';
 import { prio } from '../dashboard/cardModel';
 import ConfirmDialog from '../modals/ConfirmDialog';
@@ -219,15 +228,86 @@ export default function IdeaPageOverlay({
     }
   }, [card, refresh]);
 
+  // ── The build ────────────────────────────────────────────────────────────
+  // An idea can be handed to the companion server to become a real project that
+  // a scheduled agent builds one feature at a time. Everything about that state
+  // is derived from the card the server stamped — never from local state — so it
+  // survives an app restart and is the same on every device.
+  const stamp = cardBuild(card);
+  const buildSlug = stamp?.slug ?? null;
+  const locked = buildIsLive(stamp?.status);
+  const [build, setBuild] = useState<BuildInfo | null>(null);
+  const [showPlan, setShowPlan] = useState(false);
+  const [confirmStart, setConfirmStart] = useState(false);
+  const [confirmStop, setConfirmStop] = useState(false);
+  const [buildBusy, setBuildBusy] = useState(false);
+  const [buildError, setBuildError] = useState<string | null>(null);
+
+  const refreshBuild = useCallback(async () => {
+    if (!buildSlug) return;
+    try {
+      const info = await fetchBuild(buildSlug);
+      if (mounted.current) setBuild(info);
+    } catch {
+      /* keep whatever the page already has rather than blanking it */
+    }
+  }, [buildSlug]);
+
+  useEffect(() => {
+    refreshBuild();
+  }, [refreshBuild]);
+
+  // While the plan is on screen and the build is live, keep it current: a feature
+  // finishing is the one thing that changes this page without the user acting.
+  useEffect(() => {
+    if (!showPlan || !buildIsLive(build?.status ?? stamp?.status)) return;
+    const t = setInterval(refreshBuild, 20000);
+    return () => clearInterval(t);
+  }, [showPlan, build?.status, stamp?.status, refreshBuild]);
+
+  const runBuildAction = useCallback(
+    async (action: () => Promise<BuildInfo>, thenShowPlan: boolean) => {
+      setBuildBusy(true);
+      try {
+        const info = await action();
+        if (!mounted.current) return;
+        setBuild(info);
+        if (thenShowPlan) setShowPlan(true);
+        // Re-read the card: the server stamps payload.build on it, and that stamp
+        // is what locks (or unlocks) this page.
+        await refresh();
+      } catch (e) {
+        if (mounted.current) {
+          setBuildError(e instanceof Error ? e.message : 'The build could not be changed.');
+        }
+      } finally {
+        if (mounted.current) setBuildBusy(false);
+      }
+    },
+    [refresh],
+  );
+
   // The card presented as a Note so the shared editor can render its Markdown body.
   // Timestamps are best-effort (0 when absent) — read-only, so they're never written.
-  const note: Note = {
-    id: card.id,
-    content: card.body ?? '',
-    title: card.title,
-    createdAt: Date.parse(card.created_at ?? '') || 0,
-    updatedAt: Date.parse(card.updated_at ?? '') || 0,
-  };
+  //
+  // The progress view is the same object built from the plan instead of the idea,
+  // which is why a rendered PROJECT_PLAN.md needs no renderer of its own.
+  const showingPlan = showPlan && build !== null;
+  const note: Note = showingPlan
+    ? {
+        id: `${card.id}::plan`,
+        content: planMarkdown(build),
+        title: build.slug,
+        createdAt: 0,
+        updatedAt: Date.parse(build.last_run ?? '') || 0,
+      }
+    : {
+        id: card.id,
+        content: card.body ?? '',
+        title: card.title,
+        createdAt: Date.parse(card.created_at ?? '') || 0,
+        updatedAt: Date.parse(card.updated_at ?? '') || 0,
+      };
 
   return (
     <Modal visible animationType="slide" statusBarTranslucent onRequestClose={onClose}>
@@ -252,20 +332,81 @@ export default function IdeaPageOverlay({
                 className="mr-1 h-9 w-9 items-center justify-center rounded-full active:bg-surface">
                 <ChevronLeft size={24} color={colors.text} strokeWidth={2} />
               </Pressable>
-              <View className="flex-1 pr-2">
+              {/* With a build attached, the title block is the progress toggle:
+                  tapping it swaps the body between the idea and its plan. */}
+              <Pressable
+                disabled={!build}
+                onPress={() => setShowPlan(v => !v)}
+                accessibilityRole={build ? 'button' : undefined}
+                accessibilityLabel={showPlan ? 'Show the idea' : 'Show the build plan'}
+                className="flex-1 pr-2">
                 <Text className="text-[11px] font-bold uppercase tracking-wider text-faint">
-                  {kindLabel}
+                  {showingPlan ? `Build · ${build.status.replace(/-/g, ' ')}` : kindLabel}
                 </Text>
                 <Text numberOfLines={1} className="text-lg font-bold text-text">
-                  {card.title}
+                  {showingPlan ? build.slug : card.title}
                 </Text>
-              </View>
-              <View className={`flex-row items-center gap-1 rounded-full px-2.5 py-1 ${p.chip}`}>
-                <View className={`h-1.5 w-1.5 rounded-full ${p.pip}`} />
-                <Text className={`text-[10px] font-bold uppercase tracking-wide ${p.text}`}>
-                  {p.label}
-                </Text>
-              </View>
+              </Pressable>
+
+              {/* Hand the idea to the server as a project it builds on a
+                  schedule. Confirmed first: this starts an unattended agent, so
+                  it should feel deliberate. */}
+              {!build && !locked && (
+                <Pressable
+                  onPress={() => setConfirmStart(true)}
+                  disabled={buildBusy}
+                  hitSlop={6}
+                  accessibilityRole="button"
+                  accessibilityLabel="Build this idea"
+                  accessibilityState={{ disabled: buildBusy }}
+                  className={`mr-1.5 flex-row items-center gap-1.5 rounded-full border border-surface1 bg-surface px-2.5 py-1 active:opacity-70 ${
+                    buildBusy ? 'opacity-50' : ''
+                  }`}>
+                  <Hammer size={13} color={colors.accent} strokeWidth={2.5} />
+                  <Text className="text-[11px] font-semibold text-muted">
+                    {buildBusy ? 'Starting…' : 'Build'}
+                  </Text>
+                </Pressable>
+              )}
+
+              {/* A live build can be called off from here — the same place it was
+                  started. The project and everything built so far stay put. */}
+              {build && buildIsLive(build.status) && (
+                <Pressable
+                  onPress={() => setConfirmStop(true)}
+                  disabled={buildBusy}
+                  hitSlop={6}
+                  accessibilityRole="button"
+                  accessibilityLabel="Stop this build"
+                  accessibilityState={{ disabled: buildBusy }}
+                  className={`mr-1.5 h-8 w-8 items-center justify-center rounded-full active:bg-surface ${
+                    buildBusy ? 'opacity-50' : ''
+                  }`}>
+                  <CircleStop size={18} color={colors.faint} strokeWidth={2} />
+                </Pressable>
+              )}
+
+              {build ? (
+                <Pressable
+                  onPress={() => setShowPlan(v => !v)}
+                  hitSlop={6}
+                  accessibilityRole="button"
+                  accessibilityLabel={showPlan ? 'Show the idea' : 'Show the build plan'}
+                  className="h-8 w-8 items-center justify-center rounded-full active:bg-surface">
+                  {showPlan ? (
+                    <Lightbulb size={18} color={colors.faint} strokeWidth={2} />
+                  ) : (
+                    <ListChecks size={18} color={colors.accent} strokeWidth={2} />
+                  )}
+                </Pressable>
+              ) : (
+                <View className={`flex-row items-center gap-1 rounded-full px-2.5 py-1 ${p.chip}`}>
+                  <View className={`h-1.5 w-1.5 rounded-full ${p.pip}`} />
+                  <Text className={`text-[10px] font-bold uppercase tracking-wide ${p.text}`}>
+                    {p.label}
+                  </Text>
+                </View>
+              )}
             </View>
 
             {/* Tags, when present — the same chips as the card, under the title. */}
@@ -333,8 +474,10 @@ export default function IdeaPageOverlay({
             />
 
             {/* Claude rewrote the idea in this conversation: offer to put it back.
-                Opaque and raised, so the body's text runs under it. */}
-            {canUndo && (
+                Opaque and raised, so the body's text runs under it. Hidden while
+                the plan is on screen — the button would be sitting over a body it
+                doesn't act on. */}
+            {canUndo && !showingPlan && (
               <Pressable
                 onPress={() => setConfirmUndo(true)}
                 disabled={undoing}
@@ -355,19 +498,34 @@ export default function IdeaPageOverlay({
           </View>
 
           {/* The chat, pinned under the idea it's about — the only writable thing
-              on the page, and how the idea itself gets changed. */}
-          <View className="border-t border-border px-3 pb-1">
-            <CardComposer
-              value={thread.draft}
-              onChangeText={text => ideaChat.setDraft(id, text)}
-              placeholder="Work on this idea…"
-              onSubmit={text => ideaChat.send(card, text)}
-              dictating={dictating}
-              onDictate={onDictate}
-              running={running}
-              onStop={() => ideaChat.stop(id)}
-            />
-          </View>
+              on the page, and how the idea itself gets changed.
+
+              Once a build exists the idea is locked: its body is now the input to
+              the project's PROJECT_PLAN.md, and further chat edits would silently
+              diverge from what is actually being built. Stopping the build (or
+              letting it finish) hands the idea back. */}
+          {locked ? (
+            <View className="flex-row items-center gap-2 border-t border-border px-4 py-3">
+              <Hammer size={14} color={colors.faint} strokeWidth={2.5} />
+              <Text className="flex-1 text-[12px] leading-4 text-faint">
+                This idea is being built, so it's locked — its wording is what the
+                project plan was written from. Stop the build to edit it again.
+              </Text>
+            </View>
+          ) : (
+            <View className="border-t border-border px-3 pb-1">
+              <CardComposer
+                value={thread.draft}
+                onChangeText={text => ideaChat.setDraft(id, text)}
+                placeholder="Work on this idea…"
+                onSubmit={text => ideaChat.send(card, text)}
+                dictating={dictating}
+                onDictate={onDictate}
+                running={running}
+                onStop={() => ideaChat.stop(id)}
+              />
+            </View>
+          )}
         </View>
 
         {/* Reverting rewrites the card server-side, so it's confirmed first — and
@@ -389,6 +547,49 @@ export default function IdeaPageOverlay({
             undo();
           }}
           onCancel={() => setConfirmUndo(false)}
+        />
+
+        {/* Starting a build hands the idea to an agent that will run unattended
+            on a schedule, so it's spelled out rather than confirmed with a shrug. */}
+        <ConfirmDialog
+          visible={confirmStart}
+          title="Build this idea"
+          message={`Turn “${card.title}” into a project the server builds for you? It writes a plan, then builds one feature every so often — pausing each time for you to check the result on the dashboard before it goes on. The idea itself locks while that runs.`}
+          confirmLabel="Build it"
+          cancelLabel="Cancel"
+          onConfirm={() => {
+            setConfirmStart(false);
+            runBuildAction(() => startBuild(card, card.title), true);
+          }}
+          onCancel={() => setConfirmStart(false)}
+        />
+
+        {/* Stopping is destructive in the sense that matters: the schedule goes
+            and a run in flight is killed. The code it already wrote is kept. */}
+        <ConfirmDialog
+          visible={confirmStop}
+          title="Stop this build"
+          message="Stop building this project? The schedule is removed and anything running now is cancelled. The project folder and every feature already built stay where they are, and the idea unlocks."
+          confirmLabel="Stop"
+          cancelLabel="Keep building"
+          destructive
+          onConfirm={() => {
+            setConfirmStop(false);
+            if (build) runBuildAction(() => stopBuild(build.slug), false);
+          }}
+          onCancel={() => setConfirmStop(false)}
+        />
+
+        {/* The build call didn't take (server gone, /code or /exec off, a folder
+            that already has a build). Nothing has changed, so this is a retry. */}
+        <ConfirmDialog
+          visible={buildError !== null}
+          title="Couldn't change the build"
+          message={buildError ?? ''}
+          confirmLabel="OK"
+          hideCancel
+          onConfirm={() => setBuildError(null)}
+          onCancel={() => setBuildError(null)}
         />
 
         {/* The revert didn't take (server gone, card deleted). The snapshot is

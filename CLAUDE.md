@@ -4,6 +4,31 @@ React Native note-taking app (the "pad") + Go companion server (`server/`) that 
 Claude-powered subjects/orchestrator, with a documentation site in `site/`
 (Astro + Starlight).
 
+## Server flags: do not add new ones
+
+**Never add a new command-line flag to the companion server — especially not a
+new `-allow-*` capability flag.** The existing flag set is final; treat it as a
+closed API.
+
+The server usually runs on a remote machine and gets updated remotely, without
+visibility into (or the ability to edit) the start script that launches it. A
+new flag is therefore a flag nobody passes: the capability silently never turns
+on, and the only fix is out-of-band access to a machine we don't have in front
+of us. It's also one more thing to keep in sync with
+`site/src/content/docs/server/flags.md`.
+
+Instead:
+
+- **Gate new capabilities on the existing `-allow-*` flags** whose powers the
+  new behavior already implies. Precedent: builds run when `-allow-code` **and**
+  `-allow-exec` are both set, because a build step is exactly those two
+  capabilities run unattended — a third flag would gate nothing new.
+- **Make tuning values** (intervals, concurrency, limits, timeouts)
+  **constants**, with a comment saying why the value doesn't need to vary by
+  machine.
+- If a change genuinely cannot be expressed with the existing flags, **stop and
+  ask** rather than adding one.
+
 ## Docs must stay in sync with the product
 
 **Any change to product functionality is not done until the matching docs in

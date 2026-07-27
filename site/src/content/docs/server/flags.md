@@ -2,7 +2,7 @@
 title: Flags reference
 description: Every command-line flag the companion server accepts, with defaults.
 sidebar:
-  order: 6
+  order: 7
 ---
 
 Source of truth: `server/main.go`. Run `go run . -h` for the same list.
@@ -67,6 +67,29 @@ tunnel.** See [the security model](./security.md).
 | `-allow-exec`  | `false` | `/run` — the direct shell channel. Arbitrary commands as this user, gated only by the pinned tunnel and token. |
 | `-allow-code`  | `false` | `/code` — a persistent Claude Code agent in `projects/<name>` with every tool auto-accepted (`bypassPermissions`). |
 | `-allow-view`  | `false` | `/view` — on-demand plaintext LAN reverse-proxies mirroring your localhost dev servers. Cleartext HTTP to anyone on the LAN. |
+
+### `-allow-code` **and** `-allow-exec` together also authorize scheduled builds
+
+Set both, and [scheduled builds](./builds.md) unlock: an idea card can become a
+project that an agent builds **on a timer, with nobody watching**, one feature at
+a time.
+
+There is no third flag for this, and that's the point — a build step is exactly
+these two capabilities run unattended (`/code`'s agent-in-a-project plus `/exec`'s
+arbitrary shell), so a flag of its own would gate nothing new. But it does widen
+what each flag means when they're set together, and that is worth knowing before
+you set them:
+
+- **Alone**, either flag runs code only when *you* ask it to, while you watch.
+- **Together**, they additionally let the server install a crontab entry that
+  starts an agent run every 30 minutes without you present.
+
+The gate on that is behavioural rather than a flag: nothing proceeds past a
+feature until you approve it on the dashboard, so at most one feature ever runs
+unwatched. Missing either flag returns 403, the same as `/code` and `/run` do.
+
+Builds also need `-root` (the gate cards live in the scaffold); without it the
+build endpoints report `mcp disabled`.
 
 ## Examples
 

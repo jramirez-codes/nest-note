@@ -70,6 +70,10 @@ func main() {
 		}
 	}
 
+	// Computed before the routes because the build tick's generated driver script
+	// bakes this address in — cron curls back to exactly the listener we start.
+	listenAddr := net.JoinHostPort(bindIP, fmt.Sprintf("%d", *port))
+
 	// Addresses the cert is valid for. The client pins the SPKI and skips
 	// hostname checks, so which one the phone uses doesn't affect trust — but
 	// listing the real ones keeps any stricter client working, including over a
@@ -128,7 +132,29 @@ func main() {
 	mux.HandleFunc("/projects", projectsHandler(token, codeBase, *allowCode))
 	// Destructive counterpart to /projects: POST a project name to remove its
 	// folder. Same base and enable flag; the phone confirms before calling it.
-	mux.HandleFunc("/projects/delete", deleteProjectHandler(token, codeBase, *allowCode))
+	// It also drops any scheduled build's crontab line for that project.
+	cron := realCrontabIO()
+	mux.HandleFunc("/projects/delete", deleteProjectHandler(token, codeBase, *allowCode, cron))
+	// Scheduled idea builds: /build/start turns an idea card into a project folder
+	// with a plan and a crontab entry, /build/tick is what that entry pokes, and
+	// each feature pauses on a dashboard card until the user validates it. Gated on
+	// -allow-code AND -allow-exec together — a build step is exactly those two
+	// capabilities run unattended, so it needs no flag of its own — plus -root,
+	// since the gate cards live in the scaffold. See server/build.go.
+	builds := buildConfig{
+		projectsBase: codeBase,
+		root:         *root,
+		stateDir:     *dir,
+		listenAddr:   listenAddr,
+		runTimeout:   *runTimeout,
+		enabled:      *allowCode && *allowExec,
+		reg:          sessions,
+		cron:         cron,
+	}
+	mux.HandleFunc("/build", buildStateHandler(token, builds))
+	mux.HandleFunc("/build/start", buildStartHandler(token, builds))
+	mux.HandleFunc("/build/stop", buildStopHandler(token, builds))
+	mux.HandleFunc("/build/tick", buildTickHandler(token, builds))
 	// Read-only dashboard state + the optional merge-approval action. Both only
 	// touch the scaffold's data files, so they need no Claude run.
 	// On-demand page-preview proxies for /view: an authed /viewstart spins up (or
@@ -150,7 +176,6 @@ func main() {
 	// editor's `/search <query>` autocomplete. See server/search.go.
 	mux.HandleFunc("/search", searchHandler(token, *root))
 
-	listenAddr := net.JoinHostPort(bindIP, fmt.Sprintf("%d", *port))
 	srv := &http.Server{
 		Addr:    listenAddr,
 		Handler: mux,
@@ -201,6 +226,9 @@ func main() {
 	}
 	if *allowCode {
 		fmt.Printf("  code       ENABLED at wss://%s/code  (/code <name> runs a Claude agent in projects/<name>, tools auto-accepted)\n", listenAddr)
+	}
+	if *allowCode && *allowExec && *root != "" {
+		fmt.Printf("  builds     ENABLED  (an idea can start a scheduled project build: cron pokes /build/tick every %d min, one feature per validation)\n", buildTickMinutes)
 	}
 	if *allowView {
 		fmt.Printf("  view       ENABLED  (/view PORT opens an on-demand PLAINTEXT LAN preview of localhost:PORT — reachable by anyone on the LAN)\n")

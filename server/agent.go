@@ -340,7 +340,11 @@ type deleteProjectRequest struct {
 // never traverse out of the projects dir. A missing folder is reported as a 404
 // rather than silently succeeding, so the phone can tell "already gone" from
 // "removed".
-func deleteProjectHandler(token, projectsBase string, enabled bool) http.HandlerFunc {
+//
+// It also takes out any crontab line a scheduled build left for this project.
+// That is mandatory, not a nicety: without it, deleting a project leaves cron
+// firing every half hour at a directory that no longer exists.
+func deleteProjectHandler(token, projectsBase string, enabled bool, cron crontabIO) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !authOK(r, token) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -369,6 +373,12 @@ func deleteProjectHandler(token, projectsBase string, enabled bool) http.Handler
 		if err := os.RemoveAll(dir); err != nil {
 			http.Error(w, "delete failed", http.StatusInternalServerError)
 			return
+		}
+		// Best effort, and after the removal: a crontab we couldn't rewrite must not
+		// stop the folder from being deleted, and the tick it fires at a missing
+		// project is a harmless 404 that logs why.
+		if err := removeCronLine(cron, slug); err != nil {
+			log.Printf("projects: delete %s left its crontab line: %v", slug, err)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(struct {

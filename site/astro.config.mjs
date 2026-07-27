@@ -105,6 +105,7 @@ export default defineConfig({
             { label: 'Security model', link: '/server/security/' },
             { label: 'Remote access', link: '/server/remote-access/' },
             { label: 'Native setup', link: '/server/native-setup/' },
+            { label: 'Scheduled builds', link: '/server/builds/' },
             { label: 'Flags reference', link: '/server/flags/' },
           ],
         },
