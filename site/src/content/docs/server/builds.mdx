@@ -29,7 +29,8 @@ straight away is still a single extra tap. Confirm it and the server:
    idea's title exactly the way `/code <name>` slugs it;
 2. seeds `CLAUDE.md` and a `.gitignore`;
 3. runs a planning agent that writes `PROJECT_PLAN.md` — the plan of record, with
-   one `## Feature N` section per build step;
+   one `## Feature N` section per build step, under an **`## Overview`** section
+   holding the idea it came from;
 4. installs a crontab entry that will build those features in order.
 
 You can watch the planning run live from the phone, the same way you watch a
@@ -37,7 +38,46 @@ You can watch the planning run live from the phone, the same way you watch a
 
 Back in the Ideas view, that idea's row swaps its lightbulb for a **hammer** for as
 long as the build holds it — so a glance down the list says which ideas are projects
-now. It goes back to a lightbulb when the build finishes or you stop it.
+now. It goes back to a lightbulb if you stop the build before it reaches its first
+feature; after that the idea has moved (see below) and there is no row left to
+change.
+
+## The idea becomes the project
+
+An idea only sits in the Ideas section until the project it describes is real. The
+moment the build files its **first step card** — feature 1 built and waiting on
+you — the idea moves onto it:
+
+- **The step card takes the idea.** Its name, its body, and its tags. The card is
+  titled *"Greenhouse tracker"*, not *"Validate: running skeleton"*, with the
+  feature it's asking about on the line underneath.
+- **The plan takes the idea too.** `PROJECT_PLAN.md` opens with an `## Overview`
+  section — the idea's name, its **Problem** and its **Idea**, in your own words —
+  above Feature 1. It's the first thing you see behind the page's plan toggle, and
+  the first thing each feature run reads.
+- **The idea card is then deleted** from the Ideas section. Nothing is lost: it is
+  dismissed the same way dragging a card off the dashboard dismisses one, so the
+  file stays on the server, which is what lets the plan's overview keep being
+  re-asserted from it.
+
+Two copies of an idea is one too many. The old arrangement left the idea sitting in
+the Ideas view *next to* the steps of the project it had already become — going
+stale, still offering a **Build** button for a build that was already running, and
+splitting "what is this project" across two cards. Now the answer is in one place
+per question: the **step card** is where you review and steer it, the **overview**
+is where the plan says what it's for.
+
+What follows from that:
+
+- **Later steps are named after the idea too**, but don't repeat its body — what
+  feature 6's card is about is feature 6. The idea itself is on the first step.
+- **The `## Overview` section is the server's, not the agent's.** It is rewritten
+  from the idea card on every tick, so a run that reworded it — feature runs and
+  [revisions](#asking-for-changes-to-what-it-built) both edit the plan — can't
+  paraphrase away the only record of what the project is for.
+- **Handing the same idea over twice stops being possible** once its first step
+  lands. Up to that point — a build still `scheduled`, planning, or building
+  feature 1 — the idea card is still there and cancelling gives it straight back.
 
 ## Starting one later
 
@@ -101,7 +141,7 @@ Every 30 minutes, cron pokes the server and one of these happens:
 | Scheduled and due | Writes the plan, then starts feature 1. |
 | Scheduled and due, but the idea is gone | Stops the build and gives up its schedule — there is nothing left to write a plan from. |
 | A run is in flight — a feature or a [revision](#asking-for-changes-to-what-it-built) | Nothing. One agent per project, ever. |
-| A feature just finished | Puts a **`build-step` card** in the dashboard's [Ideas view](../commands/dashboard.mdx#organize-and-ideas) asking you to validate it. |
+| A feature just finished | Puts a **`build-step` card** in the dashboard's [Ideas view](../commands/dashboard.mdx#organize-and-ideas) asking you to validate it. The first one [takes the idea with it](#the-idea-becomes-the-project). |
 | That card is untouched | Nothing. The build waits — indefinitely, if that's how long you take. |
 | You **completed** the card | Builds the next feature in the plan. |
 | You completed it **and picked a time** | Nothing until that minute, then the next feature. |
@@ -130,10 +170,10 @@ There is no second thing to tick. If you'd rather reject the feature, dismiss th
 card as usual — that stops the build, and the picker refuses a step you've already
 turned down.
 
-A build step's header carries **no stop button**. Ending a whole build belongs to
-the idea it came from, not to one step of it — and a stop control there made a
-step look like a scheduled build with one way out of it, when what a step actually
-offers is the way *on*.
+A build step's header also carries the **stop button**, second to Build. It used to
+carry no such thing — ending a build belonged to the idea it came from — but the
+idea now lives on the first step card, so a step page *is* the page a running build
+has. Build still leads, because carrying on is the common answer.
 
 ## Asking for changes to what it built
 
@@ -154,6 +194,10 @@ The same box takes changes to the **plan**. If what you're asking for is really
 the run is allowed to edit `PROJECT_PLAN.md` and will say so in its reply. A plan
 you've revised having *seen* something working is worth more than the one written
 before you had.
+
+The one part of the plan a run may not touch is its **`## Overview`** — the idea
+the project came from. It is put back from the idea card on the next tick if a run
+edits it anyway.
 
 Each run appends a short **`### Revised`** note inside that feature's section of the
 plan, so the plan carries its own history of what you asked for. The build's state
@@ -177,20 +221,29 @@ idea's wording is what `PROJECT_PLAN.md` was written from, so editing it afterwa
 would quietly diverge from what's actually being built. (A build still waiting for
 its start time hasn't planned anything yet, so it doesn't lock — see above.)
 
-Tapping the idea's header swaps the body between the idea and the plan, with each
-feature's state beside it. Stopping the build — or letting it finish — hands the
-idea back.
+That lock lasts until the first feature is built, at which point the idea
+[moves onto the step card](#the-idea-becomes-the-project) and the question stops
+being about locking: from then on the way to change what's being built is the step
+card's composer, which changes the code and the plan together.
+
+Tapping the header swaps the body between the idea and the plan, with each
+feature's state beside it — on the idea page while there is one, and on every step
+page after that.
 
 ## Stopping one
 
-The **stop** button in the idea page's header removes the crontab entry, cancels
-any run in flight, and unlocks the idea. The project folder and every feature
-already built stay exactly where they are.
+The **stop** button in the page header removes the crontab entry, cancels any run
+in flight, and unlocks the idea. The project folder and every feature already built
+stay exactly where they are. It's in the same place on both pages a live build can
+be watched from: the idea's, up to the first feature, and the step card's after
+that.
 
-**Build** takes its place in the header as soon as the build ends — cancelled,
+On an **idea**, **Build** takes its place as soon as the build ends — cancelled,
 stopped, or finished — because an idea nothing is building is an idea you can
 hand over again. The plan of the build that ended stays readable behind the
-header's toggle until you do.
+header's toggle until you do. A build stopped after its first step has no idea card
+left to hand over: its steps stay on the dashboard as the record of what was built,
+and starting that project again means starting it from a new idea.
 
 It only appears once the build has begun. A build still waiting for its start time
 is called off with **Cancel build**, behind the schedule card's calendar button —
@@ -207,7 +260,9 @@ is gone by the time the request answers, not at the next tick.
   view](../commands/dashboard.mdx#organize-and-ideas) — stops the build the idea
   started. The run in flight is cancelled and the crontab entry removed. A build
   only ever existed to turn that idea into a project, so an idea you threw away
-  can't leave one running.
+  can't leave one running. (Only up to the first step card: after that the idea has
+  moved onto the build and there is no idea row left to throw away. The server
+  retiring it that way is *not* a deletion in this sense and stops nothing.)
 - **Deleting the project** with [`/delete`](../commands/projects.mdx) removes its
   crontab entry too, so a deleted project can't leave cron firing at a folder
   that no longer exists.
@@ -218,8 +273,9 @@ deleting the idea deletes the idea, not the code.
 ### Your build steps stay on the dashboard
 
 However a build ends, its `build-step` cards stay in the Ideas view. They are the
-record of what was built and what you decided about it, and **only you take one
-off the dashboard**, by dragging it up onto the header like any other card.
+record of what was built and what you decided about it — and, on the first one, of
+the idea it all came from — so **only you take one off the dashboard**, by dragging
+it up onto the header like any other card.
 
 What does change is what they say. A step the build has moved past, or one left
 open when the build stopped, gets a line quoted at the top of it saying what became

@@ -79,7 +79,9 @@ function CardListSection({
 
   // One row's height, measured from the first row (the one with no divider above it)
   // so the fixed box height tracks the live font scale. Latched to the first
-  // measurement, which every row matches — IdeaRow is a single line by design.
+  // measurement, which every row in the group matches: IdeaRow draws a fixed number
+  // of lines per kind — one for an idea, two for a build step (the idea's name and
+  // the feature being validated) — and a group holds exactly one kind.
   const [rowHeight, setRowHeight] = useState<number | null>(null);
   const handleFirstRowLayout = useCallback((e: LayoutChangeEvent) => {
     // Read the height synchronously — the event is pooled and `e.nativeEvent` goes

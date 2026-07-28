@@ -53,6 +53,12 @@ const (
 	// buildCardKind is the gate card's kind. The dashboard is kind-agnostic and
 	// renders unknown kinds through its generic fallback, so this needs no UI work.
 	buildCardKind = "build-step"
+
+	// buildFirstFeature is the feature whose step card the idea itself moves onto.
+	// The first step card a build files is the point where the idea stops being a
+	// card in the Ideas section and becomes this project: it takes the idea's name,
+	// body and tags, and the idea card is retired behind it (see writeGateCard).
+	buildFirstFeature = 1
 )
 
 // Build statuses, in the order a healthy build walks them.
@@ -77,9 +83,15 @@ func buildActive(status string) bool {
 // when a build misbehaves, this file plus the run logs beside it are the whole
 // story.
 type buildState struct {
-	Slug       string `json:"slug"`
-	CardID     string `json:"card_id"` // the idea card this build came from
-	Source     string `json:"source"`  // that card's notebook slug
+	Slug   string `json:"slug"`
+	CardID string `json:"card_id"` // the idea card this build came from
+	Source string `json:"source"`  // that card's notebook slug
+	// Idea is that card's title, captured when the build was started. The idea
+	// itself moves onto the build's first step card and comes off the dashboard, so
+	// this is what every later step card is named by — without it a build's steps
+	// would have nothing but the slug to say which project they belong to, and a
+	// slug is a folder name, not the thing the user called their idea.
+	Idea       string `json:"idea,omitempty"`
 	Status     string `json:"status"`
 	Feature    int    `json:"feature"` // the feature being built or validated (1-based; 0 while planning)
 	GateCardID string `json:"gate_card_id,omitempty"`
@@ -328,16 +340,26 @@ func parsePlanFeatures(md string) []planFeature {
 	return out
 }
 
+// readPlanDoc reads PROJECT_PLAN.md, or "" when there isn't one yet — which is
+// the normal state of a build that hasn't planned anything, not an error.
+func readPlanDoc(projectDir string) string {
+	data, err := os.ReadFile(filepath.Join(projectDir, buildPlanName))
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
 // readPlan reads and parses the project's plan, stamping each feature with the
 // status the build state implies: everything below the current feature is built
 // and validated, the current one is whatever the build is doing to it, and the
 // rest are pending.
 func readPlan(projectDir string, st buildState) []planFeature {
-	data, err := os.ReadFile(filepath.Join(projectDir, buildPlanName))
-	if err != nil {
+	doc := readPlanDoc(projectDir)
+	if doc == "" {
 		return []planFeature{}
 	}
-	feats := parsePlanFeatures(string(data))
+	feats := parsePlanFeatures(doc)
 	for i := range feats {
 		switch {
 		case feats[i].Num < st.Feature:
@@ -353,6 +375,189 @@ func readPlan(projectDir string, st buildState) []planFeature {
 		}
 	}
 	return feats
+}
+
+// ---------------------------------------------------------------------------
+// The plan's Overview — where the idea ends up
+// ---------------------------------------------------------------------------
+
+// The plan opens with an "## Overview" section holding the idea the project was
+// started from: the problem it's for, and the idea itself, in the user's own
+// words. It is the reason an idea card can be taken off the dashboard at all —
+// between this and the build's first step card, nothing about the idea is lost.
+//
+// It is the server's section, not the agent's. Every tick re-asserts it from the
+// idea card (see ensurePlanOverview), for the same reason .gitignore is
+// re-asserted: a run that rewrites the plan — and a revision run is allowed to —
+// would otherwise quietly paraphrase the idea away, one feature at a time.
+const planOverviewTitle = "Overview"
+
+// planOverviewRe matches the Overview section's own heading, and planLevel2Re any
+// "## " heading — the level the plan's sections sit at. The "# <project>" title
+// above them deliberately doesn't match: the Overview goes under it, not over it.
+var (
+	planOverviewRe = regexp.MustCompile(`(?i)^##\s+` + planOverviewTitle + `\s*$`)
+	planLevel2Re   = regexp.MustCompile(`^##(\s|$)`)
+)
+
+// parsePlanOverview returns the body of the plan's Overview section, or "" when
+// the plan has none. This is what the phone renders above the features.
+func parsePlanOverview(md string) string {
+	var body []string
+	in := false
+	scan := bufio.NewScanner(strings.NewReader(md))
+	scan.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for scan.Scan() {
+		line := scan.Text()
+		if planOverviewRe.MatchString(line) {
+			in = true
+			continue
+		}
+		if !in {
+			continue
+		}
+		// A "#" or "##" heading ends it. Deeper ones don't: the Problem/Idea
+		// sub-headings inside the overview are "###" precisely so they can't.
+		if planSectionRe.MatchString(line) {
+			break
+		}
+		body = append(body, line)
+	}
+	return strings.TrimSpace(strings.Join(body, "\n"))
+}
+
+// ideaOverview renders the Overview section for an idea card: its name, the
+// problem it's for, and the idea itself, taken from the "## Problem" and "## Idea"
+// sections of the template Claude files ideas against (see IDEA_TEMPLATE in the
+// app). An idea written without those headings keeps its whole body instead —
+// better a slightly long overview than a project whose plan can't say what it's
+// for. Returns "" when there is nothing to say, so an empty idea inserts nothing.
+func ideaOverview(c dashCard) string {
+	problem := mdSection(c.Body, "Problem")
+	idea := mdSection(c.Body, "Idea")
+
+	out := []string{"## " + planOverviewTitle, ""}
+	if title := strings.TrimSpace(c.Title); title != "" {
+		out = append(out, "**"+title+"**", "")
+	}
+	switch {
+	case problem == "" && idea == "":
+		body := strings.TrimSpace(c.Body)
+		if body == "" && strings.TrimSpace(c.Title) == "" {
+			return ""
+		}
+		if body != "" {
+			out = append(out, body, "")
+		}
+	default:
+		if problem != "" {
+			out = append(out, "### Problem", "", problem, "")
+		}
+		if idea != "" {
+			out = append(out, "### Idea", "", idea, "")
+		}
+	}
+	return strings.TrimRight(strings.Join(out, "\n"), "\n")
+}
+
+// mdSection returns the body of the first "## <name>" section of a Markdown
+// document, trimmed, or "" when there isn't one.
+func mdSection(md, name string) string {
+	head := regexp.MustCompile(`(?i)^##\s+` + regexp.QuoteMeta(name) + `\s*:?\s*$`)
+	var body []string
+	in := false
+	scan := bufio.NewScanner(strings.NewReader(md))
+	scan.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for scan.Scan() {
+		line := scan.Text()
+		if head.MatchString(line) {
+			in = true
+			continue
+		}
+		if !in {
+			continue
+		}
+		if planSectionRe.MatchString(line) {
+			break
+		}
+		body = append(body, line)
+	}
+	return strings.TrimSpace(strings.Join(body, "\n"))
+}
+
+// setPlanOverview returns the plan with `block` as its Overview section: any
+// existing one is dropped and the new one inserted above the plan's first "## "
+// section, so the overview sits under the project title and over Feature 1.
+//
+// Replace rather than leave-alone, deliberately. The idea card is locked for the
+// life of the build, so this section has exactly one correct content — and an
+// agent that rewrote the plan and reworded the overview on the way past would be
+// editing the one part of the file that isn't its to edit.
+func setPlanOverview(md, block string) string {
+	blockLines := strings.Split(block, "\n")
+	var out []string
+	skipping, inserted := false, false
+	for _, line := range strings.Split(md, "\n") {
+		if planOverviewRe.MatchString(line) {
+			skipping = true
+			continue
+		}
+		if skipping {
+			if !planSectionRe.MatchString(line) {
+				continue
+			}
+			skipping = false
+		}
+		if !inserted && planLevel2Re.MatchString(line) {
+			out = append(out, blockLines...)
+			out = append(out, "")
+			inserted = true
+		}
+		out = append(out, line)
+	}
+	if !inserted {
+		// A plan with no sections at all (a preamble the planner never finished, or
+		// one whose headings the last run mangled). The overview still belongs in
+		// the file, so it goes on the end rather than nowhere.
+		if len(out) > 0 && strings.TrimSpace(out[len(out)-1]) != "" {
+			out = append(out, "")
+		}
+		out = append(out, blockLines...)
+	}
+	return strings.Join(out, "\n")
+}
+
+// ensurePlanOverview puts the idea back at the top of the plan, and is called on
+// every tick for the same reason ensureGitignore is: the plan is a file agents
+// write to, and this section is the project's only record of what it is for once
+// the idea card has come off the dashboard.
+//
+// It writes only when the file would actually change, so an untouched plan costs
+// one read. A build with no plan yet (still `scheduled`) has nothing to put an
+// overview in, and a missing idea card leaves whatever is already there alone.
+func ensurePlanOverview(projectDir, mcpDir string, st buildState) {
+	doc := readPlanDoc(projectDir)
+	if doc == "" {
+		return
+	}
+	// The idea card is loaded even after it has been retired: dismissing is how the
+	// dashboard deletes a card, and the file stays on disk. That is what keeps this
+	// working for the whole life of a build, not just up to the first step card.
+	idea, ok := loadCard(mcpDir, st.Source, st.CardID)
+	if !ok {
+		return
+	}
+	block := ideaOverview(idea)
+	if block == "" {
+		return
+	}
+	next := setPlanOverview(doc, block)
+	if next == doc {
+		return
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, buildPlanName), []byte(next), 0o644); err != nil {
+		log.Printf("build: %s plan overview: %v", st.Slug, err)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -409,13 +614,32 @@ func gateCardID(slug string, n int) string {
 // already mutate. Ticking it off means "build the next feature"; dismissing it
 // means "stop". No new endpoint, no new action verb, no new dashboard UI — resist
 // adding a bespoke approve path here.
+//
+// It is also where an idea stops being an idea. A step card is named after the
+// idea, not after the feature, because the idea is what the user recognises the
+// project by — and the *first* one a build files takes the idea's body and tags
+// as well, after which the idea card is retired from the dashboard (see
+// retireIdeaCard). From then on the project lives in exactly two places: this
+// card, and the plan's Overview section. Nothing is duplicated onto the later
+// steps: what feature 6's card is about is feature 6.
 func writeGateCard(mcpDir string, st buildState, feat planFeature, projectDir string) error {
-	title := fmt.Sprintf("Validate %s — feature %d", st.Slug, st.Feature)
+	// The idea card, loaded whether or not it has been retired — dismissing leaves
+	// the file on disk (see retireIdeaCard), so its tags stay available to every
+	// step this build files, and the tag filter keeps working on a project's steps.
+	idea, hasIdea := loadCard(mcpDir, st.Source, st.CardID)
+
+	title := strings.TrimSpace(st.Idea)
+	if title == "" {
+		// A build started before the idea's title was recorded, or one whose idea had
+		// none. The folder name is a poor name for a project but it is a true one.
+		title = st.Slug
+	}
+	what := fmt.Sprintf("Feature %d", st.Feature)
 	if feat.Title != "" {
-		title = fmt.Sprintf("Validate: %s", feat.Title)
+		what = fmt.Sprintf("Feature %d — %s", st.Feature, feat.Title)
 	}
 	body := strings.Join([]string{
-		fmt.Sprintf("Feature %d of **%s** is built and waiting on you.", st.Feature, st.Slug),
+		fmt.Sprintf("**%s** of **%s** is built and waiting on you.", what, st.Slug),
 		"",
 		fmt.Sprintf("`%s`", projectDir),
 		"",
@@ -424,14 +648,76 @@ func writeGateCard(mcpDir string, st buildState, feat planFeature, projectDir st
 	if feat.Body != "" {
 		body += "\n\n---\n\n" + feat.Body
 	}
-	return writeCard(mcpDir, st.Source, dashCard{
+	if st.Feature == buildFirstFeature && hasIdea && strings.TrimSpace(idea.Body) != "" {
+		body += "\n\n---\n\n## The idea\n\n" + strings.TrimSpace(idea.Body)
+	}
+
+	var tags []string
+	if hasIdea {
+		tags = idea.Tags
+	}
+	if err := writeCard(mcpDir, st.Source, dashCard{
 		ID:       st.GateCardID,
 		Kind:     buildCardKind,
 		Priority: "high",
 		Title:    title,
 		Body:     body,
-		Payload:  map[string]any{"build": buildStamp(st)},
-	})
+		Tags:     tags,
+		Payload: map[string]any{
+			"build": buildStamp(st),
+			// What this step is about, kept apart from the build stamp on purpose.
+			// The stamp travels with the build — a settled step card is re-stamped
+			// with the state the build has moved *to* — while this is the step's own
+			// identity, and a card that said it was about feature 5 last week has to
+			// still say so next week.
+			"step": stepStamp(st, feat),
+		},
+	}); err != nil {
+		return err
+	}
+	// The idea now lives here and in the plan's Overview, so it comes off the
+	// dashboard. Last, and only on success: an idea retired behind a step card that
+	// failed to write would be an idea nothing is showing anywhere.
+	if st.Feature == buildFirstFeature {
+		retireIdeaCard(mcpDir, st)
+	}
+	return nil
+}
+
+// stepStamp is payload.step: which feature a step card is asking about, and what
+// that feature is called. It is what the dashboard row reads to say what is being
+// validated under the idea's name, and it never changes after the card is filed.
+func stepStamp(st buildState, feat planFeature) map[string]any {
+	stamp := map[string]any{"feature": st.Feature}
+	if feat.Title != "" {
+		stamp["title"] = feat.Title
+	}
+	return stamp
+}
+
+// retireIdeaCard takes the idea off the dashboard once its content has moved onto
+// the build's first step card. There is nowhere for an idea card to sit after
+// that: the step card carries its name, body and tags, the plan's Overview
+// carries the problem and the idea, and a second copy in the Ideas section would
+// be a stale one the moment the project moved on.
+//
+// Dismissing is what "delete" means for a card here (see actionHandler): the file
+// stays on disk, which is what keeps the idea readable to later step cards and to
+// ensurePlanOverview, and what makes the dashboard's own restore work if this
+// turns out to have been wrong.
+//
+// Deliberately not routed through the /action dismiss path: that is the *user*
+// throwing an idea away, which stops the build (stopBuildsForCard). This is the
+// build moving the idea somewhere better, and it must not stop anything.
+func retireIdeaCard(mcpDir string, st buildState) {
+	if st.CardID == "" || !validSlug(st.CardID) {
+		return
+	}
+	if _, ok := updateCard(mcpDir, st.Source, st.CardID, func(c *dashCard) {
+		c.Dismissed = true
+	}); !ok {
+		log.Printf("build: %s could not retire idea card %s/%s", st.Slug, st.Source, st.CardID)
+	}
 }
 
 // buildStamp is the payload.build object every card the build touches carries —
@@ -445,6 +731,12 @@ func buildStamp(st buildState) map[string]any {
 		"status":  st.Status,
 		"feature": st.Feature,
 		"card_id": st.CardID,
+	}
+	// The idea's name, so a step card can be titled by the project the user knows
+	// rather than by the folder it was slugged into — the idea card it would
+	// otherwise be read off is gone by the time the second step is filed.
+	if st.Idea != "" {
+		stamp["idea"] = st.Idea
 	}
 	// Carried so a page can say when the next run is due from the card alone,
 	// before it has fetched the build itself. It means the same thing in both
@@ -627,7 +919,9 @@ Write %s in this directory, and create no other files. It must:
 - make Feature 1 something that stands up end to end — a thin running skeleton, not scaffolding nobody can see;
 - keep each feature small enough to build and review in one sitting.
 
-The "## Feature N" headings are load-bearing: a separate unattended run later builds each one on its own, addressed by that number, and pauses for the user to validate it before the next. Write the plan so that is possible — each feature independently reviewable, and no feature depending on work from a later one.`,
+The "## Feature N" headings are load-bearing: a separate unattended run later builds each one on its own, addressed by that number, and pauses for the user to validate it before the next. Write the plan so that is possible — each feature independently reviewable, and no feature depending on work from a later one.
+
+Do not write an "## Overview" section. NestNote adds one above your first feature holding the idea above, in the user's own words, and it will replace anything you put under that heading.`,
 		title, strings.TrimSpace(idea), buildPlanName)
 }
 
@@ -648,6 +942,8 @@ Before you finish:
 - make it actually run: build it, run it, and fix what breaks;
 - commit your work with git (run "git init" first if this is not a repository yet);
 - append a short "### Built" note inside that feature's own section of %s saying what you did and anything the user should check.
+
+The plan's "## Overview" section is the idea this project came from, in the user's own words. Read it — it is what the features are for — but leave it exactly as it is.
 
 Do not start the next feature — the user validates this one first. Do not edit, remove, or commit the %s/ directory: it is NestNote's own bookkeeping and it is gitignored deliberately. If a generator you run overwrites .gitignore, put the "%s" line back.`,
 		buildPlanName, n, prior, buildPlanName, buildDirName, gitignoreRule)
@@ -676,7 +972,7 @@ They were shown **Feature %d** of %s, as built, and said:
 Do what they asked, in this directory. Read %s first for the context the feature was built in.
 
 - If it is a change to the feature, make it, and make it actually run: build it, run it, and fix what breaks.
-- If what they are asking for changes the plan itself — this feature's scope, or the features after it — edit %s to match, and say so in your reply. Keep the "## Feature N" heading grammar exactly as it is: later runs are addressed by those numbers.
+- If what they are asking for changes the plan itself — this feature's scope, or the features after it — edit %s to match, and say so in your reply. Keep the "## Feature N" heading grammar exactly as it is: later runs are addressed by those numbers. Leave the "## Overview" section alone — it is the idea this project came from, in the user's own words, and NestNote puts it back.
 - Commit your work with git (run "git init" first if this is not a repository yet).
 - Append a short "### Revised" note inside Feature %d's own section of %s saying what you changed.
 
@@ -722,6 +1018,13 @@ func (cfg buildConfig) tick(slug string, dryRun bool) (tickResult, error) {
 	// if the last feature's run replaced .gitignore with a generator's.
 	if err := ensureGitignore(projectDir); err != nil {
 		log.Printf("build: %s gitignore: %v", slug, err)
+	}
+	// On the same principle, and for a stronger reason: put the idea back at the
+	// top of the plan if a run dropped or reworded it. Once the first step card is
+	// filed the idea is off the dashboard, and this section is the only place the
+	// project still says what problem it was for.
+	if !dryRun {
+		ensurePlanOverview(projectDir, mcpDir, st)
 	}
 
 	res := tickResult{Status: st.Status, Feature: st.Feature}
@@ -1234,7 +1537,11 @@ const buildStartSoon = 90 * time.Second
 // so the phone parses one thing.
 type buildResponse struct {
 	buildState
-	Project  string        `json:"project"`  // absolute project dir, for the "where is it" line
+	Project string `json:"project"` // absolute project dir, for the "where is it" line
+	// Overview is the plan's Overview section — the idea this project came from, in
+	// the user's own words. The phone shows it above the features, which is where
+	// the idea is read now that its card has come off the dashboard.
+	Overview string        `json:"overview,omitempty"`
 	Features []planFeature `json:"features"` // the parsed plan, statuses stamped
 	Session  string        `json:"session"`  // session id to watch this build's current run on /code
 }
@@ -1244,6 +1551,7 @@ func (cfg buildConfig) response(slug string, st buildState) buildResponse {
 	return buildResponse{
 		buildState: st,
 		Project:    projectDir,
+		Overview:   parsePlanOverview(readPlanDoc(projectDir)),
 		Features:   readPlan(projectDir, st),
 		Session:    buildSessionID(slug, st.Feature),
 	}
@@ -1307,9 +1615,12 @@ func buildStartHandler(token string, cfg buildConfig) http.HandlerFunc {
 		}
 
 		st := buildState{
-			Slug:    slug,
-			CardID:  req.CardID,
-			Source:  req.Source,
+			Slug:   slug,
+			CardID: req.CardID,
+			Source: req.Source,
+			// Captured now, while the idea is certainly still on the dashboard: from
+			// the first step card onwards this is the only name the build has for it.
+			Idea:    strings.TrimSpace(idea.Title),
 			Status:  buildPlanning,
 			Feature: 0,
 			LastRun: nowStamp(),

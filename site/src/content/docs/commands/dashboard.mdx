@@ -112,6 +112,14 @@ Tapping a tag in the bar narrows the list to the
 ideas carrying it (and jumps back to the first page); tapping it again, or **All**,
 clears the filter.
 
+A **build step** row takes two lines rather than one, because it answers two
+questions. On top, in the row's own colour, the **idea's name** — a step card is
+where an idea lives once the project exists, so it's titled by the project you'd
+recognise. Under it, fainter and smaller, the **feature being validated**:
+*Feature 2 — Sensor ingest*. Named by the feature alone, a list of steps read as a
+pile of unrelated chores; named by the idea alone, every step of one build was the
+same row repeated.
+
 Tap a row to open that idea as a **full-screen page**, which is where the body and
 the full title live: the same editor the pad uses, rendering the card's
 `## Problem` / `## Idea` / `## Project plan` / `## Next steps` body, with its tags
@@ -165,7 +173,8 @@ Two things change on this page while a build is live:
   from, so further edits would diverge from what's actually being built. Stopping
   the build hands it back.
 - **The header becomes a toggle.** Tapping it swaps the body between the idea and
-  the build's plan, with each feature's state beside it.
+  the build's plan, with each feature's state beside it — and the plan opens with
+  an **overview** of the problem and the idea, above the features.
 
 Each finished feature files a **`build-step`** card in the **Ideas** view, in its
 own paged list under the ideas themselves — same four rows to a page, same pager, so
@@ -174,6 +183,12 @@ step waiting on you starts the next feature; dismissing it stops the build, ther
 and then — the schedule is dropped as the card clears, not half an hour later. It's
 an ordinary card — the same complete and dismiss buttons every other card has do
 the whole job.
+
+The **first** of those cards is where the idea itself ends up. It takes the idea's
+name, body and tags, and the idea card is then deleted from the Ideas section — one
+project, one card, rather than an idea slowly going stale beside the build it
+already became. See [the idea becomes the
+project](../server/builds.mdx#the-idea-becomes-the-project).
 
 Tapping one opens it as a page of its own, which is where a step is actually
 reviewed:
@@ -187,7 +202,8 @@ reviewed:
   pick — and signs the step off as part of the same choice. See [saying when the
   next feature runs](../server/builds.mdx#saying-when-the-next-feature-runs).
 
-There's no stop button: ending the whole build belongs to the idea it came from.
+- **Stop** sits beside Build once the build is running. The idea has moved onto
+  these cards, so a step page is where a live build is called off.
 
 Step cards **stay in the list** once they've been answered, whatever became of the
 build. They're the record of what got built, and the only thing that takes one off
@@ -197,7 +213,10 @@ it, and drops to low priority.
 
 Dismissing the **idea** card stops its build outright, and just as immediately: the
 schedule is dropped and anything running is cancelled. The project folder, the code
-already built, and the step cards filed along the way all stay where they are.
+already built, and the step cards filed along the way all stay where they are. That
+applies while the idea still has a row of its own — up to the first step card;
+after that, dismissing the **step** waiting on you is what rejects a feature and
+stops the build.
 
 Claude's side of the conversation appears in a card in the **page header**,
 under the tags — usually a question it needs you to answer before it can go

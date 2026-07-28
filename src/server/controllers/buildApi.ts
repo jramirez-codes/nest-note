@@ -50,6 +50,12 @@ export interface BuildInfo {
   note?: string;
   /** Absolute path of the project folder on the server. */
   project: string;
+  /**
+   * The plan's Overview section — the problem and the idea this project came from,
+   * in the user's own words. Once the build files its first step card the idea card
+   * is off the dashboard, so this (and that step card) is where the idea is read.
+   */
+  overview?: string;
   features: BuildFeature[];
   /** Session id this build's current run streams on, watchable via /code. */
   session: string;
@@ -93,7 +99,14 @@ export function buildLocksIdea(status: string | undefined): boolean {
  */
 export function cardBuild(
   card: DashboardCard,
-): { slug: string; status: string; feature: number; start_at?: string } | null {
+): {
+  slug: string;
+  status: string;
+  feature: number;
+  start_at?: string;
+  /** The name of the idea this build came from — what a step card is titled by. */
+  idea?: string;
+} | null {
   const raw = card.payload?.build;
   if (typeof raw !== 'object' || raw === null) return null;
   const b = raw as Record<string, unknown>;
@@ -104,7 +117,45 @@ export function cardBuild(
     status: String(b.status ?? ''),
     feature: typeof b.feature === 'number' ? b.feature : 0,
     start_at: typeof b.start_at === 'string' ? b.start_at : undefined,
+    idea: typeof b.idea === 'string' && b.idea ? b.idea : undefined,
   };
+}
+
+/**
+ * What a build-step card is *about*: the feature it asked you to validate, and
+ * what that feature is called.
+ *
+ * Read from `payload.step` rather than from the build stamp beside it, because the
+ * two answer different questions. The stamp travels with the build — a step the
+ * build has moved past is re-stamped with the state it moved *to* — while this is
+ * the step's own identity and never changes after the card is filed. A row saying
+ * "Feature 2" has to still say "Feature 2" once the build reaches feature 5.
+ *
+ * Null for anything that isn't a step card, and for step cards filed before the
+ * idea moved onto them (their title is still the feature's own).
+ */
+export function cardStep(card: DashboardCard): { feature: number; title?: string } | null {
+  const raw = card.payload?.step;
+  if (typeof raw !== 'object' || raw === null) return null;
+  const s = raw as Record<string, unknown>;
+  if (typeof s.feature !== 'number') return null;
+  return {
+    feature: s.feature,
+    title: typeof s.title === 'string' && s.title ? s.title : undefined,
+  };
+}
+
+/**
+ * The one line a step card says about itself under the idea's name: which feature
+ * it is, and what that feature is called. Falls back to the project it belongs to
+ * for a card filed before steps carried a `step` payload, so every step row has a
+ * second line and the list keeps one row height.
+ */
+export function stepLabel(card: DashboardCard): string {
+  const step = cardStep(card);
+  if (!step) return cardBuild(card)?.slug ?? 'Build step';
+  const n = `Feature ${step.feature}`;
+  return step.title ? `${n} — ${step.title}` : n;
 }
 
 // Shared request path for the /build endpoints. Mirrors dashboardApi's contract:
@@ -156,6 +207,7 @@ function parseBuild(text: string): BuildInfo {
     start_at: data.start_at,
     note: data.note,
     project: String(data.project ?? ''),
+    overview: data.overview,
     features: Array.isArray(data.features) ? data.features : [],
     session: String(data.session ?? ''),
   };
@@ -290,6 +342,11 @@ function dayGap(from: Date, to: Date): number {
  * Render a build's plan as Markdown for the idea page's progress view, with each
  * feature's state in front of its title. It goes through the same NotePage editor
  * the idea body uses, so this needs no renderer of its own.
+ *
+ * The plan opens with the project's **overview** — the problem and the idea it
+ * came from — above the features. That's not decoration: from the build's first
+ * step card onwards the idea has no card of its own in the Ideas section, and this
+ * is where "what is this project even for" is answered.
  */
 export function planMarkdown(build: BuildInfo): string {
   const mark = (status: string): string => {
@@ -310,6 +367,10 @@ export function planMarkdown(build: BuildInfo): string {
   };
   const head = [`# ${build.slug}`, '', statusLine(build), '', `\`${build.project}\``, ''];
   if (build.note) head.push('', `> ${build.note}`, '');
+  // The overview sits between the build's own state and the plan proper: the plan
+  // is a list of features, and this says what they add up to.
+  const overview = build.overview?.trim();
+  if (overview) head.push('', '## Overview', '', overview, '');
   if (build.features.length === 0) {
     head.push('', emptyPlanNote(build.status));
     return head.join('\n');

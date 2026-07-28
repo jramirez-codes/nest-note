@@ -194,6 +194,98 @@ func TestReadPlanStatuses(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// The plan's Overview — where the idea ends up
+// ---------------------------------------------------------------------------
+
+// TestIdeaOverviewFollowsTheTemplate: an idea filed against the "## Problem /
+// ## Idea" template becomes an overview built from exactly those two sections, at
+// a heading depth that can't be mistaken for one of the plan's own.
+func TestIdeaOverviewFollowsTheTemplate(t *testing.T) {
+	got := ideaOverview(dashCard{
+		Title: "Greenhouse tracker",
+		Body: "## Problem\n\nThe greenhouse is a mystery.\n\n## Idea\n\nA sensor and a chart.\n\n" +
+			"## Project plan\n\nSomething long.\n\n## Next steps\n\nAsk Dad.\n",
+	})
+	for _, want := range []string{
+		"## Overview", "**Greenhouse tracker**",
+		"### Problem", "The greenhouse is a mystery.",
+		"### Idea", "A sensor and a chart.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("overview is missing %q:\n%s", want, got)
+		}
+	}
+	// The idea's own plan and next steps are not the project's plan — the features
+	// below the overview are. Carrying them up here would be two plans in one file.
+	if strings.Contains(got, "Something long.") || strings.Contains(got, "Ask Dad.") {
+		t.Fatalf("overview swallowed the rest of the idea:\n%s", got)
+	}
+	// Nothing to say about an idea with nothing in it.
+	if got := ideaOverview(dashCard{}); got != "" {
+		t.Fatalf("empty idea produced %q, want an empty overview", got)
+	}
+}
+
+// TestIdeaOverviewKeepsAnUntemplatedIdea: an idea written without the template's
+// headings still has to reach the plan. Better a long overview than a project
+// whose plan can't say what it is for.
+func TestIdeaOverviewKeepsAnUntemplatedIdea(t *testing.T) {
+	got := ideaOverview(dashCard{Title: "Greenhouse tracker", Body: "Just a hunch about humidity."})
+	if !strings.Contains(got, "Just a hunch about humidity.") {
+		t.Fatalf("overview dropped an untemplated idea:\n%s", got)
+	}
+}
+
+// TestSetPlanOverviewSitsUnderTheTitle: the overview goes below the plan's "#"
+// title and above its first "##" section, and replacing one leaves the plan
+// otherwise byte-identical — which is what makes re-asserting it on every tick
+// free for a plan nobody touched.
+func TestSetPlanOverviewSitsUnderTheTitle(t *testing.T) {
+	plan := "# Greenhouse tracker\n\nA thing for a greenhouse.\n\n## Feature 1: Skeleton\n\nx\n"
+	block := "## Overview\n\n**Greenhouse tracker**\n\n### Problem\n\nA mystery.\n"
+
+	out := setPlanOverview(plan, block)
+	title := strings.Index(out, "# Greenhouse tracker")
+	overview := strings.Index(out, "## Overview")
+	feature := strings.Index(out, "## Feature 1")
+	if !(title < overview && overview < feature) {
+		t.Fatalf("overview is in the wrong place:\n%s", out)
+	}
+
+	// Re-asserting the same block changes nothing at all.
+	if again := setPlanOverview(out, block); again != out {
+		t.Fatalf("setting the same overview twice rewrote the plan:\n%s", again)
+	}
+	// A reworded overview is replaced, not stacked, and the features are untouched.
+	reworded := strings.Replace(out, "A mystery.", "The agent's own words.", 1)
+	back := setPlanOverview(reworded, block)
+	if strings.Contains(back, "The agent's own words.") {
+		t.Fatalf("a reworded overview survived:\n%s", back)
+	}
+	if strings.Count(back, "## Overview") != 1 || !strings.Contains(back, "## Feature 1: Skeleton") {
+		t.Fatalf("replacing the overview damaged the plan:\n%s", back)
+	}
+	if parsePlanOverview(back) != parsePlanOverview(out) {
+		t.Fatalf("overview did not round-trip:\n%s", back)
+	}
+}
+
+// TestParsePlanOverviewStopsAtTheFirstFeature: the overview's own "###"
+// sub-headings belong to it; the plan's "##" sections do not.
+func TestParsePlanOverviewStopsAtTheFirstFeature(t *testing.T) {
+	got := parsePlanOverview("# P\n\n## Overview\n\n### Problem\n\nA mystery.\n\n## Feature 1: A\n\nx\n")
+	if !strings.Contains(got, "### Problem") || !strings.Contains(got, "A mystery.") {
+		t.Fatalf("overview lost its own body: %q", got)
+	}
+	if strings.Contains(got, "Feature 1") || strings.Contains(got, "x") {
+		t.Fatalf("overview ran into the plan: %q", got)
+	}
+	if got := parsePlanOverview("# P\n\n## Feature 1: A\n\nx\n"); got != "" {
+		t.Fatalf("a plan with no overview parsed as %q", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Test fixtures
 // ---------------------------------------------------------------------------
 
@@ -1802,5 +1894,218 @@ func TestScheduledBuildHaltsIfTheIdeaWasDismissed(t *testing.T) {
 	}
 	if f.cfg.reg.get(buildSessionID(f.slug, 0)) != nil {
 		t.Fatal("a dismissed idea still started its planning run")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The idea moves onto the build
+// ---------------------------------------------------------------------------
+
+// stepPayload pulls payload.step off a card, through the JSON round trip a real
+// card takes (so `feature` arrives as a float64, exactly as the phone sees it).
+func stepPayload(t *testing.T, c dashCard) map[string]any {
+	t.Helper()
+	raw, ok := c.Payload["step"].(map[string]any)
+	if !ok {
+		t.Fatalf("card %s carries no step payload: %#v", c.ID, c.Payload)
+	}
+	return raw
+}
+
+// TestFirstStepCardTakesTheIdea is the whole move: the first step card a build
+// files stops being "validate feature 1" and becomes the idea — its name, its
+// body, its tags — and the idea card comes off the dashboard behind it.
+func TestFirstStepCardTakesTheIdea(t *testing.T) {
+	f := newBuildFixture(t)
+	if err := writeCard(f.mcpDir, f.source, dashCard{
+		ID:    "idea-4f2a",
+		Kind:  "idea",
+		Title: "Greenhouse tracker",
+		Body:  "## Problem\n\nThe greenhouse is a mystery.\n\n## Idea\n\nA sensor and a chart.\n",
+		Tags:  []string{"garden", "hardware"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	st := buildState{
+		Slug: f.slug, Source: f.source, CardID: "idea-4f2a", Idea: "Greenhouse tracker",
+		Status: buildAwaiting, Feature: 1, GateCardID: gateCardID(f.slug, 1),
+	}
+	feat := planFeature{Num: 1, Title: "Running skeleton", Body: "A page that renders."}
+	if err := writeGateCard(f.mcpDir, st, feat, f.dir); err != nil {
+		t.Fatal(err)
+	}
+
+	step, ok := loadCard(f.mcpDir, f.source, st.GateCardID)
+	if !ok {
+		t.Fatal("no step card was filed")
+	}
+	if step.Title != "Greenhouse tracker" {
+		t.Fatalf("step title = %q, want the idea's name", step.Title)
+	}
+	// Both halves of what the card is: the idea, and the feature under review.
+	if !strings.Contains(step.Body, "A sensor and a chart.") {
+		t.Fatalf("the idea did not move onto the step card:\n%s", step.Body)
+	}
+	if !strings.Contains(step.Body, "Feature 1 — Running skeleton") {
+		t.Fatalf("the step card does not say what it is validating:\n%s", step.Body)
+	}
+	if len(step.Tags) != 2 || step.Tags[0] != "garden" {
+		t.Fatalf("tags = %v, want the idea's", step.Tags)
+	}
+	if p := stepPayload(t, step); p["feature"] != float64(1) || p["title"] != "Running skeleton" {
+		t.Fatalf("step payload = %#v", p)
+	}
+
+	idea, ok := loadCard(f.mcpDir, f.source, "idea-4f2a")
+	if !ok {
+		t.Fatal("the idea card was deleted from disk, not retired")
+	}
+	if !idea.Dismissed {
+		t.Fatal("the idea is still in the Ideas section next to the step it moved onto")
+	}
+}
+
+// TestLaterStepCardsAreNamedByTheIdeaButDoNotRepeatIt: every step of a build is
+// named after the project, so a list of steps says whose they are — but the idea
+// itself is on the first one, not copied onto all six.
+func TestLaterStepCardsAreNamedByTheIdeaButDoNotRepeatIt(t *testing.T) {
+	f := newBuildFixture(t)
+	st := buildState{
+		Slug: f.slug, Source: f.source, CardID: "idea-4f2a", Idea: "Greenhouse tracker",
+		Status: buildAwaiting, Feature: 2, GateCardID: gateCardID(f.slug, 2),
+	}
+	if err := writeGateCard(f.mcpDir, st, planFeature{Num: 2, Title: "Sensor ingest"}, f.dir); err != nil {
+		t.Fatal(err)
+	}
+	step, ok := loadCard(f.mcpDir, f.source, st.GateCardID)
+	if !ok {
+		t.Fatal("no step card was filed")
+	}
+	if step.Title != "Greenhouse tracker" {
+		t.Fatalf("step title = %q, want the idea's name", step.Title)
+	}
+	if strings.Contains(step.Body, "The greenhouse is a mystery.") {
+		t.Fatalf("the idea was copied onto a later step:\n%s", step.Body)
+	}
+	if p := stepPayload(t, step); p["feature"] != float64(2) {
+		t.Fatalf("step payload = %#v, want feature 2", p)
+	}
+	// The idea only moves once. Feature 2's card is not the place it happens.
+	if idea, _ := loadCard(f.mcpDir, f.source, "idea-4f2a"); idea.Dismissed {
+		t.Fatal("a later step retired the idea card")
+	}
+}
+
+// TestStepCardFallsBackToTheSlug: a build started before the idea's title was
+// recorded still has to name its steps something. The folder is a poor name for a
+// project but a true one.
+func TestStepCardFallsBackToTheSlug(t *testing.T) {
+	f := newBuildFixture(t)
+	st := buildState{
+		Slug: f.slug, Source: f.source, CardID: "idea-4f2a",
+		Status: buildAwaiting, Feature: 2, GateCardID: gateCardID(f.slug, 2),
+	}
+	if err := writeGateCard(f.mcpDir, st, planFeature{Num: 2, Title: "Sensor ingest"}, f.dir); err != nil {
+		t.Fatal(err)
+	}
+	step, _ := loadCard(f.mcpDir, f.source, st.GateCardID)
+	if step.Title != f.slug {
+		t.Fatalf("step title = %q, want the project slug", step.Title)
+	}
+}
+
+// TestBuildStartRecordsTheIdeasName: the title is captured while the idea is
+// certainly still on the dashboard, because from the first step card onwards it
+// is the only name the build has for it.
+func TestBuildStartRecordsTheIdeasName(t *testing.T) {
+	const token = "secret"
+	f := newBuildFixture(t)
+	at := time.Now().Add(2 * time.Hour)
+	body := fmt.Sprintf(`{"card_id":"idea-4f2a","source":"greenhouse","project":"greenhouse tracker","start_at":%q}`,
+		at.Format(time.RFC3339))
+	req := httptest.NewRequest(http.MethodPost, "/build/start?token="+token, strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	buildStartHandler(token, f.cfg).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+	st, ok := loadBuild(f.cfg.buildDir("greenhouse-tracker"))
+	if !ok {
+		t.Fatal("no build state on disk")
+	}
+	if st.Idea != "Greenhouse tracker" {
+		t.Fatalf("recorded idea name = %q, want the card's title", st.Idea)
+	}
+	// And it reaches the phone on the stamp every card the build touches carries.
+	idea, _ := loadCard(f.mcpDir, f.source, "idea-4f2a")
+	stamp, _ := idea.Payload["build"].(map[string]any)
+	if stamp["idea"] != "Greenhouse tracker" {
+		t.Fatalf("build stamp = %#v, want the idea's name on it", stamp)
+	}
+}
+
+// TestTickPutsTheIdeaBackAtTheTopOfThePlan: the Overview is the server's section,
+// not the agent's. A revision run that reworded it (they are allowed to edit the
+// plan) has it replaced on the next tick, in the user's own words — this is the
+// only place a project still says what problem it was for once the idea card is
+// off the dashboard.
+func TestTickPutsTheIdeaBackAtTheTopOfThePlan(t *testing.T) {
+	f := newBuildFixture(t)
+	f.writePlan(t, "# Greenhouse tracker\n\nintro\n\n## Overview\n\nSomething the agent made up.\n\n"+
+		"## Feature 1: A\n\nx\n")
+	gate := gateCardID(f.slug, 1)
+	f.writeState(t, buildState{Status: buildAwaiting, Feature: 1, GateCardID: gate})
+	if err := writeCard(f.mcpDir, f.source, dashCard{
+		ID: gate, Kind: buildCardKind, Title: "Greenhouse tracker",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The gate is untouched, so the tick does nothing to the build itself.
+	if _, err := f.cfg.tick(f.slug, false); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(f.dir, buildPlanName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := string(data)
+	if !strings.Contains(plan, "The greenhouse is a mystery.") {
+		t.Fatalf("the idea did not go back into the plan:\n%s", plan)
+	}
+	if strings.Contains(plan, "Something the agent made up.") {
+		t.Fatalf("the agent's overview survived the tick:\n%s", plan)
+	}
+	if !strings.Contains(plan, "## Feature 1: A") {
+		t.Fatalf("re-asserting the overview damaged the plan:\n%s", plan)
+	}
+	// And it is what /build reports, which is what the phone shows above the features.
+	if ov := f.cfg.response(f.slug, buildState{Slug: f.slug}).Overview; !strings.Contains(ov, "The greenhouse is a mystery.") {
+		t.Fatalf("the response's overview = %q", ov)
+	}
+}
+
+// TestTickOverviewSurvivesARetiredIdea: the idea card is dismissed, not deleted,
+// precisely so the plan can keep being re-asserted from it for the whole life of
+// the build — not just up to the first step card.
+func TestTickOverviewSurvivesARetiredIdea(t *testing.T) {
+	f := newBuildFixture(t)
+	f.writePlan(t, "# Greenhouse tracker\n\n## Feature 2: B\n\ny\n")
+	gate := gateCardID(f.slug, 2)
+	f.writeState(t, buildState{Status: buildAwaiting, Feature: 2, GateCardID: gate})
+	if err := writeCard(f.mcpDir, f.source, dashCard{ID: gate, Kind: buildCardKind}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := updateCard(f.mcpDir, f.source, "idea-4f2a", func(c *dashCard) { c.Dismissed = true }); !ok {
+		t.Fatal("could not retire the idea card")
+	}
+
+	if _, err := f.cfg.tick(f.slug, false); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(f.dir, buildPlanName))
+	if !strings.Contains(string(data), "The greenhouse is a mystery.") {
+		t.Fatalf("a retired idea stopped reaching the plan:\n%s", data)
 	}
 }

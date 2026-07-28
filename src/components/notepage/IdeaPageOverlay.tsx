@@ -38,6 +38,7 @@ import {
   buildIsLive,
   buildLocksIdea,
   cardBuild,
+  cardStep,
   fetchBuild,
   planMarkdown,
   reviseBuild,
@@ -104,8 +105,12 @@ const noop = () => {};
  * again. So a step is reviewed the way anyone actually reviews something: "nearly,
  * but…", as many times as it takes, and then yes.
  *
- * The one control a step doesn't get is the stop button. Ending the build belongs
- * to the idea it came from.
+ * A step page is also where the idea itself ends up. The build's *first* step card
+ * takes the idea's name, body and tags, and the idea card is retired from the
+ * dashboard behind it — so this page opened on a step shows the idea under the
+ * header, exactly as it did when the idea had a card of its own, with the toggle
+ * swapping it for the plan (whose Overview says the same thing). That is also why a
+ * step now carries the stop button: it is the page the build has.
  *
  * Because those writes are Claude's and not the user's, they're undoable: once a
  * turn has changed the card, an Undo control appears over the body's top-right
@@ -131,8 +136,17 @@ export default function IdeaPageOverlay({
   // composer off the keyboard by itself. Pad the sheet by the keyboard instead.
   const keyboard = useKeyboardHeight();
   const tags = card.tags ?? [];
+  // A step card is titled by the idea, so its eyebrow carries the other half of
+  // what it is: which feature of that idea this page is about.
+  const step = cardStep(card);
   const kindLabel =
-    card.kind === 'idea' ? 'Idea' : card.kind === 'build-step' ? 'Build step' : card.kind;
+    card.kind === 'idea'
+      ? 'Idea'
+      : card.kind === 'build-step'
+        ? step
+          ? `Build step · feature ${step.feature}`
+          : 'Build step'
+        : card.kind;
 
   const id = card.id;
   const thread = useSyncExternalStore(
@@ -505,18 +519,21 @@ export default function IdeaPageOverlay({
                 </Pressable>
               )}
 
-              {/* A build that has begun can be called off from the idea it came
-                  from — the same place it was started. The project and everything
-                  built so far stay put. A build still waiting for its start time
-                  isn't stopped from up here: calling it off is one of the two
-                  things the schedule card below offers, next to the time it would
-                  undo.
+              {/* A build that has begun can be called off from wherever it is being
+                  watched. The project and everything built so far stay put. A build
+                  still waiting for its start time isn't stopped from up here:
+                  calling it off is one of the two things the schedule card below
+                  offers, next to the time it would undo.
 
-                  Never on a build step. Stopping the whole build is not what that
-                  card is about, and putting it here made a step look like a
-                  scheduled build with one way out — when what the step actually
-                  wants is the Build button above, carrying it on. */}
-              {liveBuild && !waiting && !isStep && (
+                  Including on a build step, which is a change: it used to be the
+                  idea's control alone, on the grounds that ending a build isn't
+                  what a step card is about. That reasoning has expired — the idea
+                  moves onto the first step card and comes off the dashboard, so a
+                  step page is the page a running build has. Leaving stop on the
+                  idea would leave a build with nowhere to stop it. It still sits
+                  second to the Build button, because carrying on is the common
+                  answer and stopping is the rare one. */}
+              {liveBuild && !waiting && (
                 <Pressable
                   onPress={() => setConfirmStop(true)}
                   disabled={buildBusy}
@@ -822,9 +839,9 @@ export default function IdeaPageOverlay({
                 <Text className="flex-1 text-[11px] leading-4 text-faint">
                   {buildRunning
                     ? `${slug ?? 'The project'} is working. This step comes back when the run lands, and you can pick it up from there.`
-                    : `This step is closed — the build has moved on. ${
-                        slug ?? 'The project'
-                      }'s idea is where it's picked back up.`}
+                    : `This step is closed — the build has moved on. Its latest step is where ${
+                        slug ?? 'the project'
+                      } is picked back up.`}
                 </Text>
               </View>
             )
@@ -835,7 +852,8 @@ export default function IdeaPageOverlay({
               </View>
               <Text className="flex-1 text-[11px] leading-4 text-faint">
                 This idea is locked while it's being built — its wording is what the project plan
-                was written from. Stop the build to edit it again.
+                was written from, and it moves onto the build's first step once that lands. Stop
+                the build to edit it again.
               </Text>
             </View>
           ) : (
@@ -914,7 +932,9 @@ export default function IdeaPageOverlay({
           message={
             waiting
               ? 'Call this build off before it starts? The crontab entry is removed and nothing ever runs — no plan is written and no code is generated. The empty project folder stays where it is.'
-              : 'Stop building this project? The schedule is removed and anything running now is cancelled. The project folder and every feature already built stay where they are, and the idea unlocks.'
+              : isStep
+                ? 'Stop building this project? The schedule is removed and anything running now is cancelled. The project folder and every feature already built stay where they are, and this step stays on the dashboard as the record of what was built.'
+                : 'Stop building this project? The schedule is removed and anything running now is cancelled. The project folder and every feature already built stay where they are, and the idea unlocks.'
           }
           confirmLabel="Stop"
           cancelLabel={waiting ? 'Leave it scheduled' : 'Keep building'}

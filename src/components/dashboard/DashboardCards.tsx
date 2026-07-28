@@ -32,7 +32,7 @@ import {
 import type { ThemeColors } from '../../theme/colors';
 import type { DashboardCard } from '../../server/controllers/aiController';
 import type { CardDragShared } from '../../hooks/useCardDrag';
-import { buildIsLive, cardBuild } from '../../server/controllers/buildApi';
+import { buildIsLive, cardBuild, stepLabel } from '../../server/controllers/buildApi';
 import { deriveTitle, type Note } from '../../types/note';
 import { prio, relDate, type TaskView } from './cardModel';
 
@@ -453,15 +453,25 @@ export function ArchivedList({
 }
 
 // One row in a card list — ideas, build steps and, as the graceful fallback, any
-// unknown kind. Deliberately the same shape as TaskRow: a single line of fixed
-// height (so the list box can measure one row and hold five of them), reading as
-// the kind's glyph in a priority-tinted chip (a hammer once a build has the idea on
-// a schedule), the title, the due date when the card carries one, and a chevron for
-// the page behind it. The chip's colour IS the
-// priority — the tint and glyph say it without spending a row's width on the word
-// "Urgent". Tapping the row opens the card as a full read-only page (see onPress →
-// IdeaPageOverlay), which is where the body, tags and untruncated title live. This
-// is what makes the engine scalable: emit a novel kind and it renders.
+// unknown kind. Deliberately the same shape as TaskRow: a fixed-height row (so the
+// list box can measure one and hold five of them), reading as the kind's glyph in a
+// priority-tinted chip (a hammer once a build has the idea on a schedule), the
+// title, the due date when the card carries one, and a chevron for the page behind
+// it. The chip's colour IS the priority — the tint and glyph say it without
+// spending a row's width on the word "Urgent". Tapping the row opens the card as a
+// full read-only page (see onPress → IdeaPageOverlay), which is where the body,
+// tags and untruncated title live. This is what makes the engine scalable: emit a
+// novel kind and it renders.
+//
+// A **build step** is the one kind that takes two lines, because it is the one kind
+// that answers two questions. Its title is the *idea* — a build step is where an
+// idea lives once the project exists, and the Ideas section no longer has a card
+// for it — and under that, in the faint colour, the feature it is asking you to
+// validate. Titled by the feature alone (as it was) a list of steps read as a pile
+// of unrelated chores with no way to tell whose project each belonged to; titled by
+// the idea alone, every step of a build would be the same row repeated. Both lines
+// are always drawn for a step card, even one filed before steps carried what the
+// second line says, so the group keeps one row height for the box to measure.
 export function IdeaRow({
   card,
   colors,
@@ -490,6 +500,7 @@ export function IdeaRow({
   const status = card.kind === 'idea' ? cardBuild(card)?.status : undefined;
   const building = buildIsLive(status);
   const scheduled = status === 'scheduled';
+  const isStep = card.kind === 'build-step';
   const KindIcon = scheduled
     ? CalendarClock
     : building
@@ -497,6 +508,8 @@ export function IdeaRow({
     : card.kind === 'idea'
     ? Lightbulb
     : Sparkles;
+  // What a step card is asking about, under the idea's name.
+  const step = isStep ? stepLabel(card) : null;
   const due = card.date ? relDate(card.date) : null;
   const overdue = !!due?.overdue;
   return (
@@ -508,7 +521,7 @@ export function IdeaRow({
       accessibilityRole="button"
       accessibilityLabel={`Open ${card.kind === 'idea' ? 'idea' : card.kind}${
         scheduled ? ', build scheduled' : building ? ', building' : ''
-      }: ${card.title}`}
+      }: ${card.title}${step ? `, ${step}` : ''}`}
       collapsable={false}
       className={`flex-row items-center gap-3 px-3 py-3 active:bg-background ${
         dimmed ? 'opacity-30' : ''
@@ -516,9 +529,19 @@ export function IdeaRow({
       <View className={`h-7 w-7 items-center justify-center rounded-lg ${p.chip}`}>
         <KindIcon size={15} color={p.hex} strokeWidth={2} />
       </View>
-      <Text numberOfLines={1} className="flex-1 text-sm text-text">
-        {card.title}
-      </Text>
+      {/* The idea's name leads, because that's what the card is a step of. The
+          feature under it is the decision being asked for, so it's the smaller,
+          fainter line — present but never competing with the project's name. */}
+      <View className="flex-1 gap-0.5">
+        <Text numberOfLines={1} className="text-sm text-text">
+          {card.title}
+        </Text>
+        {step && (
+          <Text numberOfLines={1} className="text-[11px] leading-4 text-faint">
+            {step}
+          </Text>
+        )}
+      </View>
       {due && (
         <View className="flex-row items-center gap-1">
           <Clock size={12} color={overdue ? colors.danger : colors.muted} strokeWidth={2} />
