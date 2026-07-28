@@ -26,6 +26,23 @@ import (
 // cronMarker is the trailing comment that identifies a line as ours.
 func cronMarker(slug string) string { return "# nestnote:" + slug }
 
+// taggedFor reports whether one crontab line is ours for slug.
+//
+// The marker has to match the whole tail of the line, never just appear in it.
+// Slugs come from project names, so one is routinely a prefix of another
+// ("greenhouse" and "greenhouse-tracker"), and "# nestnote:greenhouse" is a
+// substring of "# nestnote:greenhouse-tracker": a Contains test here means
+// scheduling or cancelling the shorter build silently takes the longer one's
+// lines out of the crontab with it, leaving a live build that never ticks again
+// and no sign of why.
+//
+// Every line we write ends with the marker (see cronLineFor), so anchoring at
+// the end is exact. Trailing whitespace is tolerated because the crontab is a
+// file the user may well have opened in an editor.
+func taggedFor(line, slug string) bool {
+	return strings.HasSuffix(strings.TrimRight(line, " \t\r"), cronMarker(slug))
+}
+
 // crontabIO is the crontab binary as two operations, injected so the block
 // rewriting can be tested against a fake. list must report an empty crontab as
 // ("", nil) — "no crontab for user" is the normal state of a fresh machine, not
@@ -75,10 +92,9 @@ func realCrontabIO() crontabIO {
 // Installing is therefore idempotent by construction: the drop always runs first,
 // so installing twice leaves one line rather than two.
 func rewriteCrontab(current, slug, line string) string {
-	marker := cronMarker(slug)
 	var kept []string
 	for _, l := range strings.Split(current, "\n") {
-		if strings.Contains(l, marker) {
+		if taggedFor(l, slug) {
 			continue
 		}
 		kept = append(kept, l)
@@ -97,6 +113,18 @@ func rewriteCrontab(current, slug, line string) string {
 	return strings.Join(kept, "\n") + "\n"
 }
 
+// hasCronLine reports whether a crontab holds any line of slug's. Line by line
+// through taggedFor rather than a substring test over the whole file, for the
+// same prefix-collision reason.
+func hasCronLine(current, slug string) bool {
+	for _, l := range strings.Split(current, "\n") {
+		if taggedFor(l, slug) {
+			return true
+		}
+	}
+	return false
+}
+
 // installCronLine puts (or replaces) slug's scheduled tick.
 func installCronLine(io crontabIO, slug, line string) error {
 	if io.list == nil || io.save == nil {
@@ -106,7 +134,35 @@ func installCronLine(io crontabIO, slug, line string) error {
 	if err != nil {
 		return err
 	}
-	return io.save(rewriteCrontab(current, slug, line))
+	if err := io.save(rewriteCrontab(current, slug, line)); err != nil {
+		return err
+	}
+	return confirmCron(io, slug, line != "")
+}
+
+// confirmCron reads the crontab back and checks the write actually took.
+//
+// The read-back is here because the alternative failure is the worst one this
+// feature has: `crontab -` exiting 0 without keeping the entry (a restricted
+// host, a cron.deny, a spool the server can write but the daemon rereads from
+// elsewhere) leaves the phone told the build is scheduled, the build state on
+// disk saying so, and nothing in the crontab that will ever start it. Nobody
+// finds out until the start time comes and goes. One extra `crontab -l` on an
+// operation that happens a handful of times per build is a cheap way to turn a
+// build that silently never runs into a request that fails while the user is
+// still looking at it.
+func confirmCron(io crontabIO, slug string, want bool) error {
+	current, err := io.list()
+	if err != nil {
+		return err
+	}
+	if got := hasCronLine(current, slug); got != want {
+		if want {
+			return fmt.Errorf("the crontab entry for %s did not stick (crontab reported success but %[1]s is not in it)", slug)
+		}
+		return fmt.Errorf("the crontab entry for %s is still there after removing it", slug)
+	}
+	return nil
 }
 
 // removeCronLine takes slug's scheduled tick out. Removing a slug that was never
@@ -124,10 +180,18 @@ func removeCronLine(io crontabIO, slug string) error {
 	if err != nil {
 		return err
 	}
-	if !strings.Contains(current, cronMarker(slug)) {
+	if !hasCronLine(current, slug) {
 		return nil
 	}
-	return io.save(rewriteCrontab(current, slug, ""))
+	if err := io.save(rewriteCrontab(current, slug, "")); err != nil {
+		return err
+	}
+	// Read back for the same reason an install does, and with more at stake: a
+	// removal that didn't take leaves cron poking a build that has been stopped,
+	// which is exactly what every caller of this is trying to prevent. Callers
+	// that can't do anything about it still log it, so the operator sees the one
+	// thing they'd otherwise have to notice by reading the crontab themselves.
+	return confirmCron(io, slug, false)
 }
 
 // tickDriverPath is the ONE shared driver every project's crontab line invokes,

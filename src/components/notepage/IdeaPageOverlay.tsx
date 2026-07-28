@@ -256,7 +256,6 @@ export default function IdeaPageOverlay({
   // survives an app restart and is the same on every device.
   const stamp = cardBuild(card);
   const buildSlug = stamp?.slug ?? null;
-  const hasBuild = buildIsLive(stamp?.status);
   // Holding the idea and locking it are different: a build the user scheduled for
   // later hasn't planned anything from the idea's wording yet, so it stays theirs
   // to work on right up to the start time — and so does the start time itself,
@@ -268,6 +267,15 @@ export default function IdeaPageOverlay({
   // after opening rather than only once /build has answered.
   const waiting = (build?.status ?? stamp?.status) === 'scheduled';
   const startsAt = build?.start_at ?? stamp?.start_at;
+  // Whether a build has hold of this idea *right now*, on the same "fetched build
+  // first, card stamp behind it" footing as `waiting`.
+  //
+  // Not "is there a build object" — that's a different question with a different
+  // answer. A stopped or finished build is still fetched and still on screen: its
+  // plan stays readable behind the header's toggle. So the controls that belong to
+  // a live build have to key off the status, or they'd go on hiding (or offering)
+  // themselves for a build that ended.
+  const liveBuild = buildIsLive(build?.status ?? stamp?.status);
   // The slug either source knows this build by. The fetched build is the fresher
   // of the two, but the stamp is there on the first frame — so the controls that
   // act on a build work before /build has answered.
@@ -308,10 +316,10 @@ export default function IdeaPageOverlay({
   // While the plan is on screen and the build is live, keep it current: a feature
   // finishing is the one thing that changes this page without the user acting.
   useEffect(() => {
-    if (!showPlan || !buildIsLive(build?.status ?? stamp?.status)) return;
+    if (!showPlan || !liveBuild) return;
     const t = setInterval(refreshBuild, 20000);
     return () => clearInterval(t);
-  }, [showPlan, build?.status, stamp?.status, refreshBuild]);
+  }, [showPlan, liveBuild, refreshBuild]);
 
   const runBuildAction = useCallback(
     async (action: () => Promise<BuildInfo>, thenShowPlan: boolean) => {
@@ -399,8 +407,12 @@ export default function IdeaPageOverlay({
               {/* Hand the idea to the server as a project it builds on a
                   schedule. Never straight through: this arms an unattended agent,
                   so the dialog behind it says what that means and takes the one
-                  decision worth taking first — when it should start. */}
-              {!build && !hasBuild && (
+                  decision worth taking first — when it should start.
+
+                  It comes back the moment no build holds the idea — cancelled,
+                  stopped, or finished — because at that point building it again is
+                  exactly what the page is for. */}
+              {!liveBuild && (
                 <Pressable
                   onPress={() => setScheduling('start')}
                   disabled={buildBusy}
@@ -422,8 +434,12 @@ export default function IdeaPageOverlay({
                   place it was started. The project and everything built so far
                   stay put. A build still waiting for its start time isn't stopped
                   from up here: calling it off is one of the two things the
-                  schedule card below offers, next to the time it would undo. */}
-              {build && buildIsLive(build.status) && !waiting && (
+                  schedule card below offers, next to the time it would undo.
+
+                  The exact complement of the Build button above, off the same
+                  status, so the header always offers one of the two rather than
+                  neither while /build is still answering. */}
+              {liveBuild && !waiting && (
                 <Pressable
                   onPress={() => setConfirmStop(true)}
                   disabled={buildBusy}

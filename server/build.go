@@ -685,7 +685,9 @@ func (cfg buildConfig) tick(slug string, dryRun bool) (tickResult, error) {
 		// no-op, and it's the cheapest possible insurance against a stale entry
 		// firing every 30 minutes forever.
 		if !dryRun {
-			_ = removeCronLine(cfg.cron, slug)
+			if err := removeCronLine(cfg.cron, slug); err != nil {
+				log.Printf("build: %s is %s but its crontab line did not go: %v", slug, st.Status, err)
+			}
 		}
 		res.Action = "none"
 		res.Detail = "build is " + st.Status
@@ -726,7 +728,9 @@ func (cfg buildConfig) tick(slug string, dryRun bool) (tickResult, error) {
 				st.Note = "the planning run ended without leaving a usable " + buildPlanName
 				st.Status = buildHalted
 				_ = saveBuild(dir, st)
-				_ = removeCronLine(cfg.cron, slug)
+				if err := removeCronLine(cfg.cron, slug); err != nil {
+					log.Printf("build: %s halted but its crontab line did not go: %v", slug, err)
+				}
 				stampIdeaCard(mcpDir, st)
 				res.Status = st.Status
 				return res, nil
@@ -887,7 +891,9 @@ func (cfg buildConfig) startFeature(dir, projectDir, mcpDir string, st buildStat
 		if err := saveBuild(dir, st); err != nil {
 			return res, err
 		}
-		_ = removeCronLine(cfg.cron, st.Slug)
+		if err := removeCronLine(cfg.cron, st.Slug); err != nil {
+			log.Printf("build: %s finished but its crontab line did not go: %v", st.Slug, err)
+		}
 		stampIdeaCard(mcpDir, st)
 		if st.GateCardID != "" {
 			retireGateCard(mcpDir, st)
@@ -983,7 +989,13 @@ func (cfg buildConfig) halt(dir, mcpDir string, st buildState, reason string) er
 	st.Status = buildHalted
 	st.Note = reason
 	saveErr := saveBuild(dir, st)
-	_ = removeCronLine(cfg.cron, st.Slug)
+	if err := removeCronLine(cfg.cron, st.Slug); err != nil {
+		// Not fatal — the build is halted either way and refusing to record that
+		// would be worse. But it is the one failure the user would otherwise
+		// discover by finding the entry still in their crontab, so it is said out
+		// loud rather than dropped.
+		log.Printf("build: %s halted but its crontab line did not go: %v", st.Slug, err)
+	}
 	if saveErr != nil {
 		return saveErr
 	}
@@ -1013,10 +1025,18 @@ func (cfg buildConfig) stopBuild(dir, mcpDir string, st buildState, reason strin
 	return nil
 }
 
-// stopBuildsForCard stops every live build started from one idea card, and is
-// what deleting an idea from the dashboard calls: the build only ever existed to
-// turn that idea into a project, so an idea the user threw away must not leave a
-// crontab line ticking a build behind it.
+// stopBuildsForCard stops every live build that the dismissed card was driving,
+// and is what dismissing a card on the dashboard calls. Two kinds of card lead
+// here, and both end a build:
+//
+//   - The idea card. The build only ever existed to turn that idea into a
+//     project, so an idea the user threw away must not leave a crontab line
+//     ticking a build behind it.
+//   - The gate card of the feature waiting to be validated. Dismissing it is how
+//     the user rejects a feature, which stops the build — and stopping it has to
+//     happen here, on the dismissal itself. The tick reads the same field, but
+//     only when it next comes round: leaving it to that means "stop" takes effect
+//     up to buildTickMinutes later, with the crontab line still armed in between.
 //
 // It scans the project folders rather than reading the build stamp off the card,
 // because the stamp is a convenience for the phone (it's how the idea page knows
@@ -1028,7 +1048,7 @@ func (cfg buildConfig) stopBuild(dir, mcpDir string, st buildState, reason strin
 // Deliberately not gated on cfg.enabled: a server started without -allow-code
 // and -allow-exec can't start builds, but the crontab lines an earlier run armed
 // are still there, and this is the one thing that should still clean them up.
-func (cfg buildConfig) stopBuildsForCard(mcpDir, source, cardID, reason string) {
+func (cfg buildConfig) stopBuildsForCard(mcpDir, source, cardID string) {
 	if cfg.projectsBase == "" || cardID == "" {
 		return
 	}
@@ -1042,14 +1062,28 @@ func (cfg buildConfig) stopBuildsForCard(mcpDir, source, cardID, reason string) 
 		}
 		dir := cfg.buildDir(e.Name())
 		st, ok := loadBuild(dir)
-		if !ok || st.CardID != cardID || st.Source != source || !buildActive(st.Status) {
+		if !ok || st.Source != source || !buildActive(st.Status) {
+			continue
+		}
+		// The reason is the user's own wording of what they just did, and it is
+		// what the idea page shows for a stopped build — so which card was
+		// dismissed has to pick it.
+		var reason, why string
+		switch {
+		case st.CardID == cardID:
+			reason = "the idea was deleted from the dashboard"
+			why = "its idea card " + source + "/" + cardID + " was deleted"
+		case st.GateCardID == cardID && st.Status == buildAwaiting:
+			reason = "feature " + strconv.Itoa(st.Feature) + " was rejected"
+			why = "feature " + strconv.Itoa(st.Feature) + " was rejected on the dashboard"
+		default:
 			continue
 		}
 		if err := cfg.stopBuild(dir, mcpDir, st, reason); err != nil {
-			log.Printf("build: %s stop after its idea was deleted: %v", st.Slug, err)
+			log.Printf("build: %s stop after a card was dismissed: %v", st.Slug, err)
 			continue
 		}
-		log.Printf("build: stopped %s — its idea card %s/%s was deleted", st.Slug, source, cardID)
+		log.Printf("build: stopped %s — %s", st.Slug, why)
 	}
 }
 

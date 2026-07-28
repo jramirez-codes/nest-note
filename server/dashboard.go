@@ -344,8 +344,10 @@ func pageHandler(token, root string) http.HandlerFunc {
 // content snapshot back over a card) mutate a single card file. Subject slugs and
 // card ids are validated (validSlug) so an action can't write outside the state dir.
 //
-// It takes the build config because dismissing a card is how an idea is deleted,
-// and an idea's scheduled build must not outlive it — see stopBuildsForCard.
+// It takes the build config because dismissing a card is how an idea is deleted
+// and how a built feature is rejected: neither an idea's scheduled build nor a
+// build whose feature was just turned down may outlive the card the user
+// dismissed — see stopBuildsForCard.
 func actionHandler(token, root string, builds buildConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !authOK(r, token) {
@@ -411,9 +413,12 @@ func actionHandler(token, root string, builds buildConfig) http.HandlerFunc {
 				// Dismissing a card is how the dashboard deletes one, so an idea
 				// card going means any build it started goes with it: the run is
 				// killed, the crontab entry removed, and the gate card retired.
-				// Every card comes through here, not just ideas — a card that never
-				// started a build matches nothing and this is one directory read.
-				builds.stopBuildsForCard(mcpDir, slug, req.ID, "the idea was deleted from the dashboard")
+				// Dismissing a gate card is how a feature is rejected, and that
+				// ends the build too — both while the user is still looking at the
+				// dashboard, rather than whenever cron next comes round.
+				// Every card comes through here, not just those two — a card that
+				// drives no build matches nothing and this is one directory read.
+				builds.stopBuildsForCard(mcpDir, slug, req.ID)
 				writeOK(w)
 				return
 			}

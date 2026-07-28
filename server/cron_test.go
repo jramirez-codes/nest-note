@@ -115,6 +115,46 @@ func TestRemoveCronLineLeavesOtherBuilds(t *testing.T) {
 	}
 }
 
+// TestCronLinesSurviveAPrefixSlug is the collision the marker test has to be exact
+// about: slugs come from project names, so one is routinely a prefix of another,
+// and "# nestnote:greenhouse" reads as a substring of
+// "# nestnote:greenhouse-tracker". Matching anywhere in the line means scheduling
+// or cancelling the shorter build quietly disarms the longer one — a live build
+// that never ticks again, and a crontab the user is sure they just watched an
+// entry vanish from.
+func TestCronLinesSurviveAPrefixSlug(t *testing.T) {
+	f := &fakeCrontab{}
+	for _, slug := range []string{"greenhouse-tracker", "greenhouse"} {
+		if err := installCronLine(f.io(), slug, cronLineFor("/srv/nest", slug)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !strings.Contains(f.content, cronMarker("greenhouse-tracker")) {
+		t.Fatalf("installing greenhouse took greenhouse-tracker's line with it:\n%s", f.content)
+	}
+
+	if err := removeCronLine(f.io(), "greenhouse"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(f.content, cronMarker("greenhouse-tracker")) {
+		t.Fatalf("removing greenhouse took greenhouse-tracker's line with it:\n%s", f.content)
+	}
+	if hasCronLine(f.content, "greenhouse") {
+		t.Fatalf("greenhouse survived its own removal:\n%s", f.content)
+	}
+
+	// And the other way round: the longer slug leaves the shorter one's line be.
+	if err := installCronLine(f.io(), "greenhouse", cronLineFor("/srv/nest", "greenhouse")); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeCronLine(f.io(), "greenhouse-tracker"); err != nil {
+		t.Fatal(err)
+	}
+	if !hasCronLine(f.content, "greenhouse") {
+		t.Fatalf("removing greenhouse-tracker took greenhouse's line with it:\n%s", f.content)
+	}
+}
+
 // TestRemoveCronLineNeverInstalled: a no-op, not an error, and — importantly — not
 // even a write. Every teardown path calls remove unconditionally, so a build that
 // halts twice must not keep rewriting the host's crontab.
@@ -125,6 +165,36 @@ func TestRemoveCronLineNeverInstalled(t *testing.T) {
 	}
 	if f.saves != 0 {
 		t.Fatalf("removing an absent slug wrote the crontab %d times, want 0", f.saves)
+	}
+}
+
+// TestInstallCronLineFailsWhenTheWriteDoesNotStick covers the silent failure this
+// feature dies of: a `crontab -` that exits 0 without keeping the entry. The
+// build state would say "scheduled", the phone would show a start time, and
+// nothing in the crontab would ever start it — so the install has to read back
+// and report a failure the caller can put in front of the user.
+func TestInstallCronLineFailsWhenTheWriteDoesNotStick(t *testing.T) {
+	// A crontab that accepts every write and keeps none of them.
+	swallow := crontabIO{
+		list: func() (string, error) { return "0 4 * * * /usr/bin/backup\n", nil },
+		save: func(string) error { return nil },
+	}
+	err := installCronLine(swallow, "greenhouse", cronLineFor("/srv/nest", "greenhouse"))
+	if err == nil {
+		t.Fatal("installing into a crontab that drops writes reported success")
+	}
+	if !strings.Contains(err.Error(), "greenhouse") {
+		t.Fatalf("error = %q, want it to name the build that isn't scheduled", err)
+	}
+
+	// And the mirror image: a removal the crontab quietly ignored leaves cron
+	// poking a build that has been stopped.
+	stuck := crontabIO{
+		list: func() (string, error) { return cronLineFor("/srv/nest", "greenhouse") + "\n", nil },
+		save: func(string) error { return nil },
+	}
+	if err := removeCronLine(stuck, "greenhouse"); err == nil {
+		t.Fatal("removing from a crontab that drops writes reported success")
 	}
 }
 

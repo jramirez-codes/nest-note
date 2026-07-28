@@ -1109,6 +1109,81 @@ func TestBuildStopReleasesAScheduledBuildsCronLines(t *testing.T) {
 	}
 }
 
+// TestCancelThenScheduleAgainRearmsTheCrontab walks the round trip the phone
+// makes when a user calls a build off and then changes their mind: cancel, hand
+// the idea over again for a later date, then move that date. Each step is
+// asserted against the crontab itself, because "I rescheduled it and there's
+// nothing in the crontab" is the failure this feature dies of — and every step
+// after the first runs against a project folder that already has a build state
+// and a driver script in it.
+func TestCancelThenScheduleAgainRearmsTheCrontab(t *testing.T) {
+	const token = "secret"
+	f := newBuildFixture(t)
+	cron := &fakeCrontab{content: "0 9 * * * /usr/bin/backup  # mine\n"}
+	f.cfg.cron = cron.io()
+
+	post := func(t *testing.T, path string, h http.Handler, body string) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: got %d (%s), want 200", path, rec.Code, rec.Body.String())
+		}
+	}
+	// The pair a waiting build is armed with: the minute it was asked for, and the
+	// recurring safety net underneath it.
+	wantPair := func(t *testing.T, at time.Time) {
+		t.Helper()
+		for _, want := range []string{cronLineAt(f.root, f.slug, at), cronLineFor(f.root, f.slug)} {
+			if !strings.Contains(cron.content, want) {
+				t.Fatalf("crontab is missing\n\t%s\ngot:\n%s", want, cron.content)
+			}
+		}
+		if n := strings.Count(cron.content, cronMarker(f.slug)); n != 2 {
+			t.Fatalf("%d lines for this build, want exactly the pair:\n%s", n, cron.content)
+		}
+		if !strings.Contains(cron.content, "# mine") {
+			t.Fatalf("the user's own line was eaten:\n%s", cron.content)
+		}
+	}
+
+	first := time.Now().Add(9 * time.Hour)
+	post(t, "/build/start", buildStartHandler(token, f.cfg),
+		`{"card_id":"idea-4f2a","source":"greenhouse","project":"Greenhouse tracker","start_at":"`+
+			first.UTC().Format(time.RFC3339)+`"}`)
+	wantPair(t, first)
+
+	post(t, "/build/stop", buildStopHandler(token, f.cfg), `{"slug":"`+f.slug+`"}`)
+	if hasCronLine(cron.content, f.slug) {
+		t.Fatalf("a cancelled build left a crontab line behind:\n%s", cron.content)
+	}
+
+	// Handed over again, for a different day. The halted build from a moment ago
+	// is in the way of this one, and must not be.
+	second := time.Now().Add(48 * time.Hour)
+	post(t, "/build/start", buildStartHandler(token, f.cfg),
+		`{"card_id":"idea-4f2a","source":"greenhouse","project":"Greenhouse tracker","start_at":"`+
+			second.UTC().Format(time.RFC3339)+`"}`)
+	wantPair(t, second)
+
+	// And moved again from the schedule card, which replaces the dated line rather
+	// than adding a second one.
+	third := time.Now().Add(72 * time.Hour)
+	post(t, "/build/schedule", buildScheduleHandler(token, f.cfg),
+		`{"slug":"`+f.slug+`","start_at":"`+third.UTC().Format(time.RFC3339)+`"}`)
+	wantPair(t, third)
+
+	st, _ := loadBuild(f.cfg.buildDir(f.slug))
+	if st.Status != buildScheduled {
+		t.Fatalf("status = %q, want it waiting on the new time", st.Status)
+	}
+	if st.StartAt != third.UTC().Format(time.RFC3339) {
+		t.Fatalf("start_at = %q, want %q", st.StartAt, third.UTC().Format(time.RFC3339))
+	}
+}
+
 // TestBuildStopSweepsCronWithNoStateOnDisk: the build state lives in the project
 // folder, so anything that removed .nestnote/ by hand leaves the crontab line
 // armed with nothing to read. A stop is the last request that will ever name that
@@ -1205,6 +1280,84 @@ func TestDismissingAnIdeaStopsItsBuild(t *testing.T) {
 	gate, ok := loadCard(f.mcpDir, f.source, gateCardID(f.slug, 1))
 	if !ok || !gate.Dismissed {
 		t.Fatalf("gate card = %+v, want it retired with the build", gate)
+	}
+}
+
+// TestRejectingAFeatureStopsTheBuildNow: dismissing a gate card is how the user
+// rejects a built feature, and rejecting it stops the build. The tick reads the
+// same field, but only when it next comes round — so if the dismissal itself
+// doesn't stop the build, "stop" means "in up to half an hour", with the crontab
+// line armed the whole time. This asserts the line is gone by the time the
+// dashboard's request answers.
+func TestRejectingAFeatureStopsTheBuildNow(t *testing.T) {
+	const token = "secret"
+	f := newBuildFixture(t)
+	cron := &fakeCrontab{content: "0 9 * * * /usr/bin/backup  # mine\n"}
+	f.cfg.cron = cron.io()
+	if err := installCronLine(cron.io(), f.slug, cronLineFor(f.root, f.slug)); err != nil {
+		t.Fatal(err)
+	}
+	gate := gateCardID(f.slug, 2)
+	f.writeState(t, buildState{Status: buildAwaiting, Feature: 2, GateCardID: gate})
+	if err := writeCard(f.mcpDir, f.source, dashCard{
+		ID: gate, Kind: buildCardKind, Title: "Validate: feature 2",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/action?token="+token,
+		strings.NewReader(`{"action":"dismiss","id":"`+gate+`","source":"greenhouse"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	actionHandler(token, f.root, f.cfg).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+
+	if hasCronLine(cron.content, f.slug) {
+		t.Fatalf("a rejected feature left the build's crontab line armed:\n%s", cron.content)
+	}
+	if !strings.Contains(cron.content, "# mine") {
+		t.Fatalf("the user's own line was eaten:\n%s", cron.content)
+	}
+	st, _ := loadBuild(f.cfg.buildDir(f.slug))
+	if st.Status != buildHalted {
+		t.Fatalf("status = %q, want halted", st.Status)
+	}
+	if !strings.Contains(st.Note, "feature 2") {
+		t.Fatalf("note = %q, want it to say which feature was rejected", st.Note)
+	}
+}
+
+// TestDismissingAGateCardOfAnEndedBuildChangesNothing: the gate card of a build
+// that has already stopped is an ordinary dismissed card. Clearing it off the
+// dashboard must not re-open the build's state or rewrite the crontab.
+func TestDismissingAGateCardOfAnEndedBuildChangesNothing(t *testing.T) {
+	const token = "secret"
+	f := newBuildFixture(t)
+	cron := &fakeCrontab{}
+	f.cfg.cron = cron.io()
+	gate := gateCardID(f.slug, 1)
+	f.writeState(t, buildState{Status: buildDone, Feature: 1, GateCardID: gate})
+	if err := writeCard(f.mcpDir, f.source, dashCard{
+		ID: gate, Kind: buildCardKind, Title: "Validate: feature 1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/action?token="+token,
+		strings.NewReader(`{"action":"dismiss","id":"`+gate+`","source":"greenhouse"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	actionHandler(token, f.root, f.cfg).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+	if st, _ := loadBuild(f.cfg.buildDir(f.slug)); st.Status != buildDone {
+		t.Fatalf("status = %q, want the finished build left alone", st.Status)
+	}
+	if cron.saves != 0 {
+		t.Fatalf("the crontab was rewritten %d times for a build that had already ended", cron.saves)
 	}
 }
 
