@@ -41,7 +41,7 @@ server answers them straight from files without spinning up Claude:
 | --- | --- | --- |
 | `/state`, `/notebook`, `/page`, `/search` | `dashboardApi.ts` | Reads of the scaffold. |
 | `/action` | `dashboardApi.ts` | Card verbs: complete, uncomplete, dismiss, restore; suggestion and reorg verbs. |
-| `/build`, `/build/start`, `/build/schedule`, `/build/stop` | `buildApi.ts` | [Scheduled builds](../server/builds.mdx) — read state, start, move the start time of one that hasn't begun, stop. |
+| `/build`, `/build/start`, `/build/schedule`, `/build/revise`, `/build/stop`, `/build/resume` | `buildApi.ts` | [Scheduled builds](../server/builds.mdx) — read state, start, say when the next run happens, ask for changes to what was built, stop, and pick a stopped build back up. |
 | `/build/tick` | *(none — cron)* | Poked by `<root>/bin/nestnote-tick`, never by the app. |
 
 `/build/tick` is the odd one out: its caller is a shell script on the server's

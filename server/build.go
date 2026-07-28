@@ -2013,12 +2013,116 @@ func buildStopHandler(token string, cfg buildConfig) http.HandlerFunc {
 			return
 		}
 		mcpDir, _ := rootDirs(cfg.root)
-		if err := cfg.stopBuild(dir, mcpDir, st, "stopped from the idea page"); err != nil {
+		// Not "from the idea page" any more: a build past its first feature has no
+		// idea card left, and the stop that reaches here is as likely to have come
+		// from one of its step pages.
+		if err := cfg.stopBuild(dir, mcpDir, st, "you called it off from the phone"); err != nil {
 			http.Error(w, "could not stop the build", http.StatusInternalServerError)
 			return
 		}
 		st, _ = loadBuild(dir)
 		log.Printf("build: stopped %s", req.Slug)
+		writeJSON(w, cfg.response(req.Slug, st))
+	}
+}
+
+// buildResumeHandler is the way back from a stop. It puts a halted build back at
+// the step it was on: the step card asks for its decision again, the crontab line
+// goes back in, and the project carries on from the feature it reached.
+//
+// Stopping had no counterpart, which made it a much bigger decision than it looks
+// — the only route back into a project whose build was stopped (or whose feature
+// was rejected in a moment of impatience) was to write a fresh idea and let the
+// planner start the whole thing again, over a folder that already had the code.
+// Nothing about a halt actually destroys anything: the plan, the features and the
+// step cards are all still on disk, so "carry on" is a state change and not a
+// rebuild.
+//
+// It resumes into awaiting-validation rather than into a run, for the same reason
+// every other door into this build waits: the state a stopped build is put back
+// into is the one where the user decides what happens next. Nothing runs until
+// they say when the next feature starts — which they do from the same step page,
+// through the same picker as always.
+//
+// The step card is written again rather than un-settled field by field, because
+// writeGateCard already *is* the definition of "this feature is waiting on you":
+// body, priority and stamp, one copy of it, shared with the run that files it.
+func buildResumeHandler(token string, cfg buildConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !cfg.gateRequest(w, r, token) {
+			return
+		}
+		var req struct {
+			Slug string `json:"slug"`
+		}
+		if json.NewDecoder(r.Body).Decode(&req) != nil || !validSlug(req.Slug) {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		dir := cfg.buildDir(req.Slug)
+		st, ok := loadBuild(dir)
+		if !ok {
+			http.Error(w, "no build for that project", http.StatusNotFound)
+			return
+		}
+		if st.Status != buildHalted {
+			// Including done: a build that reached the end of its plan has no step
+			// left to go back to, and "build more" there is a new plan's job.
+			http.Error(w, "that build isn't stopped, so there is nothing to resume", http.StatusConflict)
+			return
+		}
+		if st.Feature < buildFirstFeature {
+			// Halted before it ever built a feature — a planning run that left no
+			// usable plan, or a stop while the build was still scheduled. There is no
+			// step card to reopen, and re-running the planner over the idea is a new
+			// build rather than a resumed one, so it goes through /build/start.
+			http.Error(w, "that build stopped before it built anything, so there is no step to go back to", http.StatusConflict)
+			return
+		}
+		mcpDir, _ := rootDirs(cfg.root)
+		projectDir := filepath.Join(cfg.projectsBase, req.Slug)
+		// The same re-assertion every tick makes, for the same reason: this build has
+		// been off the ticks for however long it was stopped, and the last run before
+		// that may well have been the one that scaffolded a framework over .gitignore.
+		if err := ensureGitignore(projectDir); err != nil {
+			log.Printf("build: %s gitignore: %v", req.Slug, err)
+		}
+
+		st.Status = buildAwaiting
+		// Whatever this build was waiting for when it stopped is long spent. The next
+		// run is the user's to place from the step, exactly as it is after any other
+		// feature lands.
+		st.StartAt = ""
+		st.Note = "picked back up — feature " + strconv.Itoa(st.Feature) + " is waiting on you again"
+		if st.GateCardID == "" {
+			// A build halted before step cards carried an id on the state, or one whose
+			// id never landed. The id is derived from the slug and the feature, so it
+			// is the same one the run would have used.
+			st.GateCardID = gateCardID(st.Slug, st.Feature)
+		}
+		if err := saveBuild(dir, st); err != nil {
+			http.Error(w, "could not resume the build", http.StatusInternalServerError)
+			return
+		}
+		// The recurring line alone: nothing is due at a particular minute yet, and
+		// this is the line that carries the build once the user completes the step
+		// card from the dashboard rather than through the picker.
+		if err := installCronLine(cfg.cron, req.Slug, cronLineFor(cfg.root, req.Slug)); err != nil {
+			http.Error(w, "could not reschedule the build: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		var feat planFeature
+		for _, f := range readPlan(projectDir, st) {
+			if f.Num == st.Feature {
+				feat = f
+			}
+		}
+		if err := writeGateCard(mcpDir, st, feat, projectDir); err != nil {
+			http.Error(w, "could not reopen that build step", http.StatusInternalServerError)
+			return
+		}
+		stampIdeaCard(mcpDir, st)
+		log.Printf("build: resumed %s at feature %d", req.Slug, st.Feature)
 		writeJSON(w, cfg.response(req.Slug, st))
 	}
 }

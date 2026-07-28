@@ -160,6 +160,10 @@ func main() {
 	// or to the plan — run in the project and gated again afterwards.
 	mux.HandleFunc("/build/revise", buildReviseHandler(token, builds))
 	mux.HandleFunc("/build/stop", buildStopHandler(token, builds))
+	// The way back from a stop: a halted build goes back to the step it reached,
+	// with its step card asking for a decision again. Nothing runs until the user
+	// places the next feature.
+	mux.HandleFunc("/build/resume", buildResumeHandler(token, builds))
 	mux.HandleFunc("/build/tick", buildTickHandler(token, builds))
 	// Read-only dashboard state + the optional merge-approval action. Both only
 	// touch the scaffold's data files, so they need no Claude run.

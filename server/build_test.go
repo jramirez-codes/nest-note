@@ -1328,6 +1328,173 @@ func TestBuildRescheduleUnknownProject(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Resuming a stopped build
+// ---------------------------------------------------------------------------
+
+func (f *buildFixture) resumeReq(t *testing.T, token string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/build/resume",
+		strings.NewReader(fmt.Sprintf(`{"slug":%q}`, f.slug)))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	buildResumeHandler(token, f.cfg).ServeHTTP(rec, req)
+	return rec
+}
+
+// TestBuildResumePutsTheBuildBackAtItsStep walks the whole round trip a user
+// makes when they change their mind about stopping: stop a build parked on a
+// step, then resume it. Everything the stop took away has to come back — the
+// status, the crontab line, and above all the step card's question — because a
+// resumed build that ticks into a settled card just halts again.
+func TestBuildResumePutsTheBuildBackAtItsStep(t *testing.T) {
+	const token = "secret"
+	f := newBuildFixture(t)
+	cron := &fakeCrontab{}
+	f.cfg.cron = cron.io()
+	if err := installCronLine(cron.io(), f.slug, cronLineFor(f.root, f.slug)); err != nil {
+		t.Fatal(err)
+	}
+	f.writePlan(t, "## Feature 1: A\nx\n\n## Feature 2: B\ny\n")
+	gate := f.awaitingAStep(t, 1)
+
+	req := httptest.NewRequest(http.MethodPost, "/build/stop", strings.NewReader(`{"slug":"greenhouse-tracker"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	buildStopHandler(token, f.cfg).ServeHTTP(httptest.NewRecorder(), req)
+	if st, _ := loadBuild(f.cfg.buildDir(f.slug)); st.Status != buildHalted {
+		t.Fatalf("status after the stop = %q, want %q", st.Status, buildHalted)
+	}
+
+	rec := f.resumeReq(t, token)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+	var got buildResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != buildAwaiting || got.Feature != 1 {
+		t.Fatalf("response = %q at feature %d, want %q at feature 1", got.Status, got.Feature, buildAwaiting)
+	}
+	if got.StartAt != "" {
+		t.Fatalf("start_at = %q, want the next run left for the user to place", got.StartAt)
+	}
+	st, _ := loadBuild(f.cfg.buildDir(f.slug))
+	if st.Status != buildAwaiting {
+		t.Fatalf("state = %+v, want %q", st, buildAwaiting)
+	}
+	if !strings.Contains(cron.content, cronMarker(f.slug)) {
+		t.Fatalf("a resumed build has no crontab line, so nothing will ever carry it on:\n%s", cron.content)
+	}
+	// The card is the whole approve/reject loop, so this is the assertion that
+	// matters most: it has to be asking again, not sitting settled at the bottom
+	// of the list with a "this build was stopped" line on it.
+	card, ok := loadCard(f.mcpDir, f.source, gate)
+	if !ok {
+		t.Fatal("the step card vanished")
+	}
+	if card.Dismissed || card.Done {
+		t.Fatalf("step card = done %v / dismissed %v, want it asking again", card.Done, card.Dismissed)
+	}
+	if card.Priority != "high" {
+		t.Fatalf("step card priority = %q, want it back among the decisions waiting", card.Priority)
+	}
+	if strings.HasPrefix(strings.TrimSpace(card.Body), ">") {
+		t.Fatalf("the step card still leads with the stop's outcome:\n%s", card.Body)
+	}
+	stamp, _ := card.Payload["build"].(map[string]any)
+	if stamp == nil || stamp["status"] != buildAwaiting {
+		t.Fatalf("step card build stamp = %+v, want status %q", stamp, buildAwaiting)
+	}
+	// And the tick agrees: a resumed build waits on the user rather than halting
+	// on the card the stop left behind.
+	res, err := f.cfg.tick(f.slug, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Action != "wait" {
+		t.Fatalf("tick after resuming = %+v, want it waiting on the user", res)
+	}
+}
+
+// TestBuildResumeAfterARejectedFeature: rejecting a feature is the other way a
+// build halts, and it halts *because* the step card was dismissed. Resuming has
+// to undo that dismissal, or the build comes back only to be stopped again by the
+// very next tick reading the same no.
+func TestBuildResumeAfterARejectedFeature(t *testing.T) {
+	const token = "secret"
+	f := newBuildFixture(t)
+	cron := &fakeCrontab{}
+	f.cfg.cron = cron.io()
+	f.writePlan(t, "## Feature 1: A\nx\n\n## Feature 2: B\ny\n")
+	gate := gateCardID(f.slug, 2)
+	f.writeState(t, buildState{Status: buildHalted, Feature: 2, GateCardID: gate, Note: "feature 2 was rejected"})
+	if err := writeCard(f.mcpDir, f.source, dashCard{
+		ID: gate, Kind: buildCardKind, Priority: "low", Title: "Greenhouse tracker",
+		Body: "> This build was stopped — feature 2 was rejected.\n\nFeature 2 is built.",
+		// Dismissing IS the rejection, and the file stays on disk afterwards.
+		Dismissed: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if rec := f.resumeReq(t, token); rec.Code != http.StatusOK {
+		t.Fatalf("got %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+	card, ok := loadCard(f.mcpDir, f.source, gate)
+	if !ok {
+		t.Fatal("the step card vanished")
+	}
+	if card.Dismissed {
+		t.Fatal("the rejection survived the resume, so the next tick will halt the build again")
+	}
+	res, err := f.cfg.tick(f.slug, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Action != "wait" {
+		t.Fatalf("tick after resuming a rejection = %+v, want it waiting on the user", res)
+	}
+}
+
+// TestBuildResumeRefusesAnythingButAStop: resume is the counterpart of halt and
+// nothing else. A live build has nothing to resume, and a done one has no step
+// left to go back to — "build more" there is a new plan's job, not this one's.
+func TestBuildResumeRefusesAnythingButAStop(t *testing.T) {
+	const token = "secret"
+	for _, status := range []string{buildScheduled, buildPlanning, buildBuilding, buildAwaiting, buildDone} {
+		t.Run(status, func(t *testing.T) {
+			f := newBuildFixture(t)
+			f.writeState(t, buildState{Status: status, Feature: 1, GateCardID: gateCardID(f.slug, 1)})
+			if rec := f.resumeReq(t, token); rec.Code != http.StatusConflict {
+				t.Fatalf("got %d (%s), want 409", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+// TestBuildResumeRefusesABuildThatNeverBuiltAnything: a build halted while still
+// scheduled — or by a planning run that left no usable plan — has no step card to
+// reopen. Its idea is unlocked and still on the dashboard, so the honest answer is
+// "start it again", not a build parked at feature 0 that no tick can advance.
+func TestBuildResumeRefusesABuildThatNeverBuiltAnything(t *testing.T) {
+	const token = "secret"
+	f := newBuildFixture(t)
+	f.writeState(t, buildState{Status: buildHalted, Feature: 0, Note: "the planning run ended without leaving a usable plan"})
+	if rec := f.resumeReq(t, token); rec.Code != http.StatusConflict {
+		t.Fatalf("got %d (%s), want 409", rec.Code, rec.Body.String())
+	}
+}
+
+// TestBuildResumeUnknownProject: nothing to pick back up.
+func TestBuildResumeUnknownProject(t *testing.T) {
+	const token = "secret"
+	f := newBuildFixture(t)
+	if rec := f.resumeReq(t, token); rec.Code != http.StatusNotFound {
+		t.Fatalf("got %d (%s), want 404", rec.Code, rec.Body.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Gating — the combination IS the security boundary, so it is asserted
 // ---------------------------------------------------------------------------
 
@@ -1364,11 +1531,26 @@ func TestBuildGating(t *testing.T) {
 			buildScheduleHandler(token, cfg).ServeHTTP(rec, req)
 			return rec
 		}},
+		{"POST /build/revise", func(cfg buildConfig) *httptest.ResponseRecorder {
+			req := httptest.NewRequest(http.MethodPost, "/build/revise",
+				strings.NewReader(`{"slug":"greenhouse-tracker","note":"the header colour is wrong"}`))
+			req.Header.Set("Authorization", "Bearer "+token)
+			rec := httptest.NewRecorder()
+			buildReviseHandler(token, cfg).ServeHTTP(rec, req)
+			return rec
+		}},
 		{"POST /build/stop", func(cfg buildConfig) *httptest.ResponseRecorder {
 			req := httptest.NewRequest(http.MethodPost, "/build/stop", strings.NewReader(`{"slug":"greenhouse-tracker"}`))
 			req.Header.Set("Authorization", "Bearer "+token)
 			rec := httptest.NewRecorder()
 			buildStopHandler(token, cfg).ServeHTTP(rec, req)
+			return rec
+		}},
+		{"POST /build/resume", func(cfg buildConfig) *httptest.ResponseRecorder {
+			req := httptest.NewRequest(http.MethodPost, "/build/resume", strings.NewReader(`{"slug":"greenhouse-tracker"}`))
+			req.Header.Set("Authorization", "Bearer "+token)
+			rec := httptest.NewRecorder()
+			buildResumeHandler(token, cfg).ServeHTTP(rec, req)
 			return rec
 		}},
 		{"POST /build/tick", func(cfg buildConfig) *httptest.ResponseRecorder {

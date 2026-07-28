@@ -306,6 +306,29 @@ export async function stopBuild(slug: string): Promise<BuildInfo> {
   return parseBuild(await request('/build/stop', { slug }));
 }
 
+/**
+ * The way back from a stop: put a halted build back at the step it reached, with
+ * its step card asking for a decision again and its crontab entry reinstalled.
+ *
+ * Nothing runs on this call. A resumed build lands in `awaiting-validation` — the
+ * state the step page is built around — so what happens next is the same choice it
+ * always is: say when the next feature runs, or say what to change first.
+ *
+ * Only from `halted`. A live build has nothing to resume and a finished one has no
+ * step left to go back to, so both answer 409; so does a build that stopped before
+ * it ever built a feature, which is a `/build/start` away rather than this.
+ */
+export async function resumeBuild(slug: string): Promise<BuildInfo> {
+  return parseBuild(
+    await request(
+      '/build/resume',
+      { slug },
+      'No build for that project.',
+      'This build isn’t stopped, so there is nothing to pick back up.',
+    ),
+  );
+}
+
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 

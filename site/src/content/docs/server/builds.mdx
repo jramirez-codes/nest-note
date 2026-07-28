@@ -118,11 +118,15 @@ Claude's replies and the two ways out of that start time:
   uses on a build that has begun. Nothing has run, so nothing is lost but an empty
   project folder.
 
-Tapping the calendar button again puts Claude's replies back. Both buttons only
-exist while the build is `scheduled`. Once the planning run has gone
-there is a `PROJECT_PLAN.md` written from the idea's wording and no start time
-left to move, so the server refuses to reschedule it — stopping is the only way
-out of a build that has begun.
+Tapping the calendar button again puts Claude's replies back.
+
+That card belongs to **a run placed at a minute**, not to the idea — so it turns
+up in exactly the two places one can be: here, and on a
+[build step whose next feature has been given a time](#moving-the-next-feature-once-its-placed).
+What it never appears on is a build already running. Once the planning run has
+gone there is a `PROJECT_PLAN.md` written from the idea's wording and no start
+time left to move, so the server refuses to reschedule it — stopping is the only
+way out of a build mid-run.
 
 Rescheduling replaces the dated crontab line with one for the new minute and
 leaves the recurring safety net alone. The new time is written to the build's
@@ -174,6 +178,27 @@ A build step's header also carries the **stop button**, second to Build. It used
 carry no such thing — ending a build belonged to the idea it came from — but the
 idea now lives on the first step card, so a step page *is* the page a running build
 has. Build still leads, because carrying on is the common answer.
+
+### Moving the next feature once it's placed
+
+Naming a minute is a choice too, and it gets the same treatment an idea's start
+time does: the header card that reads `Feature 3 starts today at 21:00` grows the
+**calendar button on its right**, swapping the card below between Claude's replies
+and what can still be done about that time.
+
+- **Reschedule** reopens the picker on the time it's set to. Move it, or choose
+  **Now** to build the feature on the spot. The step stays signed off either way —
+  only the clock changes.
+- **Stop build** ends the project here, through the same confirmation the header's
+  stop button uses. It's the same button the idea's card labels *Cancel build*,
+  worded for a build that has already written code.
+
+While a run is placed, **Build leaves the header** and the **stop button** moves
+into this card. Both are the same rule the idea page follows: there is nothing left
+to place, only to move, and the way out of a start time is kept next to the start
+time it undoes. Sign-offs and stops are not undone by rescheduling — if what you
+actually want is to take the sign-off back and change the feature instead, say so
+in the composer, which withdraws the placed run as part of starting the revision.
 
 ## Asking for changes to what it built
 
@@ -242,13 +267,13 @@ On an **idea**, **Build** takes its place as soon as the build ends — cancelle
 stopped, or finished — because an idea nothing is building is an idea you can
 hand over again. The plan of the build that ended stays readable behind the
 header's toggle until you do. A build stopped after its first step has no idea card
-left to hand over: its steps stay on the dashboard as the record of what was built,
-and starting that project again means starting it from a new idea.
+left to hand over — its steps are where the project lives now — so its step page
+offers [**Resume**](#picking-a-stopped-build-back-up) in the same slot instead.
 
-It only appears once the build has begun. A build still waiting for its start time
-is called off with **Cancel build**, behind the schedule card's calendar button —
-the same action, worded for a build that has yet to run, and kept next to the time
-it undoes.
+It only appears when nothing is placed at a minute. A build waiting for a start
+time — its own, or its next feature's — is ended with the button behind the
+schedule card's calendar button instead: the same action, kept next to the time it
+undoes.
 
 Three other things stop a build. Each takes effect on the spot — the crontab entry
 is gone by the time the request answers, not at the next tick.
@@ -282,6 +307,42 @@ open when the build stopped, gets a line quoted at the top of it saying what bec
 of it — *"This build was stopped — the idea was deleted from the dashboard"* — and
 drops to low priority, so a card that can no longer be acted on stops sitting among
 the ones that can.
+
+## Picking a stopped build back up
+
+Stopping is not deleting, and it is not final. The plan, the code, and every step
+card are still exactly where they were — so a stopped build can be **resumed** from
+any of its step pages, where **Resume** sits in the slot Build would occupy if
+there were anything to build.
+
+It puts the build back on the feature it reached:
+
+- the step card goes back to **asking for its decision**, at high priority, with the
+  *"this build was stopped"* line gone from it;
+- the **crontab entry is reinstalled** — the ordinary recurring one, so completing
+  the card from the dashboard carries the build on as it always did;
+- the build's state goes back to `awaiting-validation`, which is where the page you
+  are standing on already points.
+
+**Nothing runs on a resume.** You land back at the decision you were at, and what
+happens next is the ordinary choice: say when the next feature runs, or say what to
+change about this one first. That is the whole reason it resumes to the gate rather
+than to a run — a build you stopped in the middle of something is exactly the build
+whose next step you want to look at before it happens.
+
+Rejecting a feature is a stop too, so this is also how you take a rejection back:
+the dismissal that halted the build is cleared, or the very next tick would read the
+same no and stop it again.
+
+Two builds can't be resumed, and both answer with a conflict rather than pretending:
+
+- **A finished one.** There is no step left to go back to; more features means a new
+  plan.
+- **One that stopped before it built anything** — a cancelled schedule, or a
+  planning run that left no usable `PROJECT_PLAN.md`. There is no step card to
+  reopen, and its idea is still on the dashboard with its **Build** button, which is
+  the honest way to start that project: from the idea, not from a build that never
+  ran.
 
 ## `.nestnote/` never reaches GitHub
 
@@ -341,7 +402,8 @@ a line's whole tail, so projects whose names share a prefix — `greenhouse` and
 are passed through untouched. Entries are removed when a build is stopped or
 cancelled, rejected, finished, or when the thing it was building for goes away —
 its idea deleted, or its project deleted. Nothing that no longer exists keeps a
-line in your crontab.
+line in your crontab. [Resuming a stopped build](#picking-a-stopped-build-back-up)
+puts its recurring line back, and is the only thing that does.
 
 Every write is read back before the request answers. If `crontab` accepts a write
 without keeping it — a locked-down host, a `cron.deny` — scheduling a build fails

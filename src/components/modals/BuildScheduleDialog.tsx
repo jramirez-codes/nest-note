@@ -5,25 +5,30 @@ import { useTheme } from '../../theme/colors';
 import { startLabel } from '../../server/controllers/buildApi';
 
 /**
- * Which of the three doors this sheet was opened from. The choice behind it is the
- * same in all three — one time, with "Now" meaning now — so they share a dialog and
+ * Which of the four doors this sheet was opened from. The choice behind it is the
+ * same in all four — one time, with "Now" meaning now — so they share a dialog and
  * differ only in what the sentences say is about to happen.
+ *
+ * They are two questions crossed: *what* is being placed (the whole build, or the
+ * next feature of one already running) and whether it is being placed for the
+ * first time or moved.
  *
  * - `start` — handing an idea over for the first time.
  * - `edit` — moving the start of a build that hasn't begun.
  * - `next` — starting the next feature of a build parked on a step card.
+ * - `move` — moving the start of a next feature that has already been placed.
  */
-export type BuildScheduleMode = 'start' | 'edit' | 'next';
+export type BuildScheduleMode = 'start' | 'edit' | 'next' | 'move';
 
 interface BuildScheduleDialogProps {
   visible: boolean;
-  /** The idea's title (or, for `next`, the project's slug), quoted back so it's
-   *  clear what is being handed over. */
+  /** The idea's title (or, on a step card, the project's slug), quoted back so
+   *  it's clear what is being handed over. */
   title: string;
   /** The request is in flight — the confirm button says so and stops repeating. */
   busy?: boolean;
   mode: BuildScheduleMode;
-  /** Which feature the `next` door is about to build. */
+  /** Which feature the `next` and `move` doors are about to build. */
   feature?: number;
   /** The time to open on. Null (the default) is "now"; rescheduling passes the
    *  start already set, so the dialog opens on the choice being changed. */
@@ -73,12 +78,12 @@ function nextAt(hour: number): Date {
  * the nudges reach anything else in a few taps. Minute resolution, because the
  * crontab entry underneath cannot do better.
  *
- * The other two doors (see BuildScheduleMode) open the same sheet on a build that
- * already exists: `edit` moves the start it is waiting for, prefilled with it, and
- * `next` starts the feature after the step the user is looking at. One dialog rather
- * than three, because the decision is identical — including "Now", which on a build
- * that already exists means run it, not move it to this minute — and only the
- * wording around it changes.
+ * The other three doors (see BuildScheduleMode) open the same sheet on a build that
+ * already exists: `edit` moves the start it is waiting for, `next` starts the
+ * feature after the step the user is looking at, and `move` moves that feature once
+ * it has been placed. One dialog rather than four, because the decision is identical
+ * — including "Now", which on a build that already exists means run it, not move it
+ * to this minute — and only the wording around it changes.
  */
 export default function BuildScheduleDialog({
   visible,
@@ -127,11 +132,11 @@ export default function BuildScheduleDialog({
     a === null || b === null ? a === b : a.getTime() === b.getTime();
 
   // Everything that differs by door, in one place: the glyph, the two sentences
-  // either side of the picker, and what the confirm button promises. Written out
-  // per door rather than assembled from fragments — these are the sentences that
-  // tell someone what an unattended agent is about to do, and they read better
-  // whole. Note "Now" is never "move it to this minute": on a build that already
-  // exists it runs the thing, so those buttons say so.
+  // either side of the picker, and what the two buttons promise. Written out per
+  // door rather than assembled from fragments — these are the sentences that tell
+  // someone what an unattended agent is about to do, and they read better whole.
+  // Note "Now" is never "move it to this minute": on a build that already exists
+  // it runs the thing, so those buttons say so.
   const copy = {
     start: {
       Icon: Hammer,
@@ -143,6 +148,7 @@ export default function BuildScheduleDialog({
       confirm: at
         ? { label: 'Schedule it', busy: 'Starting…', hint: 'Schedule this build' }
         : { label: 'Build it', busy: 'Starting…', hint: 'Build it now' },
+      cancel: { label: 'Cancel', hint: 'Cancel' },
     },
     edit: {
       Icon: CalendarCog,
@@ -154,6 +160,7 @@ export default function BuildScheduleDialog({
       confirm: at
         ? { label: 'Move it', busy: 'Moving…', hint: 'Move this build to the new start time' }
         : { label: 'Build it now', busy: 'Starting…', hint: 'Start this build now' },
+      cancel: { label: 'Leave it', hint: 'Leave the start time alone' },
     },
     next: {
       Icon: Hammer,
@@ -165,6 +172,24 @@ export default function BuildScheduleDialog({
       confirm: at
         ? { label: 'Schedule it', busy: 'Scheduling…', hint: 'Schedule the next feature' }
         : { label: 'Build it now', busy: 'Starting…', hint: 'Build the next feature now' },
+      cancel: { label: 'Cancel', hint: 'Cancel' },
+    },
+    // The step has already been signed off and its next feature placed at a
+    // minute, so this is the `edit` question asked one feature further along: the
+    // sign-off isn't being taken back, only the time it put on the clock.
+    move: {
+      Icon: CalendarCog,
+      title: 'Change the start time',
+      blurb: feature
+        ? `Feature ${feature} of “${title}” hasn't started yet, so it can start whenever you like — later, sooner, or right now.`
+        : `The next feature of “${title}” hasn't started yet, so it can start whenever you like — later, sooner, or right now.`,
+      consequence: at
+        ? 'This step stays signed off; only the time moves. The next feature pauses at a step card of its own once it is built.'
+        : 'The next feature starts right away, and pauses at a step card of its own once it is built.',
+      confirm: at
+        ? { label: 'Move it', busy: 'Moving…', hint: 'Move the next feature to the new start time' }
+        : { label: 'Build it now', busy: 'Starting…', hint: 'Build the next feature now' },
+      cancel: { label: 'Leave it', hint: 'Leave the start time alone' },
     },
   }[mode];
   const confirm = copy.confirm;
@@ -262,11 +287,9 @@ export default function BuildScheduleDialog({
             <Pressable
               onPress={onCancel}
               accessibilityRole="button"
-              accessibilityLabel={mode === 'edit' ? 'Leave the start time alone' : 'Cancel'}
+              accessibilityLabel={copy.cancel.hint}
               className="rounded-xl px-4 py-2.5 active:opacity-70">
-              <Text className="text-sm font-semibold text-muted">
-                {mode === 'edit' ? 'Leave it' : 'Cancel'}
-              </Text>
+              <Text className="text-sm font-semibold text-muted">{copy.cancel.label}</Text>
             </Pressable>
             <Pressable
               onPress={() => onConfirm(at)}

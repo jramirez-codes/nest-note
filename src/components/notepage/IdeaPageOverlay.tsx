@@ -26,6 +26,7 @@ import {
   Lightbulb,
   ListChecks,
   MessageSquare,
+  Play,
   Undo2,
   X,
 } from 'lucide-react-native';
@@ -41,6 +42,7 @@ import {
   cardStep,
   fetchBuild,
   planMarkdown,
+  resumeBuild,
   reviseBuild,
   scheduleBuild,
   startBuild,
@@ -71,6 +73,17 @@ interface IdeaPageOverlayProps {
   onCardUpdated: (card: DashboardCard) => void;
 }
 
+/** The one sentence the header's state card says about the build, and the glyph
+ *  in front of it. See headerCard below for which state says which. */
+interface HeaderCard {
+  Icon: typeof CalendarClock;
+  title: string;
+  note: string;
+  /** Nothing is going to happen by itself, so the glyph takes the muted well the
+   *  disabled composer strip uses rather than the accent one that means "live". */
+  dim?: boolean;
+}
+
 const noop = () => {};
 
 /**
@@ -90,11 +103,14 @@ const noop = () => {};
  * conversation — typically a question it needs answered — sits in a card in the
  * header, under the tags.
  *
- * A build scheduled for later gets a card of its own above that one, same width and
- * same surface, saying when it starts. The button on its right swaps the card
- * underneath between Claude's replies and the two things that can still be done
+ * A build with a run placed at a minute gets a card of its own above that one, same
+ * width and same surface, saying when it starts. The button on its right swaps the
+ * card underneath between Claude's replies and the two things that can still be done
  * about the start time, so the schedule is edited where it's stated rather than
- * from a control in the title row.
+ * from a control in the title row. That card is not the idea's alone: a step whose
+ * sign-off named a time for the next feature is the same sentence about a different
+ * run, so it gets the same card, the same button, and the same Reschedule / stop
+ * pair underneath — where before it could state a start time but not move it.
  *
  * The same page opens the **build-step** cards a running build files, and both of
  * its halves keep their jobs there, aimed at the project instead of the card. The
@@ -111,6 +127,12 @@ const noop = () => {};
  * header, exactly as it did when the idea had a card of its own, with the toggle
  * swapping it for the plan (whose Overview says the same thing). That is also why a
  * step now carries the stop button: it is the page the build has.
+ *
+ * And, for the same reason, the way back from one. A stopped build isn't a finished
+ * one — the plan, the code and every step card are still there — so its step page
+ * offers Resume where Build would be, putting the build back at the feature it
+ * reached with that step asking for its decision again. Without it, stopping was a
+ * one-way door out of a project that still existed.
  *
  * Because those writes are Claude's and not the user's, they're undoable: once a
  * turn has changed the card, an Undo control appears over the body's top-right
@@ -309,6 +331,10 @@ export default function IdeaPageOverlay({
   // A run is going in the project right now: the plan being written, a feature
   // being built, or a revision the user just asked for.
   const buildRunning = status === 'planning' || status === 'building';
+  // The build ended before its plan did — stopped from a page, or a feature
+  // rejected. Nothing has been thrown away, so this is a state the page offers a
+  // way out of rather than the end of the project.
+  const stopped = status === 'halted';
   // The feature this page is about — the one a step card records, and the one the
   // build is on — and the one a "build the next" from here would start.
   const stepFeature = build?.feature ?? stamp?.feature ?? 0;
@@ -332,19 +358,89 @@ export default function IdeaPageOverlay({
   // step being looked at. One dialog, three doors.
   const [scheduling, setScheduling] = useState<BuildScheduleMode | null>(null);
   const [confirmStop, setConfirmStop] = useState(false);
+  const [confirmResume, setConfirmResume] = useState(false);
   const [buildBusy, setBuildBusy] = useState(false);
   const [buildError, setBuildError] = useState<string | null>(null);
+  // A run is placed at a minute that hasn't come round yet. Two states hold one,
+  // and they are the same fact about the build: an idea handed over for later, and
+  // a step whose sign-off named a time for the feature after it. So they get the
+  // same header card, the same button on it, and the same two ways out — the only
+  // difference is which run is being moved.
+  const placed = waiting || (isStep && atStep && !!startsAt);
   // Which surface the header's card slot is showing: Claude's replies, or what
   // can still be done about the start time. One slot, because both are about the
-  // same idea and the header can only give the height to one of them.
+  // same page and the header can only give the height to one of them.
   const [editingSchedule, setEditingSchedule] = useState(false);
-  const scheduleOpen = waiting && editingSchedule;
+  const scheduleOpen = placed && editingSchedule;
   const showReplies = hasReplies && !scheduleOpen;
-  // Nothing left to edit once the build starts (or is called off), so the slot
-  // goes back to the conversation rather than stranding dead controls in it.
+  // Nothing left to move once that run starts (or is called off), so the slot goes
+  // back to the conversation rather than stranding dead controls in it.
   useEffect(() => {
-    if (!waiting) setEditingSchedule(false);
-  }, [waiting]);
+    if (!placed) setEditingSchedule(false);
+  }, [placed]);
+
+  // The header's state card: one card, the same one on both kinds of page, saying
+  // where this build stands. It sits above Claude's replies at the same width and
+  // on the same surface, because it is the same kind of thing — the header telling
+  // you where the thing you are looking at has got to.
+  //
+  // Every line of it is read off the build's own state, so none of them can drift
+  // from it. The build's `note` is preferred to anything written here wherever
+  // there is one: it is what the last run was asked for, or what it reported, and
+  // that says more than any wording of ours could.
+  const buildNote = build?.note?.trim() || null;
+  const headerCard = ((): HeaderCard | null => {
+    // Scheduled, not started. The idea stays open for editing — the plan is
+    // written from whatever it says at the start time — so this states the
+    // deadline rather than that the page is shut.
+    if (waiting) {
+      return {
+        Icon: CalendarClock,
+        title: `Starts ${startLabel(startsAt ? new Date(startsAt) : null)}`,
+        note: 'Keep editing — the plan follows what the idea says then.',
+      };
+    }
+    if (!isStep) return null;
+    if (buildRunning) {
+      return {
+        Icon: Hammer,
+        title: `Working on feature ${stepFeature}`,
+        note: buildNote ?? 'Nothing to do but wait — this comes back when the run lands.',
+      };
+    }
+    // Parked at the step. Either the next feature has been placed at a minute, or
+    // nothing runs until the user says so.
+    if (atStep) {
+      return {
+        Icon: CalendarClock,
+        title: startsAt
+          ? `Feature ${nextFeature} starts ${startLabel(new Date(startsAt))}`
+          : 'Waiting on you',
+        note:
+          buildNote ??
+          (startsAt
+            ? 'This step is signed off — nothing runs until then.'
+            : 'Nothing is scheduled. Say what to change, or Build to carry on.'),
+      };
+    }
+    // Stopped, which is a state and not an ending: the plan, the code and the
+    // steps are all still there, and Resume in the header puts the build back on
+    // this feature.
+    if (stopped) {
+      return {
+        Icon: CircleStop,
+        title: 'This build is stopped',
+        // Here the build's note is *why*, so it leads a sentence rather than
+        // replacing one: "feature 2 was rejected" on its own says nothing about
+        // what can be done about it, which is the point of this card.
+        note: buildNote
+          ? `${buildNote} — nothing runs until you resume it, and everything built stays where it is.`
+          : 'Nothing runs until you resume it. Everything built so far stays where it is.',
+        dim: true,
+      };
+    }
+    return null;
+  })();
 
   const refreshBuild = useCallback(async () => {
     if (!buildSlug) return;
@@ -499,9 +595,10 @@ export default function IdeaPageOverlay({
                   On an idea it comes back the moment no build holds it — cancelled,
                   stopped or finished — because then building it again is exactly
                   what the page is for. On a step it's there only while the build is
-                  parked at that step; once the next feature is running there is
-                  nothing to place. */}
-              {(isStep ? atStep : !liveBuild) && (
+                  parked at that step with nothing placed: once the next feature is
+                  running there is nothing to place, and once it has been given a
+                  minute the card below moves it rather than this placing it twice. */}
+              {(isStep ? atStep && !placed : !liveBuild) && (
                 <Pressable
                   onPress={() => setScheduling(isStep ? 'next' : 'start')}
                   disabled={buildBusy}
@@ -519,11 +616,40 @@ export default function IdeaPageOverlay({
                 </Pressable>
               )}
 
+              {/* Carry on. A stopped build isn't a finished one — the plan, the
+                  code and the step cards are all still there — so the step page it
+                  left behind offers the way back in, in the slot Build would be in
+                  if there were anything to build. It takes no time with it: the
+                  build goes back to asking about the feature it reached, and
+                  placing the next one is the ordinary decision it always is.
+
+                  Only on a step. An idea whose build stopped before its first
+                  feature still has its Build button and its own wording, and
+                  handing it over again is a truer description of that than
+                  resuming a build that never built anything. */}
+              {isStep && stopped && (
+                <Pressable
+                  onPress={() => setConfirmResume(true)}
+                  disabled={buildBusy || !slug}
+                  hitSlop={6}
+                  accessibilityRole="button"
+                  accessibilityLabel="Resume this build"
+                  accessibilityState={{ disabled: buildBusy || !slug }}
+                  className={`h-8 flex-row items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/15 px-2.5 active:opacity-70 ${
+                    buildBusy || !slug ? 'opacity-50' : ''
+                  }`}>
+                  <Play size={13} color={colors.accent} strokeWidth={2.5} />
+                  <Text className="text-[12px] font-semibold text-accent">
+                    {buildBusy ? 'Resuming…' : 'Resume'}
+                  </Text>
+                </Pressable>
+              )}
+
               {/* A build that has begun can be called off from wherever it is being
                   watched. The project and everything built so far stay put. A build
-                  still waiting for its start time isn't stopped from up here:
-                  calling it off is one of the two things the schedule card below
-                  offers, next to the time it would undo.
+                  with a run placed at a minute isn't stopped from up here: calling
+                  it off is one of the two things the schedule card below offers,
+                  next to the time it would undo.
 
                   Including on a build step, which is a change: it used to be the
                   idea's control alone, on the grounds that ending a build isn't
@@ -533,7 +659,7 @@ export default function IdeaPageOverlay({
                   idea would leave a build with nowhere to stop it. It still sits
                   second to the Build button, because carrying on is the common
                   answer and stopping is the rare one. */}
-              {liveBuild && !waiting && (
+              {liveBuild && !placed && (
                 <Pressable
                   onPress={() => setConfirmStop(true)}
                   disabled={buildBusy}
@@ -579,28 +705,38 @@ export default function IdeaPageOverlay({
               </View>
             )}
 
-            {/* Scheduled, not started. The idea stays open for editing — the plan
-                is written from whatever it says at the start time — so this states
-                the deadline rather than that the page is shut. It's a card the
-                width of Claude's replies below it, and the same surface, because
-                it's the same kind of thing: the header telling you where this idea
-                stands. */}
-            {waiting && (
+            {/* Where the build stands, above Claude's replies and at the same
+                width and surface — and, when a run has been placed at a minute,
+                the way to what can still be done about it.
+
+                One card on both kinds of page. A scheduled idea and a signed-off
+                step are the same sentence with a different subject: something is
+                due to run, here is when, and here are the two things you can still
+                do about it. The step page used to say the first half and stop,
+                leaving a start time you could read but not move. */}
+            {headerCard && (
               <View
                 style={styles.cardWrap}
                 className="flex-row items-center gap-2.5 rounded-xl border border-surface1 bg-surface/50 p-2.5">
                 {/* The time leads, in the page's text color, with the caveat under
                     it in the faint one — so the card answers "when?" at a glance
                     instead of burying it in a sentence. */}
-                <View className="h-8 w-8 items-center justify-center rounded-lg bg-accent/15">
-                  <CalendarClock size={15} color={colors.accent} strokeWidth={2.5} />
+                <View
+                  className={`h-8 w-8 items-center justify-center rounded-lg ${
+                    headerCard.dim ? 'bg-surface1/50' : 'bg-accent/15'
+                  }`}>
+                  <headerCard.Icon
+                    size={15}
+                    color={headerCard.dim ? colors.faint : colors.accent}
+                    strokeWidth={2.5}
+                  />
                 </View>
                 <View className="flex-1 gap-0.5">
                   <Text className="text-[12px] font-semibold leading-4 text-text">
-                    Starts {startLabel(startsAt ? new Date(startsAt) : null)}
+                    {headerCard.title}
                   </Text>
-                  <Text className="text-[11px] leading-4 text-faint">
-                    Keep editing — the plan follows what the idea says then.
+                  <Text className="text-[11px] leading-4 text-faint" numberOfLines={2}>
+                    {headerCard.note}
                   </Text>
                 </View>
 
@@ -608,70 +744,31 @@ export default function IdeaPageOverlay({
                     Claude's replies and what can still be done about the schedule.
                     The same 32pt square as the header's controls, so a button that
                     opens a surface looks like every other button on the page. */}
-                <Pressable
-                  onPress={() => setEditingSchedule(v => !v)}
-                  hitSlop={8}
-                  accessibilityRole="button"
-                  accessibilityLabel={
-                    scheduleOpen
-                      ? hasReplies
-                        ? "Show Claude's replies"
-                        : 'Close the schedule'
-                      : 'Change when this build starts'
-                  }
-                  accessibilityState={{ expanded: scheduleOpen }}
-                  className="h-8 w-8 items-center justify-center rounded-lg border border-surface1 bg-surface active:opacity-70">
-                  {!scheduleOpen ? (
-                    <CalendarCog size={15} color={colors.accent} strokeWidth={2.5} />
-                  ) : hasReplies ? (
-                    <MessageSquare size={15} color={colors.faint} strokeWidth={2.5} />
-                  ) : (
-                    <X size={15} color={colors.faint} strokeWidth={2.5} />
-                  )}
-                </Pressable>
-              </View>
-            )}
-
-            {/* The same card on a build step, saying the one thing that page is
-                actually about: whether anything is due to run, and when.
-
-                It is stated rather than assumed. A step card used to show the
-                controls of a scheduled build — a stop button for a schedule that
-                didn't exist — when the truth is either "nothing runs until you say
-                so" or "the next feature is placed at this minute". Both come off
-                the build's own state, so neither can drift from it. */}
-            {isStep && (atStep || buildRunning) && (
-              <View
-                style={styles.cardWrap}
-                className="flex-row items-center gap-2.5 rounded-xl border border-surface1 bg-surface/50 p-2.5">
-                <View className="h-8 w-8 items-center justify-center rounded-lg bg-accent/15">
-                  {buildRunning ? (
-                    <Hammer size={15} color={colors.accent} strokeWidth={2.5} />
-                  ) : (
-                    <CalendarClock size={15} color={colors.accent} strokeWidth={2.5} />
-                  )}
-                </View>
-                <View className="flex-1 gap-0.5">
-                  <Text className="text-[12px] font-semibold leading-4 text-text">
-                    {buildRunning
-                      ? `Working on feature ${stepFeature}`
-                      : startsAt
-                        ? `Feature ${nextFeature} starts ${startLabel(new Date(startsAt))}`
-                        : 'Waiting on you'}
-                  </Text>
-                  {/* The build's own note, when it has one — what the last run was
-                      asked for, or what it reported. It says more than any wording
-                      here could, because it's the user's own sentence coming back. */}
-                  <Text className="text-[11px] leading-4 text-faint" numberOfLines={2}>
-                    {build?.note
-                      ? build.note
-                      : buildRunning
-                        ? 'Nothing to do but wait — this comes back when the run lands.'
-                        : startsAt
-                          ? 'This step is signed off — nothing runs until then.'
-                          : 'Nothing is scheduled. Say what to change, or Build to carry on.'}
-                  </Text>
-                </View>
+                {placed && (
+                  <Pressable
+                    onPress={() => setEditingSchedule(v => !v)}
+                    hitSlop={8}
+                    accessibilityRole="button"
+                    accessibilityLabel={
+                      scheduleOpen
+                        ? hasReplies
+                          ? "Show Claude's replies"
+                          : 'Close the schedule'
+                        : isStep
+                          ? 'Change when the next feature starts'
+                          : 'Change when this build starts'
+                    }
+                    accessibilityState={{ expanded: scheduleOpen }}
+                    className="h-8 w-8 items-center justify-center rounded-lg border border-surface1 bg-surface active:opacity-70">
+                    {!scheduleOpen ? (
+                      <CalendarCog size={15} color={colors.accent} strokeWidth={2.5} />
+                    ) : hasReplies ? (
+                      <MessageSquare size={15} color={colors.faint} strokeWidth={2.5} />
+                    ) : (
+                      <X size={15} color={colors.faint} strokeWidth={2.5} />
+                    )}
+                  </Pressable>
+                )}
               </View>
             )}
 
@@ -683,20 +780,25 @@ export default function IdeaPageOverlay({
                 style={styles.cardWrap}
                 className="rounded-xl border border-surface1 bg-surface/50 p-2.5">
                 <Text className="text-[11px] leading-4 text-faint">
-                  Nothing has run yet, so that time is still a choice. Move it, or call the build
-                  off — either way the idea stays yours.
+                  {isStep
+                    ? `Feature ${nextFeature} hasn't started, so that time is still a choice. Move it, or stop the build — either way everything built so far stays where it is.`
+                    : 'Nothing has run yet, so that time is still a choice. Move it, or call the build off — either way the idea stays yours.'}
                 </Text>
                 {/* Two halves of one row: the choice is between exactly these, so
                     they split the card's width evenly rather than sitting as two
-                    differently-sized pills in the middle of it. Cancelling goes
-                    through the same stop dialog the header used to offer, which
-                    already words the not-yet-started case. */}
+                    differently-sized pills in the middle of it. Ending it goes
+                    through the same stop dialog the header offers on a build with
+                    nothing placed, which already words both cases. */}
                 <View className="mt-2.5 flex-row gap-1.5">
                   <Pressable
-                    onPress={() => setScheduling('edit')}
+                    onPress={() => setScheduling(isStep ? 'move' : 'edit')}
                     disabled={buildBusy || !slug}
                     accessibilityRole="button"
-                    accessibilityLabel="Change when this build starts"
+                    accessibilityLabel={
+                      isStep
+                        ? 'Change when the next feature starts'
+                        : 'Change when this build starts'
+                    }
                     accessibilityState={{ disabled: buildBusy || !slug }}
                     className={`h-8 flex-1 flex-row items-center justify-center gap-1.5 rounded-lg border border-surface1 bg-surface active:opacity-70 ${
                       buildBusy || !slug ? 'opacity-50' : ''
@@ -708,13 +810,20 @@ export default function IdeaPageOverlay({
                     onPress={() => setConfirmStop(true)}
                     disabled={buildBusy || !slug}
                     accessibilityRole="button"
-                    accessibilityLabel="Cancel this build before it starts"
+                    accessibilityLabel={
+                      isStep ? 'Stop this build' : 'Cancel this build before it starts'
+                    }
                     accessibilityState={{ disabled: buildBusy || !slug }}
                     className={`h-8 flex-1 flex-row items-center justify-center gap-1.5 rounded-lg border border-danger/30 bg-danger/10 active:opacity-70 ${
                       buildBusy || !slug ? 'opacity-50' : ''
                     }`}>
                     <CalendarX size={13} color={colors.danger} strokeWidth={2.5} />
-                    <Text className="text-[12px] font-semibold text-danger">Cancel build</Text>
+                    {/* "Cancel" on an idea, where nothing has run and there is
+                        nothing to stop; "Stop" on a step, where the same button
+                        ends a build that has already written code. */}
+                    <Text className="text-[12px] font-semibold text-danger">
+                      {isStep ? 'Stop build' : 'Cancel build'}
+                    </Text>
                   </Pressable>
                 </View>
               </View>
@@ -839,9 +948,13 @@ export default function IdeaPageOverlay({
                 <Text className="flex-1 text-[11px] leading-4 text-faint">
                   {buildRunning
                     ? `${slug ?? 'The project'} is working. This step comes back when the run lands, and you can pick it up from there.`
-                    : `This step is closed — the build has moved on. Its latest step is where ${
-                        slug ?? 'the project'
-                      } is picked back up.`}
+                    : stopped
+                      ? `This build is stopped, so there is nothing running to talk to. Resume it to put ${
+                          slug ?? 'the project'
+                        } back at feature ${stepFeature} — the code, the plan and every step stay exactly where they are.`
+                      : `This step is closed — the build has moved on. Its latest step is where ${
+                          slug ?? 'the project'
+                        } is picked back up.`}
                 </Text>
               </View>
             )
@@ -899,15 +1012,22 @@ export default function IdeaPageOverlay({
             now, so the quick path is still one tap.
 
             Reopened later, the same sheet moves a start time that hasn't come
-            round yet: the choice is identical, and so is the sentence explaining
-            it, so there's no second dialog to keep in step with this one. */}
+            round yet — the build's own, or the next feature's — because the choice
+            is identical, and so is the sentence explaining it. One dialog to keep
+            in step with itself rather than four. */}
         <BuildScheduleDialog
           visible={scheduling !== null}
-          title={scheduling === 'next' ? (slug ?? card.title) : card.title}
+          // A step page is about the project, not about the card it's filed under,
+          // so both doors that open from one quote the project back.
+          title={isStep ? (slug ?? card.title) : card.title}
           busy={buildBusy}
           mode={scheduling ?? 'start'}
           feature={nextFeature}
-          initialAt={scheduling === 'edit' && startsAt ? new Date(startsAt) : null}
+          // The two doors that move something already placed open on the time it is
+          // set to; the two that place one for the first time open on "now".
+          initialAt={
+            (scheduling === 'edit' || scheduling === 'move') && startsAt ? new Date(startsAt) : null
+          }
           onConfirm={startAt => {
             const door = scheduling;
             setScheduling(null);
@@ -916,8 +1036,9 @@ export default function IdeaPageOverlay({
             if (door === 'start') {
               runBuildAction(() => startBuild(card, card.title, startAt), startAt === null);
             } else if (slug) {
-              // One endpoint for the other two: moving a start that hasn't come
-              // round, and placing the next feature of a build parked at a step.
+              // One endpoint for the other three: moving a start that hasn't come
+              // round, placing the next feature of a build parked at a step, and
+              // moving that feature once it has been placed.
               runBuildAction(() => scheduleBuild(slug, startAt), startAt === null);
             }
           }}
@@ -925,7 +1046,9 @@ export default function IdeaPageOverlay({
         />
 
         {/* Stopping is destructive in the sense that matters: the schedule goes
-            and a run in flight is killed. The code it already wrote is kept. */}
+            and a run in flight is killed. The code it already wrote is kept — and
+            on a step, so is the way back in, which the wording says rather than
+            leaving the user to find out by pressing it. */}
         <ConfirmDialog
           visible={confirmStop}
           title={waiting ? 'Cancel this build' : 'Stop this build'}
@@ -933,17 +1056,37 @@ export default function IdeaPageOverlay({
             waiting
               ? 'Call this build off before it starts? The crontab entry is removed and nothing ever runs — no plan is written and no code is generated. The empty project folder stays where it is.'
               : isStep
-                ? 'Stop building this project? The schedule is removed and anything running now is cancelled. The project folder and every feature already built stay where they are, and this step stays on the dashboard as the record of what was built.'
+                ? 'Stop building this project? The schedule is removed and anything running now is cancelled. The project folder and every feature already built stay where they are, and this step stays on the dashboard as the record of what was built — with Resume on it, so this can be picked back up.'
                 : 'Stop building this project? The schedule is removed and anything running now is cancelled. The project folder and every feature already built stay where they are, and the idea unlocks.'
           }
           confirmLabel="Stop"
-          cancelLabel={waiting ? 'Leave it scheduled' : 'Keep building'}
+          cancelLabel={placed ? 'Leave it scheduled' : 'Keep building'}
           destructive
           onConfirm={() => {
             setConfirmStop(false);
             if (slug) runBuildAction(() => stopBuild(slug), false);
           }}
           onCancel={() => setConfirmStop(false)}
+        />
+
+        {/* Resuming runs nothing, and says so — it puts the build back at the step
+            it reached and hands the next decision straight back to the user. It's
+            confirmed all the same, because it re-arms a crontab entry and puts a
+            card back on the dashboard asking for an answer, and neither of those
+            should happen from a tap whose meaning had to be guessed. */}
+        <ConfirmDialog
+          visible={confirmResume}
+          title="Resume this build"
+          message={`Put ${
+            slug ?? 'this project'
+          } back at feature ${stepFeature}? Its step goes back to asking for a decision and the schedule is armed again, but nothing runs until you say when the next feature starts — or say what to change about this one first.`}
+          confirmLabel="Resume"
+          cancelLabel="Leave it stopped"
+          onConfirm={() => {
+            setConfirmResume(false);
+            if (slug) runBuildAction(() => resumeBuild(slug), false);
+          }}
+          onCancel={() => setConfirmResume(false)}
         />
 
         {/* The build call didn't take (server gone, /code or /exec off, a folder
