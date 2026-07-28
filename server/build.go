@@ -744,6 +744,13 @@ func buildStamp(st buildState) map[string]any {
 	if st.StartAt != "" {
 		stamp["start_at"] = st.StartAt
 	}
+	// Why the build is where it is — what the last run reported, or the reason it
+	// was stopped. Carried for the same reason as start_at: a dashboard row can say
+	// what went wrong from the card alone, and a row that only said "Stopped" would
+	// make the user open the page to learn the one thing that matters about it.
+	if st.Note != "" {
+		stamp["note"] = st.Note
+	}
 	return stamp
 }
 

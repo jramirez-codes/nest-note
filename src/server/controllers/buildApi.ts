@@ -106,6 +106,8 @@ export function cardBuild(
   start_at?: string;
   /** The name of the idea this build came from — what a step card is titled by. */
   idea?: string;
+  /** Why the build is where it is: what the last run reported, or why it stopped. */
+  note?: string;
 } | null {
   const raw = card.payload?.build;
   if (typeof raw !== 'object' || raw === null) return null;
@@ -118,7 +120,72 @@ export function cardBuild(
     feature: typeof b.feature === 'number' ? b.feature : 0,
     start_at: typeof b.start_at === 'string' ? b.start_at : undefined,
     idea: typeof b.idea === 'string' && b.idea ? b.idea : undefined,
+    note: typeof b.note === 'string' && b.note.trim() ? b.note.trim() : undefined,
   };
+}
+
+/**
+ * How a build's state reads on a dashboard row, or null for a card no build has
+ * touched. Five tones, because a row has room for a colour and two or three words
+ * and the user only needs to know which of five things is true: a run is placed at
+ * a minute, a run is going, the build is parked on the user, it stopped, it
+ * finished.
+ *
+ * Read off the card's own stamp, like everything else about a build the dashboard
+ * shows — the list never fetches /build, so the row is right on its first frame and
+ * stays right without a request per card.
+ *
+ * The wording is deliberately the idea page's wording. A row and the page it opens
+ * are the same fact at two sizes, and "Waiting on you" on the row landing on
+ * "Waiting on you" in the header is what makes the tap feel like a zoom rather than
+ * a jump.
+ */
+export type BuildBadgeTone = 'scheduled' | 'running' | 'waiting' | 'stopped' | 'done';
+
+export interface BuildBadge {
+  tone: BuildBadgeTone;
+  /** The state, in a word or three. */
+  label: string;
+  /** What the row adds to it: the start time, or why a stopped build stopped. */
+  detail?: string;
+}
+
+export function buildBadge(card: DashboardCard): BuildBadge | null {
+  const build = cardBuild(card);
+  if (!build) return null;
+  const at = build.start_at ? new Date(build.start_at) : null;
+  switch (build.status) {
+    // A run placed at a minute that hasn't come round. Both statuses that can hold
+    // a start time say the same thing here, because it *is* the same thing — an
+    // idea handed over for later, and a step whose sign-off named a time for the
+    // feature after it. Only the run being waited on differs, and the row isn't
+    // where that distinction is drawn (the page it opens is).
+    case 'scheduled':
+      return { tone: 'scheduled', label: 'Scheduled', detail: at ? startLabel(at) : undefined };
+    case 'awaiting-validation':
+      return at
+        ? { tone: 'scheduled', label: 'Scheduled', detail: startLabel(at) }
+        : { tone: 'waiting', label: 'Waiting on you' };
+    // A run is in flight. Which of the two it is matters — planning is the run that
+    // takes the idea out of the user's hands — but either way nothing is being
+    // asked of them until it lands.
+    case 'planning':
+      return { tone: 'running', label: 'Planning' };
+    case 'building':
+      return { tone: 'running', label: 'Building' };
+    // Stopped, and the note is why. That's the one thing worth a row's width here:
+    // "Stopped" alone would send the user into the page to learn what a handful of
+    // characters could have told them.
+    case 'halted':
+      return { tone: 'stopped', label: 'Stopped', detail: build.note };
+    case 'done':
+      return { tone: 'done', label: 'Done' };
+    // A status this build of the app doesn't know. Shown as itself rather than
+    // dropped — the same bet the card list makes with an unknown kind, and a row
+    // saying a word we don't recognise beats a row silently saying nothing.
+    default:
+      return build.status ? { tone: 'waiting', label: build.status } : null;
+  }
 }
 
 /**

@@ -478,6 +478,12 @@ func TestTickHaltsOnRejection(t *testing.T) {
 	if stamp == nil || stamp["status"] != buildHalted {
 		t.Fatalf("idea card build stamp = %+v, want status halted", stamp)
 	}
+	// And *why* it halted, since the card is all the dashboard row has: a row that
+	// could only say "Stopped" would make the user open the page to learn the one
+	// thing worth knowing about a stopped build.
+	if stamp["note"] != "feature 1 was rejected" {
+		t.Fatalf("idea card build stamp note = %v, want the reason it halted", stamp["note"])
+	}
 }
 
 // TestTickFinishesWhenThePlanRunsOut: validating the last feature ends the build

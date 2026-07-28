@@ -20,6 +20,7 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  CircleStop,
   Clock,
   FileText,
   Hammer,
@@ -32,9 +33,14 @@ import {
 import type { ThemeColors } from '../../theme/colors';
 import type { DashboardCard } from '../../server/controllers/aiController';
 import type { CardDragShared } from '../../hooks/useCardDrag';
-import { buildIsLive, cardBuild, stepLabel } from '../../server/controllers/buildApi';
+import {
+  buildBadge,
+  stepLabel,
+  type BuildBadge as BuildBadgeState,
+  type BuildBadgeTone,
+} from '../../server/controllers/buildApi';
 import { deriveTitle, type Note } from '../../types/note';
-import { prio, relDate, type TaskView } from './cardModel';
+import { buildTone, prio, relDate, type TaskView } from './cardModel';
 
 // The bundle of drag callbacks + shared values every draggable card needs. The
 // dashboard builds this once and spreads it onto each card / section, so the wiring
@@ -452,16 +458,69 @@ export function ArchivedList({
   );
 }
 
+// The glyph each build tone wears — the same four the idea page's header card uses
+// for the same states, so the row and the page it opens read as one thing at two
+// sizes. 'done' takes the checkmark the task list already means "finished" by.
+const TONE_ICON: Record<BuildBadgeTone, LucideIcon> = {
+  scheduled: CalendarClock,
+  running: Hammer,
+  waiting: Clock,
+  stopped: CircleStop,
+  done: Check,
+};
+
+// A card's build state as the row's leading chip: the same square the kind glyph
+// sits in, grown sideways to hold the state in a word and — for the two states
+// where a word isn't enough — the minute it's due or the reason it stopped.
+//
+// It *replaces* that glyph rather than following it. A badge beside the glyph spent
+// two icons, two paddings and a gap on the row's most expensive edge, and the two
+// icons were usually the same icon: the glyph already turned into a clock or a
+// hammer for exactly the states the badge names. So there is one chip, and it says
+// the more useful of the two things — a card a build has touched is better
+// described by where that build has got to than by being, once again, an idea.
+//
+// Held at h-7, the plain glyph chip's height to the pixel, because a group mixes
+// rows with badges and rows without: the list box measures its first row and holds
+// every other row to it, so a taller (or shorter) badge would clip the group.
+//
+// Capped and truncated, never wrapped — a build's note can be a sentence, and a row
+// is not where a sentence is read. The rest of it is one tap away on the card's
+// page, which is where the same note leads the header card.
+function BuildBadge({ badge }: { badge: BuildBadgeState }) {
+  const tone = buildTone(badge.tone);
+  const Icon = TONE_ICON[badge.tone] ?? Clock;
+
+  return (
+    <View
+      className={`h-7 max-w-[55%] shrink flex-row items-center gap-1 rounded-lg px-1.5 ${tone.chip}`}>
+      <Icon size={13} color={tone.hex} strokeWidth={2.5} />
+      <Text numberOfLines={1} className={`shrink-0 text-[10px] font-bold ${tone.text}`}>
+        {badge.label}
+      </Text>
+      {!!badge.detail && (
+        <Text numberOfLines={1} className={`shrink text-[10px] ${tone.dim}`}>
+          {badge.detail}
+        </Text>
+      )}
+    </View>
+  );
+}
+
 // One row in a card list — ideas, build steps and, as the graceful fallback, any
 // unknown kind. Deliberately the same shape as TaskRow: a fixed-height row (so the
-// list box can measure one and hold five of them), reading as the kind's glyph in a
-// priority-tinted chip (a hammer once a build has the idea on a schedule), the
-// title, the due date when the card carries one, and a chevron for the page behind
-// it. The chip's colour IS the priority — the tint and glyph say it without
-// spending a row's width on the word "Urgent". Tapping the row opens the card as a
-// full read-only page (see onPress → IdeaPageOverlay), which is where the body,
-// tags and untruncated title live. This is what makes the engine scalable: emit a
-// novel kind and it renders.
+// list box can measure one and hold five of them), reading as one chip on the left,
+// the title, the due date when the card carries one, and a chevron for the page
+// behind it. Tapping the row opens the card as a full read-only page (see onPress →
+// IdeaPageOverlay), which is where the body, tags and untruncated title live. This
+// is what makes the engine scalable: emit a novel kind and it renders.
+//
+// That one chip is whichever of two things the card has to say. Ordinarily it is the
+// kind's glyph in a priority-tinted square — the chip's colour IS the priority, so
+// the row spends no width on the word "Urgent". For a card a build has touched it is
+// that build's state instead (see BuildBadge), tinted by the state rather than the
+// priority: those cards are read for what the build is doing, and a row has room for
+// one chip, not for a glyph and a badge saying the same thing beside each other.
 //
 // A **build step** is the one kind that takes two lines, because it is the one kind
 // that answers two questions. Its title is the *idea* — a build step is where an
@@ -484,30 +543,17 @@ export function IdeaRow({
   onPress?: (card: DashboardCard) => void;
 }) {
   const p = prio(card.priority);
-  // An idea with a build on the schedule stops being just a thought, so the row
-  // swaps its lightbulb for a hammer — the same signal the idea page's lock reads,
-  // taken off the card's own payload rather than any local state. Only a *live*
-  // build counts: done and halted release the schedule, and the idea goes back to
-  // being an idea.
-  //
-  // A build the user scheduled for later gets a clock instead: it holds the idea,
-  // but nothing is being built yet, and a hammer would say otherwise.
-  //
-  // Only for ideas. Build-step cards carry the same stamp — that's how their page
-  // knows what the build is doing — but the glyph there is answering "what kind of
-  // card is this?", and every step of a live build would take the hammer, saying
-  // nothing the list they're grouped in doesn't already say.
-  const status = card.kind === 'idea' ? cardBuild(card)?.status : undefined;
-  const building = buildIsLive(status);
-  const scheduled = status === 'scheduled';
   const isStep = card.kind === 'build-step';
-  const KindIcon = scheduled
-    ? CalendarClock
-    : building
-    ? Hammer
-    : card.kind === 'idea'
-    ? Lightbulb
-    : Sparkles;
+  // Where this card's build has got to, for every card a build touches — the idea
+  // it was started from and each step card it filed alike. When there is one it is
+  // the row's leading chip, in place of the kind glyph: a card in a build's hands is
+  // better described by what the build is doing than by what kind of card it is, and
+  // the row has width for one chip, not two.
+  const badge = buildBadge(card);
+  // No build, so the glyph answers the only question left: what kind of card is
+  // this? It no longer bends for a scheduled or running build the way it used to —
+  // the badge that replaced it says that in words, and in the state's own colour.
+  const KindIcon = card.kind === 'idea' ? Lightbulb : Sparkles;
   // What a step card is asking about, under the idea's name.
   const step = isStep ? stepLabel(card) : null;
   const due = card.date ? relDate(card.date) : null;
@@ -519,16 +565,25 @@ export function IdeaRow({
       onPress={() => onPress?.(card)}
       disabled={!onPress}
       accessibilityRole="button"
+      // The badge's own words, rather than a second wording of the same state:
+      // what a screen reader announces is then exactly what is on the row.
       accessibilityLabel={`Open ${card.kind === 'idea' ? 'idea' : card.kind}${
-        scheduled ? ', build scheduled' : building ? ', building' : ''
+        badge ? `, ${badge.label}${badge.detail ? ` ${badge.detail}` : ''}` : ''
       }: ${card.title}${step ? `, ${step}` : ''}`}
       collapsable={false}
       className={`flex-row items-center gap-3 px-3 py-3 active:bg-background ${
         dimmed ? 'opacity-30' : ''
       }`}>
-      <View className={`h-7 w-7 items-center justify-center rounded-lg ${p.chip}`}>
-        <KindIcon size={15} color={p.hex} strokeWidth={2} />
-      </View>
+      {/* One chip, whichever it is: the build's state when there is one, the kind's
+          glyph when there isn't. Both are h-7, so every row in a group is the one
+          height the list box measures off the first of them. */}
+      {badge ? (
+        <BuildBadge badge={badge} />
+      ) : (
+        <View className={`h-7 w-7 items-center justify-center rounded-lg ${p.chip}`}>
+          <KindIcon size={15} color={p.hex} strokeWidth={2} />
+        </View>
+      )}
       {/* The idea's name leads, because that's what the card is a step of. The
           feature under it is the decision being asked for, so it's the smaller,
           fainter line — present but never competing with the project's name. */}

@@ -102,12 +102,12 @@ ever growing taller. Past seven pages the numbers give way to a **3 / 24** reado
 between the arrows. The pager stays put down to a single idea — the card is the same
 shape however few you have.
 
-Each row is the idea's title, its due date if it has one, and a tinted glyph on the
-left. That glyph carries the priority in its colour — red for urgent down to grey for
+Each row is the idea's title, its due date if it has one, and a tinted chip on the
+left. That chip carries the priority in its colour — red for urgent down to grey for
 low, the same scale the task pips use — so the row spends its width on the title
-rather than on the word *Urgent*. Its shape says what the card is: a lightbulb for an
-idea, a **clock** while a [build](../server/builds.mdx) is waiting for its start time,
-a **hammer** once that build has the idea in hand, and sparkles for a build step.
+rather than on the word *Urgent*. Its glyph says what the card is: a lightbulb for an
+idea, sparkles for a build step. (A card a [build](../server/builds.mdx) has taken
+over swaps that chip for [its build's state](#what-a-build-is-doing-from-the-row).)
 Tapping a tag in the bar narrows the list to the
 ideas carrying it (and jumps back to the first page); tapping it again, or **All**,
 clears the filter.
@@ -119,6 +119,40 @@ recognise. Under it, fainter and smaller, the **feature being validated**:
 *Feature 2 — Sensor ingest*. Named by the feature alone, a list of steps read as a
 pile of unrelated chores; named by the idea alone, every step of one build was the
 same row repeated.
+
+### What a build is doing, from the row
+
+Any row a [build](../server/builds.mdx) has touched — an idea it was started from,
+or a step card it filed — wears that build's state as its **left-hand chip**. Same
+badge in both lists, because it answers the same question in both: where has this
+build got to?
+
+It replaces the kind glyph rather than sitting beside it. The glyph used to change
+shape for these states anyway — a clock for a build waiting on its start time, a
+hammer for one under way — so a separate badge next to it spent the row's most
+expensive edge saying the same thing twice. One chip, and it says the more useful of
+the two things: a card in a build's hands is better described by what the build is
+doing than by being, once again, an idea. Its colour is the state's rather than the
+priority's, for the same reason.
+
+| Badge | What it means |
+| --- | --- |
+| **Scheduled** *today at 21:00* | A run is placed at a minute that hasn't come round — an idea handed over for later, or a step whose sign-off named a time for the feature after it. |
+| **Planning** / **Building** | A run is in flight right now. Nothing is being asked of you until it lands. |
+| **Waiting on you** | A feature is built and the step card is asking for your decision. |
+| **Stopped** *feature 2 was rejected* | The build ended before its plan did — with the reason it ended. |
+| **Done** | Every feature in the plan is built and validated. |
+
+The two badges that can't say enough in a word carry a second half: a scheduled one
+adds **the time it's due**, worded exactly as the picker that set it, and a stopped
+one adds **why it stopped**. A long reason is truncated to keep the rows one height
+— the whole of it leads the header card on the page the row opens.
+
+Nothing here is fetched per row. Every badge is read off the card itself, which the
+server stamps with the build's state each time it changes, so the list is right the
+moment it draws and a pull-to-refresh is all it takes to update.
+
+### The idea's page
 
 Tap a row to open that idea as a **full-screen page**, which is where the body and
 the full title live: the same editor the pad uses, rendering the card's

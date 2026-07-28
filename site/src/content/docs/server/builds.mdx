@@ -36,11 +36,11 @@ straight away is still a single extra tap. Confirm it and the server:
 You can watch the planning run live from the phone, the same way you watch a
 [`/code`](../commands/projects.mdx) session.
 
-Back in the Ideas view, that idea's row swaps its lightbulb for a **hammer** for as
-long as the build holds it — so a glance down the list says which ideas are projects
-now. It goes back to a lightbulb if you stop the build before it reaches its first
-feature; after that the idea has moved (see below) and there is no row left to
-change.
+Back in the Ideas view, that idea's row swaps its lightbulb for a **Building** chip
+for as long as the build holds it — so a glance down the list says which ideas are
+projects now, and what each of those projects is up to. It goes back to a lightbulb
+if you stop the build before it reaches its first feature; after that the idea has
+moved (see below) and there is no row left to change.
 
 ## The idea becomes the project
 
@@ -96,8 +96,8 @@ Two things follow from nothing having run yet:
 - **Cancelling costs nothing.** Stop it before it starts and no plan is written and
   no code is generated — just an empty folder left behind.
 
-The row's glyph is a **clock** rather than a hammer until it starts, and the idea
-page's header reads `Build · scheduled`.
+The row's chip reads **Scheduled**, with the time it's due beside it, rather than
+*Building* until it starts — and the idea page's header reads `Build · scheduled`.
 
 Times are minute-resolution, because the crontab entry underneath can't do better.
 A time that has all but arrived — anything within 90 seconds, which is mostly your
@@ -156,6 +156,13 @@ The gate is a hard block: no feature ever starts until you've approved the one
 before it. Approving and rejecting are just the **complete** and **dismiss**
 buttons every dashboard card already has — there is no separate approval UI to
 learn.
+
+You don't have to open anything to see which row of that table a build is on. Every
+card a build touches carries that build's state as [the left-hand chip of its
+dashboard row](../commands/dashboard.mdx#what-a-build-is-doing-from-the-row) —
+*Scheduled* with the minute it's due, *Planning* or *Building* while a run is in
+flight, *Waiting on you* at a gate, *Stopped* with the reason, *Done*. Scanning the
+Ideas view tells you what every build you have is doing.
 
 ## Saying when the next feature runs
 
