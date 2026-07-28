@@ -1070,3 +1070,208 @@ func TestBuildRunInheritsServerEnvironment(t *testing.T) {
 		t.Fatalf("the run's cwd = %q, want the project dir %q", probe.Cwd, projectDir)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Cleanup — nothing outlives the build it was armed for
+// ---------------------------------------------------------------------------
+
+// TestBuildStopReleasesAScheduledBuildsCronLines: cancelling a build that never
+// started has to take BOTH of its lines out — the exact-minute one and the
+// recurring safety net — or the one left behind fires at a build that no longer
+// exists (and the dated one does it again next year).
+func TestBuildStopReleasesAScheduledBuildsCronLines(t *testing.T) {
+	const token = "secret"
+	f := newBuildFixture(t)
+	cron := &fakeCrontab{content: "0 9 * * * /usr/bin/backup  # mine\n"}
+	f.cfg.cron = cron.io()
+	at := time.Now().Add(9 * time.Hour)
+	if err := installCronLine(cron.io(), f.slug, scheduledCronLines(f.root, f.slug, at)); err != nil {
+		t.Fatal(err)
+	}
+	f.writeState(t, buildState{Status: buildScheduled, StartAt: at.UTC().Format(time.RFC3339)})
+
+	req := httptest.NewRequest(http.MethodPost, "/build/stop", strings.NewReader(`{"slug":"greenhouse-tracker"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	buildStopHandler(token, f.cfg).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+
+	if strings.Contains(cron.content, cronMarker(f.slug)) {
+		t.Fatalf("a cancelled build left a crontab line behind:\n%s", cron.content)
+	}
+	if !strings.Contains(cron.content, "# mine") {
+		t.Fatalf("the user's own line was eaten:\n%s", cron.content)
+	}
+	if st, _ := loadBuild(f.cfg.buildDir(f.slug)); st.Status != buildHalted {
+		t.Fatalf("status = %q, want %q", st.Status, buildHalted)
+	}
+}
+
+// TestBuildStopSweepsCronWithNoStateOnDisk: the build state lives in the project
+// folder, so anything that removed .nestnote/ by hand leaves the crontab line
+// armed with nothing to read. A stop is the last request that will ever name that
+// slug — it answers 404 honestly, but not before taking the line out.
+func TestBuildStopSweepsCronWithNoStateOnDisk(t *testing.T) {
+	const token = "secret"
+	f := newBuildFixture(t)
+	cron := &fakeCrontab{}
+	f.cfg.cron = cron.io()
+	if err := installCronLine(cron.io(), f.slug, cronLineFor(f.root, f.slug)); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/build/stop", strings.NewReader(`{"slug":"greenhouse-tracker"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	buildStopHandler(token, f.cfg).ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("got %d, want 404 — there is no build to report", rec.Code)
+	}
+	if strings.Contains(cron.content, cronMarker(f.slug)) {
+		t.Fatalf("a build with no state kept its crontab line:\n%s", cron.content)
+	}
+}
+
+// TestHaltKeepsRemovingCronWhenTheStateWriteFails: the halt has to reach the
+// crontab even when it cannot record itself. A build.json that didn't land is a
+// bug; a line still ticking a build nobody can stop is a worse one.
+func TestHaltKeepsRemovingCronWhenTheStateWriteFails(t *testing.T) {
+	f := newBuildFixture(t)
+	cron := &fakeCrontab{}
+	f.cfg.cron = cron.io()
+	if err := installCronLine(cron.io(), f.slug, cronLineFor(f.root, f.slug)); err != nil {
+		t.Fatal(err)
+	}
+	st := buildState{Slug: f.slug, Source: f.source, CardID: "idea-4f2a", Status: buildBuilding, Feature: 1}
+	// A file where the .nestnote/ directory should be: saveBuild's MkdirAll fails.
+	dir := f.cfg.buildDir(f.slug)
+	if err := os.WriteFile(dir, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := f.cfg.halt(dir, f.mcpDir, st, "stopped"); err == nil {
+		t.Fatal("halt should report the failed state write")
+	}
+	if strings.Contains(cron.content, cronMarker(f.slug)) {
+		t.Fatalf("the crontab line survived a halt:\n%s", cron.content)
+	}
+}
+
+// TestDismissingAnIdeaStopsItsBuild is the dashboard half of the cleanup:
+// dismissing a card is how an idea is deleted, and an idea's build only ever
+// existed to build that idea. The crontab line goes with it.
+func TestDismissingAnIdeaStopsItsBuild(t *testing.T) {
+	const token = "secret"
+	f := newBuildFixture(t)
+	cron := &fakeCrontab{content: "0 9 * * * /usr/bin/backup  # mine\n"}
+	f.cfg.cron = cron.io()
+	at := time.Now().Add(9 * time.Hour)
+	if err := installCronLine(cron.io(), f.slug, scheduledCronLines(f.root, f.slug, at)); err != nil {
+		t.Fatal(err)
+	}
+	f.writeState(t, buildState{
+		Status:     buildScheduled,
+		StartAt:    at.UTC().Format(time.RFC3339),
+		GateCardID: gateCardID(f.slug, 1),
+	})
+	if err := writeCard(f.mcpDir, f.source, dashCard{
+		ID: gateCardID(f.slug, 1), Kind: buildCardKind, Title: "Validate: feature 1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/action?token="+token,
+		strings.NewReader(`{"action":"dismiss","id":"idea-4f2a","source":"greenhouse"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	actionHandler(token, f.root, f.cfg).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+
+	if strings.Contains(cron.content, cronMarker(f.slug)) {
+		t.Fatalf("the deleted idea's build kept its crontab line:\n%s", cron.content)
+	}
+	if !strings.Contains(cron.content, "# mine") {
+		t.Fatalf("the user's own line was eaten:\n%s", cron.content)
+	}
+	st, _ := loadBuild(f.cfg.buildDir(f.slug))
+	if st.Status != buildHalted || st.Note == "" {
+		t.Fatalf("state = %+v, want halted with a note saying why", st)
+	}
+	// And the card that was asking for a decision about it stops asking.
+	gate, ok := loadCard(f.mcpDir, f.source, gateCardID(f.slug, 1))
+	if !ok || !gate.Dismissed {
+		t.Fatalf("gate card = %+v, want it retired with the build", gate)
+	}
+}
+
+// TestDismissingAnotherCardLeavesTheBuildAlone: every dismissal on the dashboard
+// runs the sweep, so the match has to be exact. A neighbouring card in the same
+// notebook must not take a build down with it.
+func TestDismissingAnotherCardLeavesTheBuildAlone(t *testing.T) {
+	const token = "secret"
+	f := newBuildFixture(t)
+	cron := &fakeCrontab{}
+	f.cfg.cron = cron.io()
+	if err := installCronLine(cron.io(), f.slug, cronLineFor(f.root, f.slug)); err != nil {
+		t.Fatal(err)
+	}
+	f.writeState(t, buildState{Status: buildBuilding, Feature: 1})
+	if err := writeCard(f.mcpDir, f.source, dashCard{
+		ID: "idea-9c11", Kind: "idea", Title: "Something else entirely",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/action?token="+token,
+		strings.NewReader(`{"action":"dismiss","id":"idea-9c11","source":"greenhouse"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	actionHandler(token, f.root, f.cfg).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(cron.content, cronMarker(f.slug)) {
+		t.Fatalf("dismissing an unrelated card stopped a live build:\n%s", cron.content)
+	}
+	if st, _ := loadBuild(f.cfg.buildDir(f.slug)); st.Status != buildBuilding {
+		t.Fatalf("status = %q, want it still building", st.Status)
+	}
+}
+
+// TestScheduledBuildHaltsIfTheIdeaWasDismissed is the backstop for a dismissal
+// that never reached /action — the orchestrator's own dismiss_card tool, or a
+// server that was down at the time. A dismissed card is still a file on disk, so
+// without this check the planner would happily build an idea the user deleted.
+func TestScheduledBuildHaltsIfTheIdeaWasDismissed(t *testing.T) {
+	f := newBuildFixture(t)
+	cron := &fakeCrontab{}
+	f.cfg.cron = cron.io()
+	if err := installCronLine(cron.io(), f.slug, cronLineFor(f.root, f.slug)); err != nil {
+		t.Fatal(err)
+	}
+	f.writeState(t, buildState{
+		Status:  buildScheduled,
+		StartAt: time.Now().Add(-time.Minute).UTC().Format(time.RFC3339),
+	})
+	if _, ok := updateCard(f.mcpDir, f.source, "idea-4f2a", func(c *dashCard) { c.Dismissed = true }); !ok {
+		t.Fatal("could not dismiss the idea card")
+	}
+
+	res, err := f.cfg.tick(f.slug, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Action != "halt" {
+		t.Fatalf("action = %q (%s), want halt", res.Action, res.Detail)
+	}
+	if strings.Contains(cron.content, cronMarker(f.slug)) {
+		t.Fatalf("the halted build kept its crontab line:\n%s", cron.content)
+	}
+	if f.cfg.reg.get(buildSessionID(f.slug, 0)) != nil {
+		t.Fatal("a dismissed idea still started its planning run")
+	}
+}

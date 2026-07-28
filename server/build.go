@@ -786,11 +786,19 @@ func (cfg buildConfig) startPlanning(dir, projectDir, mcpDir string, st buildSta
 	res := tickResult{Status: st.Status, Feature: 0}
 
 	idea, ok := loadCard(mcpDir, st.Source, st.CardID)
-	if !ok {
+	if !ok || idea.Dismissed {
 		// The idea was deleted between scheduling the build and its start time —
 		// only possible on the scheduled path, since the handler loads the card
 		// first. There is nothing to write a plan from, so stop and say why rather
 		// than run the planner against an empty prompt.
+		//
+		// A dismissed card counts as deleted: dismissing IS how an idea is deleted
+		// from the dashboard, and the card file stays on disk afterwards. Deleting
+		// the idea already stops the build directly (see stopBuildsForCard), so
+		// reaching here means the dismissal came through some other door — the
+		// orchestrator's own dismiss_card tool, or a server that was down at the
+		// time — and this is the backstop that keeps a thrown-away idea from being
+		// built anyway.
 		res.Action = "halt"
 		res.Detail = "the idea card is gone"
 		res.Status = buildHalted
@@ -966,15 +974,83 @@ func (cfg buildConfig) gateFeature(dir, projectDir, mcpDir string, prev buildSta
 
 // halt stops a build for good: no more ticks, no crontab line, and the idea page
 // unlocks so the user can go back to talking about the idea.
+//
+// The crontab line goes even when the state write failed. A halted build whose
+// build.json didn't land is a bug; a crontab line still ticking a build nobody
+// can see is a worse one — it would run the state machine off whatever stale
+// state is on disk, every half hour, forever.
 func (cfg buildConfig) halt(dir, mcpDir string, st buildState, reason string) error {
 	st.Status = buildHalted
 	st.Note = reason
-	if err := saveBuild(dir, st); err != nil {
-		return err
-	}
+	saveErr := saveBuild(dir, st)
 	_ = removeCronLine(cfg.cron, st.Slug)
+	if saveErr != nil {
+		return saveErr
+	}
 	stampIdeaCard(mcpDir, st)
 	return nil
+}
+
+// stopBuild is the whole "this build is over" sequence, in the order that leaves
+// the least behind: kill whatever run is in flight, halt the state (which takes
+// the crontab line out), and retire the gate card that was asking the user for a
+// decision about a build that no longer exists.
+//
+// Both doors into it — the stop button on the idea page, and deleting the idea
+// itself — go through here, so a build stopped either way leaves the same
+// nothing behind.
+func (cfg buildConfig) stopBuild(dir, mcpDir string, st buildState, reason string) error {
+	if cfg.reg != nil {
+		if sess := cfg.reg.get(buildSessionID(st.Slug, st.Feature)); sess != nil {
+			sess.kill()
+			cfg.reg.remove(sess.id)
+		}
+	}
+	if err := cfg.halt(dir, mcpDir, st, reason); err != nil {
+		return err
+	}
+	retireGateCard(mcpDir, st)
+	return nil
+}
+
+// stopBuildsForCard stops every live build started from one idea card, and is
+// what deleting an idea from the dashboard calls: the build only ever existed to
+// turn that idea into a project, so an idea the user threw away must not leave a
+// crontab line ticking a build behind it.
+//
+// It scans the project folders rather than reading the build stamp off the card,
+// because the stamp is a convenience for the phone (it's how the idea page knows
+// its lock) and it lives in a payload that a later orchestrator write could
+// replace. build.json is the record. The scan is a directory read and a small
+// JSON file per project — cheap enough to do on a card dismissal, and the only
+// version of this that can't leave an entry behind.
+//
+// Deliberately not gated on cfg.enabled: a server started without -allow-code
+// and -allow-exec can't start builds, but the crontab lines an earlier run armed
+// are still there, and this is the one thing that should still clean them up.
+func (cfg buildConfig) stopBuildsForCard(mcpDir, source, cardID, reason string) {
+	if cfg.projectsBase == "" || cardID == "" {
+		return
+	}
+	entries, err := os.ReadDir(cfg.projectsBase)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		dir := cfg.buildDir(e.Name())
+		st, ok := loadBuild(dir)
+		if !ok || st.CardID != cardID || st.Source != source || !buildActive(st.Status) {
+			continue
+		}
+		if err := cfg.stopBuild(dir, mcpDir, st, reason); err != nil {
+			log.Printf("build: %s stop after its idea was deleted: %v", st.Slug, err)
+			continue
+		}
+		log.Printf("build: stopped %s — its idea card %s/%s was deleted", st.Slug, source, cardID)
+	}
 }
 
 // retireGateCard dismisses a spent gate card so it leaves the dashboard. Dismissed
@@ -1278,19 +1354,22 @@ func buildStopHandler(token string, cfg buildConfig) http.HandlerFunc {
 		dir := cfg.buildDir(req.Slug)
 		st, ok := loadBuild(dir)
 		if !ok {
+			// No build state, but there may well still be a crontab line: the state
+			// file lives in the project folder, so anything that removed .nestnote/
+			// (or the folder's contents) by hand leaves the schedule armed and this
+			// the only request that will ever ask about that slug. Sweep it, then
+			// answer honestly that there was no build here.
+			if err := removeCronLine(cfg.cron, req.Slug); err != nil {
+				log.Printf("build: stop %s left its crontab line: %v", req.Slug, err)
+			}
 			http.Error(w, "no build for that project", http.StatusNotFound)
 			return
 		}
 		mcpDir, _ := rootDirs(cfg.root)
-		if sess := cfg.reg.get(buildSessionID(req.Slug, st.Feature)); sess != nil {
-			sess.kill()
-			cfg.reg.remove(sess.id)
-		}
-		if err := cfg.halt(dir, mcpDir, st, "stopped from the idea page"); err != nil {
+		if err := cfg.stopBuild(dir, mcpDir, st, "stopped from the idea page"); err != nil {
 			http.Error(w, "could not stop the build", http.StatusInternalServerError)
 			return
 		}
-		retireGateCard(mcpDir, st)
 		st, _ = loadBuild(dir)
 		log.Printf("build: stopped %s", req.Slug)
 		writeJSON(w, cfg.response(req.Slug, st))

@@ -174,7 +174,10 @@ func main() {
 	mux.HandleFunc("/state", stateHandler(token, *root))
 	mux.HandleFunc("/notebook", notebookHandler(token, *root))
 	mux.HandleFunc("/page", pageHandler(token, *root))
-	mux.HandleFunc("/action", actionHandler(token, *root))
+	// /action also carries the build config: dismissing a card is how an idea is
+	// deleted, and deleting an idea stops the build it started rather than leaving
+	// cron ticking at it.
+	mux.HandleFunc("/action", actionHandler(token, *root, builds))
 	// Read-only full-text search across every notebook's pages, backing the
 	// editor's `/search <query>` autocomplete. See server/search.go.
 	mux.HandleFunc("/search", searchHandler(token, *root))

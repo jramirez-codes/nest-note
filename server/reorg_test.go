@@ -107,7 +107,7 @@ func TestReorgActionHTTP(t *testing.T) {
 		b, _ := json.Marshal(body)
 		req := httptest.NewRequest(http.MethodPost, "/action?token="+token, strings.NewReader(string(b)))
 		rr := httptest.NewRecorder()
-		actionHandler(token, root)(rr, req)
+		actionHandler(token, root, buildConfig{})(rr, req)
 		return rr
 	}
 

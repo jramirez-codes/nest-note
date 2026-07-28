@@ -99,6 +99,7 @@ Every 30 minutes, cron pokes the server and one of these happens:
 | --- | --- |
 | Scheduled, not yet due | Nothing. The clock decides, not the tick. |
 | Scheduled and due | Writes the plan, then starts feature 1. |
+| Scheduled and due, but the idea is gone | Stops the build and gives up its schedule — there is nothing left to write a plan from. |
 | A run is in flight | Nothing. One agent per project, ever. |
 | A feature just finished | Puts a **`build-step` card** in the dashboard's [Ideas view](../commands/dashboard.mdx#organize-and-ideas) asking you to validate it. |
 | That card is untouched | Nothing. The build waits — indefinitely, if that's how long you take. |
@@ -133,9 +134,21 @@ is called off with **Cancel build**, behind the schedule card's calendar button 
 the same action, worded for a build that has yet to run, and kept next to the time
 it undoes.
 
-Deleting the project with [`/delete`](../commands/projects.mdx) also removes its
-crontab entry, so a deleted project can't leave cron firing at a folder that no
-longer exists.
+Two other things stop a build, for the same reason: whatever it was building for
+is gone.
+
+- **Deleting the idea** — dismissing its card in the [Ideas
+  view](../commands/dashboard.mdx#organize-and-ideas) — stops the build the idea
+  started. The run in flight is cancelled, the crontab entry removed, and any
+  `build-step` card still asking you to validate a feature is retired with it. A
+  build only ever existed to turn that idea into a project, so an idea you threw
+  away can't leave one running.
+- **Deleting the project** with [`/delete`](../commands/projects.mdx) removes its
+  crontab entry too, so a deleted project can't leave cron firing at a folder
+  that no longer exists.
+
+Either way the project folder and everything built so far stay where they are —
+deleting the idea deletes the idea, not the code.
 
 ## `.nestnote/` never reaches GitHub
 
@@ -190,8 +203,10 @@ carries a marker:
 ```
 
 which makes entries greppable and individually removable. Your own crontab lines
-are passed through untouched. Entries are removed when a build is stopped,
-rejected, finished, or its project deleted.
+are passed through untouched. Entries are removed when a build is stopped or
+cancelled, rejected, finished, or when the thing it was building for goes away —
+its idea deleted, or its project deleted. Nothing that no longer exists keeps a
+line in your crontab.
 
 A build scheduled for later carries **two** lines until it starts — the minute you
 picked, and the ordinary recurring line beneath it:
