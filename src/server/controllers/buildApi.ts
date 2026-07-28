@@ -109,6 +109,7 @@ async function request(
   path: string,
   body?: Record<string, unknown>,
   notFoundMsg = 'No build for that project.',
+  conflictMsg = 'That project already has a build running.',
 ): Promise<string> {
   const t = getTransport();
   if (!t) throw new Error(NO_MODULE);
@@ -128,7 +129,7 @@ async function request(
     // leaving the user staring at a number.
     throw new Error('Builds are off on this server (start it with -allow-code and -allow-exec).');
   }
-  if (res.status === 409) throw new Error('That project already has a build running.');
+  if (res.status === 409) throw new Error(conflictMsg);
   if (res.status !== 200) {
     setServerStatus('disconnected');
     throw new Error(`Build unavailable (HTTP ${res.status}).`);
@@ -182,6 +183,28 @@ export async function startBuild(
         ...(startAt ? { start_at: startAt.toISOString() } : {}),
       },
       'That idea is no longer on the server.',
+    ),
+  );
+}
+
+/**
+ * Move the start time of a build that hasn't begun yet. Null brings it forward to
+ * now, which is the same "Now" the picker offers when the build is first handed
+ * over — so the server starts planning immediately, exactly as a due tick would.
+ *
+ * Only a build still waiting can be rescheduled: once planning has run there is a
+ * plan written from the idea's wording, and the server answers 409. That's a race
+ * the phone can lose honestly — the start time it was showing came round while the
+ * dialog was open — so the message says the build has started rather than blaming
+ * the request.
+ */
+export async function rescheduleBuild(slug: string, startAt: Date | null): Promise<BuildInfo> {
+  return parseBuild(
+    await request(
+      '/build/schedule',
+      { slug, ...(startAt ? { start_at: startAt.toISOString() } : {}) },
+      'No build for that project.',
+      'This build has already started, so its start time can no longer be moved.',
     ),
   );
 }

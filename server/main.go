@@ -153,6 +153,9 @@ func main() {
 	}
 	mux.HandleFunc("/build", buildStateHandler(token, builds))
 	mux.HandleFunc("/build/start", buildStartHandler(token, builds))
+	// Moving the start time of a build that hasn't begun — only legal while it
+	// waits, since after that a plan exists and there is nothing left to defer.
+	mux.HandleFunc("/build/schedule", buildScheduleHandler(token, builds))
 	mux.HandleFunc("/build/stop", buildStopHandler(token, builds))
 	mux.HandleFunc("/build/tick", buildTickHandler(token, builds))
 	// Read-only dashboard state + the optional merge-approval action. Both only

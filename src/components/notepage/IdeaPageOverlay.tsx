@@ -18,6 +18,8 @@ import Animated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   CalendarClock,
+  CalendarCog,
+  CalendarX,
   ChevronLeft,
   CircleStop,
   Hammer,
@@ -36,6 +38,7 @@ import {
   cardBuild,
   fetchBuild,
   planMarkdown,
+  rescheduleBuild,
   startBuild,
   startLabel,
   stopBuild,
@@ -247,7 +250,8 @@ export default function IdeaPageOverlay({
   const hasBuild = buildIsLive(stamp?.status);
   // Holding the idea and locking it are different: a build the user scheduled for
   // later hasn't planned anything from the idea's wording yet, so it stays theirs
-  // to work on right up to the start time.
+  // to work on right up to the start time — and so does the start time itself,
+  // which can be moved or called off until it comes round.
   const locked = buildLocksIdea(stamp?.status);
   const [build, setBuild] = useState<BuildInfo | null>(null);
   // The build hasn't started yet, and when it will. Both prefer the fetched build
@@ -255,8 +259,14 @@ export default function IdeaPageOverlay({
   // after opening rather than only once /build has answered.
   const waiting = (build?.status ?? stamp?.status) === 'scheduled';
   const startsAt = build?.start_at ?? stamp?.start_at;
+  // The slug either source knows this build by. The fetched build is the fresher
+  // of the two, but the stamp is there on the first frame — so the controls that
+  // act on a build work before /build has answered.
+  const slug = build?.slug ?? buildSlug;
   const [showPlan, setShowPlan] = useState(false);
-  const [confirmStart, setConfirmStart] = useState(false);
+  // Which schedule decision is on screen: handing the idea over for the first
+  // time, or moving the start of a build that hasn't begun. One dialog, two doors.
+  const [scheduling, setScheduling] = useState<'start' | 'edit' | null>(null);
   const [confirmStop, setConfirmStop] = useState(false);
   const [buildBusy, setBuildBusy] = useState(false);
   const [buildError, setBuildError] = useState<string | null>(null);
@@ -372,7 +382,7 @@ export default function IdeaPageOverlay({
                   decision worth taking first — when it should start. */}
               {!build && !hasBuild && (
                 <Pressable
-                  onPress={() => setConfirmStart(true)}
+                  onPress={() => setScheduling('start')}
                   disabled={buildBusy}
                   hitSlop={6}
                   accessibilityRole="button"
@@ -530,16 +540,51 @@ export default function IdeaPageOverlay({
                   is written from whatever the idea says at that point — so the
                   strip says when the deadline is rather than that it's shut. */}
               {waiting && (
-                <View className="flex-row items-center gap-2 px-1 pb-1 pt-2">
-                  <CalendarClock size={13} color={colors.accent} strokeWidth={2.5} />
-                  <Text className="flex-1 text-[11px] leading-4 text-faint">
-                    Building starts{' '}
-                    <Text className="font-semibold text-muted">
-                      {startLabel(startsAt ? new Date(startsAt) : null)}
+                <View className="px-1 pb-1 pt-2">
+                  <View className="flex-row items-center gap-2">
+                    <CalendarClock size={13} color={colors.accent} strokeWidth={2.5} />
+                    <Text className="flex-1 text-[11px] leading-4 text-faint">
+                      Building starts{' '}
+                      <Text className="font-semibold text-muted">
+                        {startLabel(startsAt ? new Date(startsAt) : null)}
+                      </Text>
+                      . Keep working on the idea until then — the plan is written from what it
+                      says at that point.
                     </Text>
-                    . Keep working on the idea until then — the plan is written from what it
-                    says at that point.
-                  </Text>
+                  </View>
+                  {/* Nothing has run yet, so that time is still a choice rather
+                      than a commitment — both ways out of it sit under the line
+                      that states it, where the user is already reading. Cancelling
+                      goes through the header's stop dialog, which already words
+                      the not-yet-started case. */}
+                  <View className="mt-1.5 flex-row justify-end gap-1.5">
+                    <Pressable
+                      onPress={() => setScheduling('edit')}
+                      disabled={buildBusy || !slug}
+                      hitSlop={6}
+                      accessibilityRole="button"
+                      accessibilityLabel="Change when this build starts"
+                      accessibilityState={{ disabled: buildBusy || !slug }}
+                      className={`flex-row items-center gap-1.5 rounded-full border border-surface1 bg-surface px-2.5 py-1 active:opacity-70 ${
+                        buildBusy || !slug ? 'opacity-50' : ''
+                      }`}>
+                      <CalendarCog size={13} color={colors.accent} strokeWidth={2.5} />
+                      <Text className="text-[11px] font-semibold text-muted">Reschedule</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => setConfirmStop(true)}
+                      disabled={buildBusy || !slug}
+                      hitSlop={6}
+                      accessibilityRole="button"
+                      accessibilityLabel="Cancel this build before it starts"
+                      accessibilityState={{ disabled: buildBusy || !slug }}
+                      className={`flex-row items-center gap-1.5 rounded-full border border-surface1 bg-surface px-2.5 py-1 active:opacity-70 ${
+                        buildBusy || !slug ? 'opacity-50' : ''
+                      }`}>
+                      <CalendarX size={13} color={colors.faint} strokeWidth={2.5} />
+                      <Text className="text-[11px] font-semibold text-muted">Cancel build</Text>
+                    </Pressable>
+                  </View>
                 </View>
               )}
               <CardComposer
@@ -580,18 +625,29 @@ export default function IdeaPageOverlay({
         {/* Starting a build hands the idea to an agent that will run unattended
             on a schedule, so it's spelled out rather than confirmed with a shrug —
             and picking when it starts is part of the same decision. The default is
-            now, so the quick path is still one tap. */}
+            now, so the quick path is still one tap.
+
+            Reopened later, the same sheet moves a start time that hasn't come
+            round yet: the choice is identical, and so is the sentence explaining
+            it, so there's no second dialog to keep in step with this one. */}
         <BuildScheduleDialog
-          visible={confirmStart}
+          visible={scheduling !== null}
           title={card.title}
           busy={buildBusy}
+          reschedule={scheduling === 'edit'}
+          initialAt={scheduling === 'edit' && startsAt ? new Date(startsAt) : null}
           onConfirm={startAt => {
-            setConfirmStart(false);
+            const editing = scheduling === 'edit';
+            setScheduling(null);
             // Only show the plan straight away for a build that's actually about
             // to write one; a scheduled build would flip to an empty page.
-            runBuildAction(() => startBuild(card, card.title, startAt), startAt === null);
+            if (!editing) {
+              runBuildAction(() => startBuild(card, card.title, startAt), startAt === null);
+            } else if (slug) {
+              runBuildAction(() => rescheduleBuild(slug, startAt), startAt === null);
+            }
           }}
-          onCancel={() => setConfirmStart(false)}
+          onCancel={() => setScheduling(null)}
         />
 
         {/* Stopping is destructive in the sense that matters: the schedule goes
@@ -609,7 +665,7 @@ export default function IdeaPageOverlay({
           destructive
           onConfirm={() => {
             setConfirmStop(false);
-            if (build) runBuildAction(() => stopBuild(build.slug), false);
+            if (slug) runBuildAction(() => stopBuild(slug), false);
           }}
           onCancel={() => setConfirmStop(false)}
         />

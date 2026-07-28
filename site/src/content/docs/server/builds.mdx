@@ -62,6 +62,30 @@ Times are minute-resolution, because the crontab entry underneath can't do bette
 A time that has all but arrived — anything within 90 seconds, which is mostly your
 phone's clock disagreeing with the server's — is simply treated as now.
 
+## Changing your mind before it starts
+
+A start time is a choice, not a commitment. While a build is waiting, the line
+above the idea's chat composer that tells you when it starts carries two buttons:
+
+- **Reschedule** reopens the same picker, prefilled with the time it's currently
+  set to. Move it later, pull it earlier, or choose **Now** — which doesn't
+  reschedule it to this minute, it starts the build, exactly as the tick would
+  have. The button says `Build it now` when that's what it will do.
+- **Cancel build** calls it off, through the same confirmation the header's stop
+  button uses. Nothing has run, so nothing is lost but an empty project folder.
+
+Both only exist while the build is `scheduled`. Once the planning run has gone
+there is a `PROJECT_PLAN.md` written from the idea's wording and no start time
+left to move, so the server refuses to reschedule it — stopping is the only way
+out of a build that has begun.
+
+Rescheduling replaces the dated crontab line with one for the new minute and
+leaves the recurring safety net alone. The new time is written to the build's
+state *before* the crontab is touched, because the tick checks the clock against
+that state: if the crontab write fails, the worst case is a build that starts
+late off the recurring line rather than one that starts earlier than you just
+asked for, while you're still editing the idea.
+
 ## The loop
 
 Every 30 minutes, cron pokes the server and one of these happens:
@@ -98,7 +122,8 @@ idea back.
 The **stop** button in the idea page's header removes the crontab entry, cancels
 any run in flight, and unlocks the idea. The project folder and every feature
 already built stay exactly where they are. On a build that hasn't started, the
-same button cancels the schedule.
+same button cancels the schedule — as does **Cancel build** beside the composer,
+which is the same action worded for a build that has yet to run.
 
 Deleting the project with [`/delete`](../commands/projects.mdx) also removes its
 crontab entry, so a deleted project can't leave cron firing at a folder that no

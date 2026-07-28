@@ -712,6 +712,161 @@ func TestBuildStartRejectsAnUnparseableStartTime(t *testing.T) {
 	}
 }
 
+// scheduleReq posts a reschedule for the fixture's build, with an empty start
+// meaning "now".
+func (f *buildFixture) scheduleReq(t *testing.T, token string, startAt time.Time) *httptest.ResponseRecorder {
+	t.Helper()
+	body := fmt.Sprintf(`{"slug":%q}`, f.slug)
+	if !startAt.IsZero() {
+		body = fmt.Sprintf(`{"slug":%q,"start_at":%q}`, f.slug, startAt.Format(time.RFC3339))
+	}
+	req := httptest.NewRequest(http.MethodPost, "/build/schedule", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	buildScheduleHandler(token, f.cfg).ServeHTTP(rec, req)
+	return rec
+}
+
+// TestBuildRescheduleMovesTheStartTime: the user changed their mind about when.
+// The state, the crontab pair and the idea's stamp all have to land on the new
+// time — a build whose card still advertises the old one would have the phone
+// telling the user something the server no longer believes.
+func TestBuildRescheduleMovesTheStartTime(t *testing.T) {
+	const token = "secret"
+	f := newBuildFixture(t)
+	cron := &fakeCrontab{}
+	f.cfg.cron = cron.io()
+	was := time.Now().Add(2 * time.Hour).UTC().Round(time.Minute)
+	now := time.Now().Add(30 * time.Hour).UTC().Round(time.Minute)
+	f.writeState(t, buildState{Status: buildScheduled, StartAt: was.Format(time.RFC3339)})
+
+	rec := f.scheduleReq(t, token, now)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+	var got buildResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != buildScheduled || got.StartAt != now.Format(time.RFC3339) {
+		t.Fatalf("response = %q at %q, want %q at %q", got.Status, got.StartAt, buildScheduled, now.Format(time.RFC3339))
+	}
+	st, _ := loadBuild(f.cfg.buildDir(f.slug))
+	if st.StartAt != now.Format(time.RFC3339) {
+		t.Fatalf("state start_at = %q, want %q", st.StartAt, now.Format(time.RFC3339))
+	}
+	if strings.Contains(cron.content, cronLineAt(f.root, f.slug, was)) {
+		t.Fatalf("the old exact-minute line survived:\n%s", cron.content)
+	}
+	if !strings.Contains(cron.content, cronLineAt(f.root, f.slug, now)) {
+		t.Fatalf("the new exact-minute line was not installed:\n%s", cron.content)
+	}
+	if !strings.Contains(cron.content, "*/30 * * * *") {
+		t.Fatalf("the recurring safety net was dropped:\n%s", cron.content)
+	}
+	card, ok := loadCard(f.mcpDir, f.source, "idea-4f2a")
+	if !ok {
+		t.Fatal("idea card vanished")
+	}
+	stamp, _ := card.Payload["build"].(map[string]any)
+	if stamp["start_at"] != now.Format(time.RFC3339) {
+		t.Fatalf("idea stamp = %+v, want the new start time", stamp)
+	}
+	if f.cfg.reg.get(buildSessionID(f.slug, 0)) != nil {
+		t.Fatal("rescheduling started the planning run")
+	}
+}
+
+// TestBuildRescheduleToNowStartsIt: "Now" is one of the picker's presets, so it
+// is a reachable answer when changing a start time too — and it has to mean the
+// same thing it means at /build/start, not "wait until this minute".
+func TestBuildRescheduleToNowStartsIt(t *testing.T) {
+	const token = "secret"
+	for _, when := range []time.Duration{0, 20 * time.Second} {
+		t.Run(when.String(), func(t *testing.T) {
+			f := newBuildFixture(t)
+			cron := &fakeCrontab{}
+			f.cfg.cron = cron.io()
+			was := time.Now().Add(9 * time.Hour).UTC().Round(time.Minute)
+			f.writeState(t, buildState{Status: buildScheduled, StartAt: was.Format(time.RFC3339)})
+			// Pre-registered so the immediate path doesn't actually spawn an agent —
+			// the transition is the assertion, not the run.
+			f.cfg.reg.findOrCreateForRun(buildSessionID(f.slug, 0), sessionKindBuild)
+
+			var at time.Time
+			if when != 0 {
+				at = time.Now().Add(when).UTC()
+			}
+			rec := f.scheduleReq(t, token, at)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("got %d (%s), want 200", rec.Code, rec.Body.String())
+			}
+			st, _ := loadBuild(f.cfg.buildDir(f.slug))
+			if st.Status != buildPlanning {
+				t.Fatalf("status = %q, want %q", st.Status, buildPlanning)
+			}
+			if st.StartAt != "" {
+				t.Fatalf("start_at = %q, want it spent", st.StartAt)
+			}
+			// The dated line has done its job and must not be left to come back
+			// around in a year.
+			if strings.Contains(cron.content, cronLineAt(f.root, f.slug, was)) {
+				t.Fatalf("the dated line survived the start:\n%s", cron.content)
+			}
+			if !strings.Contains(cron.content, "*/30 * * * *") {
+				t.Fatalf("the recurring line was not left behind:\n%s", cron.content)
+			}
+		})
+	}
+}
+
+// TestBuildRescheduleRefusesAStartedBuild: once planning has run, PROJECT_PLAN.md
+// exists and was written from the idea's wording. There is no start left to move,
+// and pretending otherwise would leave the phone showing a time that means
+// nothing. Stopping is the only way out of a build that has begun.
+func TestBuildRescheduleRefusesAStartedBuild(t *testing.T) {
+	const token = "secret"
+	for _, status := range []string{buildPlanning, buildBuilding, buildAwaiting, buildDone, buildHalted} {
+		t.Run(status, func(t *testing.T) {
+			f := newBuildFixture(t)
+			f.writeState(t, buildState{Status: status, Feature: 1})
+			rec := f.scheduleReq(t, token, time.Now().Add(4*time.Hour))
+			if rec.Code != http.StatusConflict {
+				t.Fatalf("got %d (%s), want 409", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+// TestBuildRescheduleRejectsAnUnparseableStartTime mirrors the same guard on
+// /build/start: better a 400 than a build quietly starting now.
+func TestBuildRescheduleRejectsAnUnparseableStartTime(t *testing.T) {
+	const token = "secret"
+	f := newBuildFixture(t)
+	f.writeState(t, buildState{
+		Status:  buildScheduled,
+		StartAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+	})
+	req := httptest.NewRequest(http.MethodPost, "/build/schedule",
+		strings.NewReader(`{"slug":"greenhouse-tracker","start_at":"saturday-ish"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	buildScheduleHandler(token, f.cfg).ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("got %d (%s), want 400", rec.Code, rec.Body.String())
+	}
+}
+
+// TestBuildRescheduleUnknownProject: nothing to move.
+func TestBuildRescheduleUnknownProject(t *testing.T) {
+	const token = "secret"
+	f := newBuildFixture(t)
+	rec := f.scheduleReq(t, token, time.Now().Add(4*time.Hour))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("got %d (%s), want 404", rec.Code, rec.Body.String())
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Gating — the combination IS the security boundary, so it is asserted
 // ---------------------------------------------------------------------------
@@ -739,6 +894,14 @@ func TestBuildGating(t *testing.T) {
 			req.Header.Set("Authorization", "Bearer "+token)
 			rec := httptest.NewRecorder()
 			buildStartHandler(token, cfg).ServeHTTP(rec, req)
+			return rec
+		}},
+		{"POST /build/schedule", func(cfg buildConfig) *httptest.ResponseRecorder {
+			req := httptest.NewRequest(http.MethodPost, "/build/schedule",
+				strings.NewReader(`{"slug":"greenhouse-tracker","start_at":"2030-01-01T09:00:00Z"}`))
+			req.Header.Set("Authorization", "Bearer "+token)
+			rec := httptest.NewRecorder()
+			buildScheduleHandler(token, cfg).ServeHTTP(rec, req)
 			return rec
 		}},
 		{"POST /build/stop", func(cfg buildConfig) *httptest.ResponseRecorder {

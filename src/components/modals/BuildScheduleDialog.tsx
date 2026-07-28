@@ -10,6 +10,13 @@ interface BuildScheduleDialogProps {
   title: string;
   /** The request is in flight — the confirm button says so and stops repeating. */
   busy?: boolean;
+  /** Moving the start time of a build that's already waiting, rather than handing
+   *  the idea over for the first time. Only the wording differs — the choice, and
+   *  what "Now" means, are the same either way. */
+  reschedule?: boolean;
+  /** The time to open on. Null (the default) is "now"; rescheduling passes the
+   *  start already set, so the dialog opens on the choice being changed. */
+  initialAt?: Date | null;
   /** Confirmed. Null is the default: start it now. */
   onConfirm: (startAt: Date | null) => void;
   onCancel: () => void;
@@ -54,20 +61,31 @@ function nextAt(hour: number): Date {
  * "tomorrow") are the shapes anyone actually schedules an overnight build in, and
  * the nudges reach anything else in a few taps. Minute resolution, because the
  * crontab entry underneath cannot do better.
+ *
+ * `reschedule` opens the same sheet on a build that is already waiting, prefilled
+ * with the time it's waiting for. One dialog rather than two, because the decision
+ * is identical — including "Now", which on a waiting build means start it, not
+ * move it to this minute — and only the wording around it changes.
  */
 export default function BuildScheduleDialog({
   visible,
   title,
   busy = false,
+  reschedule = false,
+  initialAt = null,
   onConfirm,
   onCancel,
 }: BuildScheduleDialogProps) {
   const colors = useTheme();
-  // Null is "now". Every open starts there — a schedule is a decision for this
-  // build, not a preference that should linger to surprise the next one.
-  const [at, setAt] = useState<Date | null>(null);
+  // Null is "now". Every open starts from what this build is set to — the time
+  // already chosen when changing one, "now" when there isn't one yet — so nothing
+  // lingers from the last open to surprise the next build.
+  const [at, setAt] = useState<Date | null>(initialAt);
   useEffect(() => {
-    if (visible) setAt(null);
+    if (visible) setAt(initialAt);
+    // The open is the event; initialAt is read at that moment on purpose, so a
+    // re-render can't drag the time back out from under an edit in progress.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
   // Frozen for as long as the dialog is open, so "In an hour" doesn't quietly
@@ -94,6 +112,17 @@ export default function BuildScheduleDialog({
   const sameMinute = (a: Date | null, b: Date | null) =>
     a === null || b === null ? a === b : a.getTime() === b.getTime();
 
+  // What the confirm button says: the time chosen crossed with which door this
+  // was opened from. Picking "Now" on a build that was waiting doesn't reschedule
+  // it to this minute — it starts it — so that button says so.
+  const confirm = at
+    ? reschedule
+      ? { label: 'Move it', busy: 'Moving…', hint: 'Move this build to the new start time' }
+      : { label: 'Schedule it', busy: 'Starting…', hint: 'Schedule this build' }
+    : reschedule
+      ? { label: 'Build it now', busy: 'Starting…', hint: 'Start this build now' }
+      : { label: 'Build it', busy: 'Starting…', hint: 'Build it now' };
+
   return (
     <Modal
       visible={visible}
@@ -106,11 +135,13 @@ export default function BuildScheduleDialog({
         <Pressable
           className="w-full max-w-sm rounded-2xl border border-surface1 bg-surface0 p-6"
           onPress={() => {}}>
-          <Text className="text-lg font-semibold text-text">Build this idea</Text>
+          <Text className="text-lg font-semibold text-text">
+            {reschedule ? 'Change the start time' : 'Build this idea'}
+          </Text>
           <Text className="mt-2 text-sm leading-5 text-muted">
-            Turn “{title}” into a project the server builds for you? It writes a plan, then builds
-            one feature every so often — pausing each time for you to check the result on the
-            dashboard before it goes on.
+            {reschedule
+              ? `The build of “${title}” hasn't started yet, so it can start whenever you like — later, sooner, or right now.`
+              : `Turn “${title}” into a project the server builds for you? It writes a plan, then builds one feature every so often — pausing each time for you to check the result on the dashboard before it goes on.`}
           </Text>
 
           <Text className="mt-5 text-[11px] font-bold uppercase tracking-wider text-faint">
@@ -169,10 +200,13 @@ export default function BuildScheduleDialog({
             </View>
           </View>
 
-          {/* The consequence, which differs by exactly this choice. */}
+          {/* The consequence, which differs by exactly this choice — and, when the
+              folder already exists, by whether this is the first time round. */}
           <Text className="mt-3 text-[12px] leading-4 text-faint">
             {at
-              ? 'The project folder is made now, but nothing runs until then — so you can keep working on the idea, and whatever it says at that point is what gets built.'
+              ? reschedule
+                ? 'Nothing has run yet, so only the start time moves — keep working on the idea, and whatever it says at that point is what gets built.'
+                : 'The project folder is made now, but nothing runs until then — so you can keep working on the idea, and whatever it says at that point is what gets built.'
               : 'The idea locks while that runs.'}
           </Text>
 
@@ -180,21 +214,23 @@ export default function BuildScheduleDialog({
             <Pressable
               onPress={onCancel}
               accessibilityRole="button"
-              accessibilityLabel="Cancel"
+              accessibilityLabel={reschedule ? 'Leave the start time alone' : 'Cancel'}
               className="rounded-xl px-4 py-2.5 active:opacity-70">
-              <Text className="text-sm font-semibold text-muted">Cancel</Text>
+              <Text className="text-sm font-semibold text-muted">
+                {reschedule ? 'Leave it' : 'Cancel'}
+              </Text>
             </Pressable>
             <Pressable
               onPress={() => onConfirm(at)}
               disabled={busy}
               accessibilityRole="button"
-              accessibilityLabel={at ? 'Schedule this build' : 'Build it now'}
+              accessibilityLabel={confirm.hint}
               accessibilityState={{ disabled: busy }}
               className={`rounded-xl bg-accent px-4 py-2.5 active:opacity-80 ${
                 busy ? 'opacity-50' : ''
               }`}>
               <Text className="text-sm font-semibold text-crust">
-                {busy ? 'Starting…' : at ? 'Schedule it' : 'Build it'}
+                {busy ? confirm.busy : confirm.label}
               </Text>
             </Pressable>
           </View>

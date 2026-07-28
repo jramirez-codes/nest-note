@@ -1149,6 +1149,95 @@ func buildStartHandler(token string, cfg buildConfig) http.HandlerFunc {
 	}
 }
 
+// buildScheduleRequest moves the start time of a build that hasn't begun.
+type buildScheduleRequest struct {
+	Slug string `json:"slug"`
+	// StartAt is the new start, RFC3339. Absent — or near enough to now to be
+	// indistinguishable from it — means "start it now", the same choice the
+	// picker offers on /build/start, so it has to mean the same thing here.
+	StartAt string `json:"start_at,omitempty"`
+}
+
+// buildScheduleHandler moves a scheduled build's start time, or brings it
+// forward to now.
+//
+// Only a build still in `scheduled` can be rescheduled, and that is the whole
+// safety argument: nothing has been planned from the idea yet, so moving the
+// time changes only which minute cron fires at. Once the planning run has gone,
+// there is a PROJECT_PLAN.md written from the idea's wording and a start time
+// means nothing — that build gets stopped, not rescheduled.
+func buildScheduleHandler(token string, cfg buildConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !cfg.gateRequest(w, r, token) {
+			return
+		}
+		var req buildScheduleRequest
+		if json.NewDecoder(r.Body).Decode(&req) != nil || !validSlug(req.Slug) {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		// The same tolerance /build/start applies, so "now" means now whichever
+		// door it arrives through.
+		var startAt time.Time
+		if s := strings.TrimSpace(req.StartAt); s != "" {
+			t, perr := time.Parse(time.RFC3339, s)
+			if perr != nil {
+				http.Error(w, "bad start time", http.StatusBadRequest)
+				return
+			}
+			if time.Until(t) > buildStartSoon {
+				startAt = t
+			}
+		}
+		dir := cfg.buildDir(req.Slug)
+		st, ok := loadBuild(dir)
+		if !ok {
+			http.Error(w, "no build for that project", http.StatusNotFound)
+			return
+		}
+		if st.Status != buildScheduled {
+			http.Error(w, "that build has already started", http.StatusConflict)
+			return
+		}
+		mcpDir, _ := rootDirs(cfg.root)
+
+		if startAt.IsZero() {
+			// Brought forward to now. This is precisely the transition a due tick
+			// makes, so take that path rather than keep a second copy of it: same
+			// cron collapse, same lock landing on the idea, same planning run the
+			// phone can watch.
+			projectDir := filepath.Join(cfg.projectsBase, req.Slug)
+			if _, perr := cfg.startPlanning(dir, projectDir, mcpDir, st, false); perr != nil {
+				log.Printf("build: %s planning: %v", req.Slug, perr)
+			}
+			if fresh, ok := loadBuild(dir); ok {
+				st = fresh
+			}
+			log.Printf("build: %s brought forward to now", req.Slug)
+			writeJSON(w, cfg.response(req.Slug, st))
+			return
+		}
+
+		// State before crontab, deliberately. The tick checks the clock against
+		// StartAt on disk, so the saved time is what actually gates the start: if
+		// the crontab write then fails, the worst case is a build that starts late
+		// off the recurring line, never one that starts earlier than was just
+		// asked for — with the idea still being edited.
+		st.StartAt = startAt.UTC().Format(time.RFC3339)
+		if err := saveBuild(dir, st); err != nil {
+			http.Error(w, "could not save the new start time", http.StatusInternalServerError)
+			return
+		}
+		if err := installCronLine(cfg.cron, req.Slug, scheduledCronLines(cfg.root, req.Slug, startAt)); err != nil {
+			http.Error(w, "could not reschedule the build: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		stampIdeaCard(mcpDir, st)
+		log.Printf("build: rescheduled %s for %s", req.Slug, st.StartAt)
+		writeJSON(w, cfg.response(req.Slug, st))
+	}
+}
+
 // buildStateHandler answers GET /build?slug= with the build's state and its parsed
 // plan — what the idea overlay's progress toggle renders.
 func buildStateHandler(token string, cfg buildConfig) http.HandlerFunc {
