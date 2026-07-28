@@ -82,9 +82,14 @@ export function buildLocksIdea(status: string | undefined): boolean {
 }
 
 /**
- * The build stamped onto an idea card's payload by the server, or null. This —
- * not local component state — is what the idea page derives its lock from, so
- * the lock survives an app restart and is true on every device.
+ * The build stamped onto a card's payload by the server, or null. This — not local
+ * component state — is what a card's page derives its build state from, so it
+ * survives an app restart and is true on every device.
+ *
+ * Both cards a build touches carry it, in the same shape: the idea it was started
+ * from, and each build-step card it files. So a step card opened from the dashboard
+ * shows what the build is actually doing on its first frame, rather than defaulting
+ * to "nothing is running here" until /build answers.
  */
 export function cardBuild(
   card: DashboardCard,
@@ -188,23 +193,50 @@ export async function startBuild(
 }
 
 /**
- * Move the start time of a build that hasn't begun yet. Null brings it forward to
- * now, which is the same "Now" the picker offers when the build is first handed
- * over — so the server starts planning immediately, exactly as a due tick would.
+ * Say when a build's next run happens. Null means now, which is the same "Now" the
+ * picker offers when the build is first handed over — the server starts on this
+ * request rather than at the next tick, exactly as a due tick would.
  *
- * Only a build still waiting can be rescheduled: once planning has run there is a
- * plan written from the idea's wording, and the server answers 409. That's a race
- * the phone can lose honestly — the start time it was showing came round while the
- * dialog was open — so the message says the build has started rather than blaming
- * the request.
+ * Two states can answer that question, and the call is the same in both:
+ *
+ * - `scheduled` — the first run. Nothing has been planned from the idea yet, so
+ *   this only moves which minute cron fires at.
+ * - `awaiting-validation` — the next feature, from the step card the build is
+ *   parked on. Picking a time here validates that step on the way past: choosing
+ *   when the next feature runs is an acceptance of the one that just did.
+ *
+ * Anything else has no next run to place and the server answers 409 — a race the
+ * phone can lose honestly, since the time it was showing may have come round while
+ * the dialog was open.
  */
-export async function rescheduleBuild(slug: string, startAt: Date | null): Promise<BuildInfo> {
+export async function scheduleBuild(slug: string, startAt: Date | null): Promise<BuildInfo> {
   return parseBuild(
     await request(
       '/build/schedule',
       { slug, ...(startAt ? { start_at: startAt.toISOString() } : {}) },
       'No build for that project.',
-      'This build has already started, so its start time can no longer be moved.',
+      'This build has moved on, so there is no run left to schedule.',
+    ),
+  );
+}
+
+/**
+ * Send what the user said about the feature they were just shown back into the
+ * project: a change to the feature, or to the plan, or both. The server runs it in
+ * the project directory and pauses at the same step again afterwards, so a revision
+ * is reviewed exactly like the build that prompted it.
+ *
+ * Only while the build is paused at that step. Anywhere else a run is either
+ * already going or there is nothing paused to talk about, and the server answers
+ * 409 rather than putting a second agent in the same working tree.
+ */
+export async function reviseBuild(slug: string, note: string): Promise<BuildInfo> {
+  return parseBuild(
+    await request(
+      '/build/revise',
+      { slug, note },
+      'No build for that project.',
+      'This build isn’t paused at a step, so there is nothing to change yet.',
     ),
   );
 }
@@ -312,7 +344,11 @@ function statusLine(build: BuildInfo): string {
     case 'building':
       return `**Building feature ${build.feature}.**`;
     case 'awaiting-validation':
-      return `**Waiting on you** — feature ${build.feature} is built. Complete its card on the dashboard to start the next one, or dismiss it to stop here.`;
+      return build.start_at
+        ? `**Feature ${build.feature} is validated** — the next one starts ${startLabel(
+            new Date(build.start_at),
+          )}. Nothing runs until then.`
+        : `**Waiting on you** — feature ${build.feature} is built. Say when the next one should start from its build step, complete its card on the dashboard, or dismiss it to stop here.`;
     case 'done':
       return '**Done** — every feature in the plan is built and validated.';
     case 'halted':

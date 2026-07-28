@@ -66,9 +66,9 @@ phone's clock disagreeing with the server's — is simply treated as now.
 ## Changing your mind before it starts
 
 A start time is a choice, not a commitment. The header card that tells you when
-the build starts has a **square calendar button down its right edge**, as tall as
-the card itself. Tapping it swaps the card below between Claude's replies and the
-two ways out of that start time:
+the build starts has a **calendar button on its right**, the same square as the
+controls in the title row above it. Tapping it swaps the card below between
+Claude's replies and the two ways out of that start time:
 
 - **Reschedule** reopens the same picker, prefilled with the time it's currently
   set to. Move it later, pull it earlier, or choose **Now** — which doesn't
@@ -78,7 +78,7 @@ two ways out of that start time:
   uses on a build that has begun. Nothing has run, so nothing is lost but an empty
   project folder.
 
-Tapping the corner button again puts Claude's replies back. Both buttons only
+Tapping the calendar button again puts Claude's replies back. Both buttons only
 exist while the build is `scheduled`. Once the planning run has gone
 there is a `PROJECT_PLAN.md` written from the idea's wording and no start time
 left to move, so the server refuses to reschedule it — stopping is the only way
@@ -100,10 +100,11 @@ Every 30 minutes, cron pokes the server and one of these happens:
 | Scheduled, not yet due | Nothing. The clock decides, not the tick. |
 | Scheduled and due | Writes the plan, then starts feature 1. |
 | Scheduled and due, but the idea is gone | Stops the build and gives up its schedule — there is nothing left to write a plan from. |
-| A run is in flight | Nothing. One agent per project, ever. |
+| A run is in flight — a feature or a [revision](#asking-for-changes-to-what-it-built) | Nothing. One agent per project, ever. |
 | A feature just finished | Puts a **`build-step` card** in the dashboard's [Ideas view](../commands/dashboard.mdx#organize-and-ideas) asking you to validate it. |
 | That card is untouched | Nothing. The build waits — indefinitely, if that's how long you take. |
 | You **completed** the card | Builds the next feature in the plan. |
+| You completed it **and picked a time** | Nothing until that minute, then the next feature. |
 | You **dismissed** the card | Nothing — dismissing it already stopped the build. This is the backstop for a dismissal the server never saw. |
 | The plan has no more features | Marks the build done and gives up its schedule. |
 
@@ -111,6 +112,63 @@ The gate is a hard block: no feature ever starts until you've approved the one
 before it. Approving and rejecting are just the **complete** and **dismiss**
 buttons every dashboard card already has — there is no separate approval UI to
 learn.
+
+## Saying when the next feature runs
+
+A validated step doesn't say *when* the next feature goes; left alone it starts at
+the next half-hourly tick, whenever that lands. To place it yourself, open the
+`build-step` card and tap **Build** in its header.
+
+It is the same picker the idea was handed over with, and **Now** means now — the
+next feature starts on that request rather than at the next tick. Picking a time
+instead arms the minute you chose, and the page then reads
+`Feature 3 starts today at 21:00`.
+
+Choosing when the next feature runs **signs the step off**: you are saying carry
+on, so the card is completed on your behalf and the build takes it as your yes.
+There is no second thing to tick. If you'd rather reject the feature, dismiss the
+card as usual — that stops the build, and the picker refuses a step you've already
+turned down.
+
+A build step's header carries **no stop button**. Ending a whole build belongs to
+the idea it came from, not to one step of it — and a stop control there made a
+step look like a scheduled build with one way out of it, when what a step actually
+offers is the way *on*.
+
+## Asking for changes to what it built
+
+"Yes" and "stop" are not the only two things worth saying about a feature you've
+just looked at. The composer at the bottom of a `build-step` card sends what you
+type **to the agent, in the project directory** — not to the card:
+
+```text
+The header colour is wrong — it should match the one in the plan, not the logo.
+```
+
+The server starts a run there and then, which does what you asked, commits it, and
+**pauses at the same step again** so you look at the result and decide once more.
+As many rounds as it takes; the gate doesn't move until you move it.
+
+The same box takes changes to the **plan**. If what you're asking for is really
+"feature 4 should come before 3", or "this feature needs to cover X too", say that:
+the run is allowed to edit `PROJECT_PLAN.md` and will say so in its reply. A plan
+you've revised having *seen* something working is worth more than the one written
+before you had.
+
+Each run appends a short **`### Revised`** note inside that feature's section of the
+plan, so the plan carries its own history of what you asked for. The build's state
+line — the one under the header on the page, and at the top of the plan view —
+quotes your message back while the run is going, and what it reported when it lands.
+
+Two limits, both the same rule: **only at the gate**. While a run is in flight
+there's nothing to say to it that wouldn't put a second agent in the same working
+tree, so the box is replaced by a line saying the project is working, and the
+server answers a revision sent anyway with a conflict. And an empty box sends
+nothing — a run has to be asked for something in particular.
+
+You can watch the run live from the phone the same way you watch a
+[`/code`](../commands/projects.mdx) session: a revision streams on the same session
+as the feature run that produced it.
 
 ## The idea locks
 
@@ -147,16 +205,27 @@ is gone by the time the request answers, not at the next tick.
   as a backstop for a dismissal that never reached the server.
 - **Deleting the idea** — dismissing its card in the [Ideas
   view](../commands/dashboard.mdx#organize-and-ideas) — stops the build the idea
-  started. The run in flight is cancelled, the crontab entry removed, and any
-  `build-step` card still asking you to validate a feature is retired with it. A
-  build only ever existed to turn that idea into a project, so an idea you threw
-  away can't leave one running.
+  started. The run in flight is cancelled and the crontab entry removed. A build
+  only ever existed to turn that idea into a project, so an idea you threw away
+  can't leave one running.
 - **Deleting the project** with [`/delete`](../commands/projects.mdx) removes its
   crontab entry too, so a deleted project can't leave cron firing at a folder
   that no longer exists.
 
 Either way the project folder and everything built so far stay where they are —
 deleting the idea deletes the idea, not the code.
+
+### Your build steps stay on the dashboard
+
+However a build ends, its `build-step` cards stay in the Ideas view. They are the
+record of what was built and what you decided about it, and **only you take one
+off the dashboard**, by dragging it up onto the header like any other card.
+
+What does change is what they say. A step the build has moved past, or one left
+open when the build stopped, gets a line quoted at the top of it saying what became
+of it — *"This build was stopped — the idea was deleted from the dashboard"* — and
+drops to low priority, so a card that can no longer be acted on stops sitting among
+the ones that can.
 
 ## `.nestnote/` never reaches GitHub
 
@@ -223,8 +292,9 @@ without keeping it — a locked-down host, a `cron.deny` — scheduling a build 
 with that message on your phone, rather than reporting a start time that nothing
 in your crontab will ever act on.
 
-A build scheduled for later carries **two** lines until it starts — the minute you
-picked, and the ordinary recurring line beneath it:
+A build with a minute to hit carries **two** lines until it gets there — whether
+that's a build scheduled for later or a validated step waiting to build the next
+feature. The minute you picked, and the ordinary recurring line beneath it:
 
 ```text
 5 21 3 8 * /srv/nest/bin/nestnote-tick greenhouse  # nestnote:greenhouse
@@ -234,7 +304,7 @@ picked, and the ordinary recurring line beneath it:
 The first is what makes a build asked for at 21:05 start at 21:05 rather than up to
 half an hour late. The second is the safety net, and it is the one that matters: a
 date in a crontab comes back around **every year**, so if the server happened to be
-down for that single minute the build would sit scheduled until next August. With the
+down for that single minute the build would sit waiting until next August. With the
 recurring line there, the next ordinary tick starts it instead — and the first tick
 to run collapses the pair back down to one line, so the dated entry can't linger.
 

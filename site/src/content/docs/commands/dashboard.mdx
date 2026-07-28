@@ -175,9 +175,29 @@ and then — the schedule is dropped as the card clears, not half an hour later.
 an ordinary card — the same complete and dismiss buttons every other card has do
 the whole job.
 
+Tapping one opens it as a page of its own, which is where a step is actually
+reviewed:
+
+- The **composer** at the bottom sends what you type to the agent **in the
+  project** — "the header colour is wrong", or "feature 4 should come before 3".
+  It makes the change (to the code, or to `PROJECT_PLAN.md`) and pauses at this
+  same step again for you to look. See [asking for
+  changes](../server/builds.mdx#asking-for-changes-to-what-it-built).
+- **Build** in the header says *when* the next feature runs — now, or at a time you
+  pick — and signs the step off as part of the same choice. See [saying when the
+  next feature runs](../server/builds.mdx#saying-when-the-next-feature-runs).
+
+There's no stop button: ending the whole build belongs to the idea it came from.
+
+Step cards **stay in the list** once they've been answered, whatever became of the
+build. They're the record of what got built, and the only thing that takes one off
+the dashboard is you dragging it up onto the header. A step the build has moved
+past — or one left open when the build stopped — says so in a line at the top of
+it, and drops to low priority.
+
 Dismissing the **idea** card stops its build outright, and just as immediately: the
-schedule is dropped, anything running is cancelled, and the step card waiting on
-you goes too. The project folder and the code already built stay where they are.
+schedule is dropped and anything running is cancelled. The project folder, the code
+already built, and the step cards filed along the way all stay where they are.
 
 Claude's side of the conversation appears in a card in the **page header**,
 under the tags — usually a question it needs you to answer before it can go

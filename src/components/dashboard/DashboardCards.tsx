@@ -478,12 +478,16 @@ export function IdeaRow({
   // swaps its lightbulb for a hammer — the same signal the idea page's lock reads,
   // taken off the card's own payload rather than any local state. Only a *live*
   // build counts: done and halted release the schedule, and the idea goes back to
-  // being an idea. Build-step cards are stamped too, but with no status, so they
-  // keep their own glyph.
+  // being an idea.
   //
   // A build the user scheduled for later gets a clock instead: it holds the idea,
   // but nothing is being built yet, and a hammer would say otherwise.
-  const status = cardBuild(card)?.status;
+  //
+  // Only for ideas. Build-step cards carry the same stamp — that's how their page
+  // knows what the build is doing — but the glyph there is answering "what kind of
+  // card is this?", and every step of a live build would take the hammer, saying
+  // nothing the list they're grouped in doesn't already say.
+  const status = card.kind === 'idea' ? cardBuild(card)?.status : undefined;
   const building = buildIsLive(status);
   const scheduled = status === 'scheduled';
   const KindIcon = scheduled

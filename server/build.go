@@ -430,38 +430,54 @@ func writeGateCard(mcpDir string, st buildState, feat planFeature, projectDir st
 		Priority: "high",
 		Title:    title,
 		Body:     body,
-		Payload: map[string]any{
-			"build": map[string]any{
-				"slug":    st.Slug,
-				"feature": st.Feature,
-				"card_id": st.CardID,
-			},
-		},
+		Payload:  map[string]any{"build": buildStamp(st)},
 	})
+}
+
+// buildStamp is the payload.build object every card the build touches carries —
+// the idea it came from and each step card it files. One shape for both, because
+// the phone reads them with one parser and shows the same state from either: a
+// step card whose stamp said nothing left the page guessing, and it guessed
+// "nothing is running here" until /build answered.
+func buildStamp(st buildState) map[string]any {
+	stamp := map[string]any{
+		"slug":    st.Slug,
+		"status":  st.Status,
+		"feature": st.Feature,
+		"card_id": st.CardID,
+	}
+	// Carried so a page can say when the next run is due from the card alone,
+	// before it has fetched the build itself. It means the same thing in both
+	// statuses that can hold one: the minute cron will act on.
+	if st.StartAt != "" {
+		stamp["start_at"] = st.StartAt
+	}
+	return stamp
 }
 
 // stampIdeaCard records the build on the idea card it came from. The app derives
 // the idea page's lock from this — not from local state — so the lock survives an
 // app restart and is true on every device.
 func stampIdeaCard(mcpDir string, st buildState) {
-	if st.CardID == "" || !validSlug(st.CardID) {
+	stampCard(mcpDir, st.Source, st.CardID, st)
+}
+
+// stampGateCard puts the same record on the step card that is currently asking
+// for a decision, so opening it shows what the build is actually doing rather
+// than an empty stamp the page has to fill in from a fetch.
+func stampGateCard(mcpDir string, st buildState) {
+	stampCard(mcpDir, st.Source, st.GateCardID, st)
+}
+
+func stampCard(mcpDir, source, cardID string, st buildState) {
+	if cardID == "" || !validSlug(cardID) {
 		return
 	}
-	_, _ = updateCard(mcpDir, st.Source, st.CardID, func(c *dashCard) {
+	_, _ = updateCard(mcpDir, source, cardID, func(c *dashCard) {
 		if c.Payload == nil {
 			c.Payload = map[string]any{}
 		}
-		stamp := map[string]any{
-			"slug":    st.Slug,
-			"status":  st.Status,
-			"feature": st.Feature,
-		}
-		// Carried so the idea page can say when a scheduled build starts from the
-		// card alone, before it has fetched the build itself.
-		if st.StartAt != "" {
-			stamp["start_at"] = st.StartAt
-		}
-		c.Payload["build"] = stamp
+		c.Payload["build"] = buildStamp(st)
 	})
 }
 
@@ -637,6 +653,37 @@ Do not start the next feature — the user validates this one first. Do not edit
 		buildPlanName, n, prior, buildPlanName, buildDirName, gitignoreRule)
 }
 
+// revisionPrompt carries what the user said about the feature they were just
+// shown, and is the reason a build step is a conversation rather than a yes/no.
+//
+// Two shapes of ask arrive through it and both are legitimate, so neither is
+// privileged: "the header is the wrong colour" (fix the code) and "actually,
+// feature 4 should come before 3" (fix the plan). The run is told it may edit
+// PROJECT_PLAN.md, because a plan the user has changed their mind about is worth
+// more than a plan that was written before they saw anything working.
+//
+// What it must not do is run on: this lands the user back at the same step card,
+// looking at the same feature, deciding again. That is the whole gate.
+func revisionPrompt(n int, note string) string {
+	return fmt.Sprintf(`You are revising ONE feature of this project that the user has just reviewed, and then stopping.
+
+They were shown **Feature %d** of %s, as built, and said:
+
+---
+%s
+---
+
+Do what they asked, in this directory. Read %s first for the context the feature was built in.
+
+- If it is a change to the feature, make it, and make it actually run: build it, run it, and fix what breaks.
+- If what they are asking for changes the plan itself — this feature's scope, or the features after it — edit %s to match, and say so in your reply. Keep the "## Feature N" heading grammar exactly as it is: later runs are addressed by those numbers.
+- Commit your work with git (run "git init" first if this is not a repository yet).
+- Append a short "### Revised" note inside Feature %d's own section of %s saying what you changed.
+
+Do not start the next feature — the user validates this one again first. Do not edit, remove, or commit the %s/ directory: it is NestNote's own bookkeeping and it is gitignored deliberately.`,
+		n, buildPlanName, note, buildPlanName, buildPlanName, n, buildPlanName, buildDirName)
+}
+
 // ---------------------------------------------------------------------------
 // Tick — the state machine
 // ---------------------------------------------------------------------------
@@ -766,6 +813,16 @@ func (cfg buildConfig) tick(slug string, dryRun bool) (tickResult, error) {
 			}
 			return res, cfg.halt(dir, mcpDir, st, "feature "+strconv.Itoa(st.Feature)+" was rejected")
 		case card.Done:
+			// Validated, but with a start time on it: the user said when the next
+			// feature should run, so the clock decides here exactly as it does for a
+			// build waiting on its first run. Checked after the two ways out above —
+			// a rejected or deleted step ends the build whatever time was picked.
+			if due, ok := startAtTime(st); ok && time.Now().Before(due) {
+				res.Action = "wait"
+				res.Detail = "feature " + strconv.Itoa(st.Feature+1) +
+					" is due to start at " + due.Local().Format(time.RFC3339)
+				return res, nil
+			}
 			return cfg.startFeature(dir, projectDir, mcpDir, st, st.Feature+1, dryRun)
 		default:
 			res.Action = "wait"
@@ -865,8 +922,9 @@ func (cfg buildConfig) startPlanning(dir, projectDir, mcpDir string, st buildSta
 }
 
 // startFeature begins feature n, or finishes the build when the plan has run out
-// of features. The gate card for the feature just validated is dismissed on the
-// way through, so a completed step stops cluttering the dashboard.
+// of features. The step card for the feature just validated is left exactly where
+// it is: a step card is the user's record of that decision, and only the user
+// takes one off the dashboard (see settleGateCard).
 func (cfg buildConfig) startFeature(dir, projectDir, mcpDir string, st buildState, n int, dryRun bool) (tickResult, error) {
 	res := tickResult{Status: st.Status, Feature: n}
 	feats := readPlan(projectDir, st)
@@ -888,6 +946,7 @@ func (cfg buildConfig) startFeature(dir, projectDir, mcpDir string, st buildStat
 		}
 		st.Status = buildDone
 		st.Note = ""
+		st.StartAt = "" // spent: there is no next feature for it to have gated
 		if err := saveBuild(dir, st); err != nil {
 			return res, err
 		}
@@ -895,9 +954,7 @@ func (cfg buildConfig) startFeature(dir, projectDir, mcpDir string, st buildStat
 			log.Printf("build: %s finished but its crontab line did not go: %v", st.Slug, err)
 		}
 		stampIdeaCard(mcpDir, st)
-		if st.GateCardID != "" {
-			retireGateCard(mcpDir, st)
-		}
+		settleGateCard(mcpDir, st, "Every feature in the plan is built and validated. Nothing further runs for this project.")
 		return res, nil
 	}
 
@@ -910,21 +967,36 @@ func (cfg buildConfig) startFeature(dir, projectDir, mcpDir string, st buildStat
 		return res, nil
 	}
 
-	// Retire the previous feature's gate card before opening the next one, so the
-	// dashboard shows the one decision that's actually outstanding.
-	if st.GateCardID != "" && st.Feature != n {
-		retireGateCard(mcpDir, st)
-	}
-
+	prevGate, prevFeature := st.GateCardID, st.Feature
+	wasScheduled := st.StartAt != ""
 	st.Feature = n
 	st.Status = buildBuilding
 	st.GateCardID = gateCardID(st.Slug, n)
 	st.LastRun = nowStamp()
 	st.Note = ""
+	st.StartAt = "" // spent — from here on the build's own status says where it is
 	if err := saveBuild(dir, st); err != nil {
 		return res, err
 	}
+	if wasScheduled {
+		// The same collapse startPlanning does: the exact-minute line the user's
+		// chosen start installed has fired, and a date-pinned entry left in the
+		// crontab would come back around in a year.
+		if err := installCronLine(cfg.cron, st.Slug, cronLineFor(cfg.root, st.Slug)); err != nil {
+			log.Printf("build: %s cron: %v", st.Slug, err)
+		}
+	}
 	stampIdeaCard(mcpDir, st)
+	// The previous feature's step card keeps its place in the list — the decision it
+	// records really was made — but it stops asking for one, and takes the state the
+	// build has just moved *to*. Settled after that move, not before: stamped with
+	// what was true a moment ago it would sit on the dashboard advertising a start
+	// time that has already been spent.
+	if prevGate != "" && prevFeature != n {
+		prev := st
+		prev.GateCardID = prevGate
+		settleGateCard(mcpDir, prev, "Validated. The build has moved on to feature "+strconv.Itoa(n)+".")
+	}
 
 	sess, created := cfg.reg.findOrCreateForRun(buildSessionID(st.Slug, n), sessionKindBuild)
 	if !created {
@@ -988,6 +1060,7 @@ func (cfg buildConfig) gateFeature(dir, projectDir, mcpDir string, prev buildSta
 func (cfg buildConfig) halt(dir, mcpDir string, st buildState, reason string) error {
 	st.Status = buildHalted
 	st.Note = reason
+	st.StartAt = "" // nothing is due any more, and a time left here would say otherwise
 	saveErr := saveBuild(dir, st)
 	if err := removeCronLine(cfg.cron, st.Slug); err != nil {
 		// Not fatal — the build is halted either way and refusing to record that
@@ -1005,7 +1078,7 @@ func (cfg buildConfig) halt(dir, mcpDir string, st buildState, reason string) er
 
 // stopBuild is the whole "this build is over" sequence, in the order that leaves
 // the least behind: kill whatever run is in flight, halt the state (which takes
-// the crontab line out), and retire the gate card that was asking the user for a
+// the crontab line out), and settle the step card that was asking the user for a
 // decision about a build that no longer exists.
 //
 // Both doors into it — the stop button on the idea page, and deleting the idea
@@ -1021,7 +1094,9 @@ func (cfg buildConfig) stopBuild(dir, mcpDir string, st buildState, reason strin
 	if err := cfg.halt(dir, mcpDir, st, reason); err != nil {
 		return err
 	}
-	retireGateCard(mcpDir, st)
+	st.Status = buildHalted
+	st.StartAt = ""
+	settleGateCard(mcpDir, st, "This build was stopped — "+reason+". Nothing further runs, and the code already built stays where it is.")
 	return nil
 }
 
@@ -1087,14 +1162,51 @@ func (cfg buildConfig) stopBuildsForCard(mcpDir, source, cardID string) {
 	}
 }
 
-// retireGateCard dismisses a spent gate card so it leaves the dashboard. Dismissed
-// rather than deleted: the card file stays on disk as a record of the decision,
-// exactly like every other card the user clears.
-func retireGateCard(mcpDir string, st buildState) {
+// settleGateCard closes a step card out where it stands: the stamp goes to the
+// build's real state and the body says what became of the decision, so a card
+// that can no longer be acted on stops asking to be.
+//
+// It does NOT dismiss the card. A step card is the user's own record of a feature
+// — the one place the dashboard says feature 3 was built and what happened to it
+// — and clearing it is the user's call, made by dragging it off like any other
+// card. The server retiring them by hand meant stopping a build made the step you
+// were looking at vanish, which reads as data loss rather than as a stop.
+func settleGateCard(mcpDir string, st buildState, outcome string) {
 	if st.GateCardID == "" || !validSlug(st.GateCardID) {
 		return
 	}
-	_, _ = updateCard(mcpDir, st.Source, st.GateCardID, func(c *dashCard) { c.Dismissed = true })
+	_, _ = updateCard(mcpDir, st.Source, st.GateCardID, func(c *dashCard) {
+		if c.Payload == nil {
+			c.Payload = map[string]any{}
+		}
+		c.Payload["build"] = buildStamp(st)
+		c.Body = "> " + outcome + "\n\n" + stripOutcome(c.Body)
+		// It is no longer a decision waiting on anyone, so it stops sitting at the
+		// top of the list next to the ones that are.
+		c.Priority = "low"
+	})
+}
+
+// stripOutcome removes the blockquote a previous settle put at the top of a step
+// card's body, so a card settled twice (validated, then the build stopped) reads
+// as what happened last rather than as a stack of outcomes.
+//
+// The leading blockquote is ours by construction: writeGateCard opens with a plain
+// sentence, and everything below it is the plan's own text, which this never
+// reaches — it stops at the first line that isn't quoted.
+func stripOutcome(body string) string {
+	lines := strings.Split(body, "\n")
+	i := 0
+	for i < len(lines) && strings.HasPrefix(lines[i], ">") {
+		i++
+	}
+	if i == 0 {
+		return body
+	}
+	for i < len(lines) && strings.TrimSpace(lines[i]) == "" {
+		i++
+	}
+	return strings.Join(lines[i:], "\n")
 }
 
 // ---------------------------------------------------------------------------
@@ -1259,7 +1371,7 @@ func buildStartHandler(token string, cfg buildConfig) http.HandlerFunc {
 	}
 }
 
-// buildScheduleRequest moves the start time of a build that hasn't begun.
+// buildScheduleRequest sets when a build's next run happens.
 type buildScheduleRequest struct {
 	Slug string `json:"slug"`
 	// StartAt is the new start, RFC3339. Absent — or near enough to now to be
@@ -1268,14 +1380,19 @@ type buildScheduleRequest struct {
 	StartAt string `json:"start_at,omitempty"`
 }
 
-// buildScheduleHandler moves a scheduled build's start time, or brings it
-// forward to now.
+// buildScheduleHandler says when a build's next run happens. Two states can
+// answer that question, and it is the same question in both:
 //
-// Only a build still in `scheduled` can be rescheduled, and that is the whole
-// safety argument: nothing has been planned from the idea yet, so moving the
-// time changes only which minute cron fires at. Once the planning run has gone,
-// there is a PROJECT_PLAN.md written from the idea's wording and a start time
-// means nothing — that build gets stopped, not rescheduled.
+//   - `scheduled` — the first run. Nothing has been planned from the idea yet, so
+//     moving the time changes only which minute cron fires at.
+//   - `awaiting-validation` — the next feature. The build is parked at a step card
+//     waiting on the user, and picking a time here is how they say "yes, and build
+//     the next one then". It validates the step on the way past: choosing when the
+//     next feature runs is an acceptance of the one that just did, and making the
+//     user also tick the card off on the dashboard would be asking twice.
+//
+// Every other status has no next run to place: planning and building are already
+// running, and done and halted have nothing left to run. Those answer 409.
 func buildScheduleHandler(token string, cfg buildConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !cfg.gateRequest(w, r, token) {
@@ -1305,11 +1422,16 @@ func buildScheduleHandler(token string, cfg buildConfig) http.HandlerFunc {
 			http.Error(w, "no build for that project", http.StatusNotFound)
 			return
 		}
-		if st.Status != buildScheduled {
-			http.Error(w, "that build has already started", http.StatusConflict)
+		if st.Status != buildScheduled && st.Status != buildAwaiting {
+			http.Error(w, "that build has no next run to schedule", http.StatusConflict)
 			return
 		}
 		mcpDir, _ := rootDirs(cfg.root)
+
+		if st.Status == buildAwaiting {
+			cfg.scheduleNextFeature(w, dir, mcpDir, st, startAt)
+			return
+		}
 
 		if startAt.IsZero() {
 			// Brought forward to now. This is precisely the transition a due tick
@@ -1346,6 +1468,186 @@ func buildScheduleHandler(token string, cfg buildConfig) http.HandlerFunc {
 		log.Printf("build: rescheduled %s for %s", req.Slug, st.StartAt)
 		writeJSON(w, cfg.response(req.Slug, st))
 	}
+}
+
+// scheduleNextFeature validates the step the build is parked on and places the
+// next feature's run — now, or at the minute the user picked.
+//
+// Validation goes through the step card's own `done` flag rather than straight
+// into the state machine, so this stays the same approve path the dashboard's
+// complete button uses: one field, read by one tick. Nothing here decides that
+// the next feature may start — the tick does, exactly as it would have if the
+// card had been ticked off on the dashboard.
+func (cfg buildConfig) scheduleNextFeature(w http.ResponseWriter, dir, mcpDir string, st buildState, startAt time.Time) {
+	if st.GateCardID == "" || !validSlug(st.GateCardID) {
+		http.Error(w, "that build has no step waiting to be validated", http.StatusConflict)
+		return
+	}
+	card, found := loadCard(mcpDir, st.Source, st.GateCardID)
+	if !found || card.Dismissed {
+		// The step was rejected or deleted, so the build is on its way to halted and
+		// there is no next feature to place. The next tick makes that final; saying
+		// so here stops the phone from believing it just scheduled one.
+		http.Error(w, "that step was rejected, so this build is stopping", http.StatusConflict)
+		return
+	}
+
+	// State before crontab, as everywhere else: the tick reads StartAt off disk, so
+	// a failed crontab write can only make the next feature start late off the
+	// recurring line, never earlier than was just asked for.
+	st.StartAt = ""
+	if !startAt.IsZero() {
+		st.StartAt = startAt.UTC().Format(time.RFC3339)
+	}
+	if err := saveBuild(dir, st); err != nil {
+		http.Error(w, "could not save the new start time", http.StatusInternalServerError)
+		return
+	}
+	if _, ok := updateCard(mcpDir, st.Source, st.GateCardID, func(c *dashCard) { c.Done = true }); !ok {
+		http.Error(w, "could not validate that step", http.StatusInternalServerError)
+		return
+	}
+
+	if !startAt.IsZero() {
+		if err := installCronLine(cfg.cron, st.Slug, scheduledCronLines(cfg.root, st.Slug, startAt)); err != nil {
+			http.Error(w, "could not schedule the next feature: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		stampIdeaCard(mcpDir, st)
+		stampGateCard(mcpDir, st)
+		log.Printf("build: %s feature %d validated; feature %d due %s",
+			st.Slug, st.Feature, st.Feature+1, st.StartAt)
+		writeJSON(w, cfg.response(st.Slug, st))
+		return
+	}
+
+	// Now. The tick is the one place a build moves forward, so hand it over rather
+	// than start the feature from here: same recovery, same gate card handling, same
+	// path the dashboard's complete button reaches half an hour later.
+	if _, err := cfg.tick(st.Slug, false); err != nil {
+		log.Printf("build: %s tick after validating feature %d: %v", st.Slug, st.Feature, err)
+	}
+	if fresh, ok := loadBuild(dir); ok {
+		st = fresh
+	}
+	log.Printf("build: %s feature %d validated; next feature started", st.Slug, st.Feature)
+	writeJSON(w, cfg.response(st.Slug, st))
+}
+
+// buildReviseRequest is what the user typed on a step card: a change they want
+// made to the feature they were just shown, before they'll sign it off.
+type buildReviseRequest struct {
+	Slug string `json:"slug"`
+	Note string `json:"note"`
+}
+
+// buildReviseNoteMax bounds what one message can carry. It is generous — several
+// paragraphs of "here's what's wrong with it" — and exists only so a runaway
+// client can't hand an unbounded argv to a process. A constant, not a flag: it's a
+// property of the prompt, not of the machine.
+const buildReviseNoteMax = 4000
+
+// buildReviseHandler takes the user's word back into the project: it starts a run
+// in the project directory that does what they asked, then lands them back at the
+// same step to decide again.
+//
+// This is what keeps a build step a conversation rather than a yes/no. Reviewing a
+// built feature and being able to say only "yes" or "stop" is not review — most of
+// what anyone actually wants to say is "nearly, but…", and the answer to that is
+// the agent that built it, standing in the same directory it built it in. The same
+// door takes "actually, the plan should change": the run is allowed to edit
+// PROJECT_PLAN.md, because a plan the user has revised having *seen* something
+// working is worth more than the one written before they had.
+//
+// Only from `awaiting-validation`. Everywhere else there is either a run already
+// going (revising underneath it would have two agents in one tree) or nothing
+// paused to talk about.
+func buildReviseHandler(token string, cfg buildConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !cfg.gateRequest(w, r, token) {
+			return
+		}
+		var req buildReviseRequest
+		if json.NewDecoder(r.Body).Decode(&req) != nil || !validSlug(req.Slug) {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		note := strings.TrimSpace(req.Note)
+		if note == "" {
+			http.Error(w, "empty note", http.StatusBadRequest)
+			return
+		}
+		if len(note) > buildReviseNoteMax {
+			note = note[:buildReviseNoteMax]
+		}
+		dir := cfg.buildDir(req.Slug)
+		st, ok := loadBuild(dir)
+		if !ok {
+			http.Error(w, "no build for that project", http.StatusNotFound)
+			return
+		}
+		if st.Status != buildAwaiting {
+			http.Error(w, "that build isn't paused at a step, so there is nothing to revise", http.StatusConflict)
+			return
+		}
+		if cfg.runInFlight(req.Slug, st.Feature) {
+			http.Error(w, "a run for this feature is already in flight", http.StatusConflict)
+			return
+		}
+		mcpDir, _ := rootDirs(cfg.root)
+		projectDir := filepath.Join(cfg.projectsBase, req.Slug)
+		if err := ensureGitignore(projectDir); err != nil {
+			log.Printf("build: %s gitignore: %v", req.Slug, err)
+		}
+
+		st.Status = buildBuilding
+		st.LastRun = nowStamp()
+		st.Note = "revising feature " + strconv.Itoa(st.Feature) + ": " + shortNote(note)
+		// Any time the user had put on the next feature is withdrawn with the sign-off
+		// it came with — they've asked for changes to this one instead. The dated
+		// crontab line can stay: it fires into a build that says "wait", which is what
+		// every spent line does.
+		st.StartAt = ""
+		if err := saveBuild(dir, st); err != nil {
+			http.Error(w, "could not start the revision", http.StatusInternalServerError)
+			return
+		}
+		// A step being revised is not a step that was signed off, so the tick can't
+		// read a stale yes off it and move on while the run is still going.
+		_, _ = updateCard(mcpDir, st.Source, st.GateCardID, func(c *dashCard) { c.Done = false })
+		stampIdeaCard(mcpDir, st)
+		stampGateCard(mcpDir, st)
+
+		// Same session id as the feature's own run, so the phone watches a revision
+		// on /code exactly as it watches the build that produced it.
+		sess, created := cfg.reg.findOrCreateForRun(buildSessionID(st.Slug, st.Feature), sessionKindBuild)
+		if !created {
+			http.Error(w, "a run for this feature is already in flight", http.StatusConflict)
+			return
+		}
+		logPath := filepath.Join(dir, "runs", fmt.Sprintf("%d-revise-%d.log", st.Feature, time.Now().Unix()))
+		startBuildProcess(sess, projectDir, logPath, revisionPrompt(st.Feature, note), cfg.runTimeout, func(err error) {
+			outcome := "revised at your request: " + shortNote(note)
+			if err != nil {
+				outcome = "the revision run reported: " + err.Error()
+			}
+			if gerr := cfg.gateFeature(dir, projectDir, mcpDir, st, outcome); gerr != nil {
+				log.Printf("build: %s re-gate after revising feature %d: %v", st.Slug, st.Feature, gerr)
+			}
+		})
+		log.Printf("build: %s revising feature %d", st.Slug, st.Feature)
+		writeJSON(w, cfg.response(req.Slug, st))
+	}
+}
+
+// shortNote trims a user's message down to something that reads as one line where
+// the build's state is shown. The full text goes to the run; this is the label.
+func shortNote(note string) string {
+	flat := strings.Join(strings.Fields(note), " ")
+	if len(flat) <= 140 {
+		return flat
+	}
+	return flat[:139] + "…"
 }
 
 // buildStateHandler answers GET /build?slug= with the build's state and its parsed

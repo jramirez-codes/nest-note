@@ -412,7 +412,8 @@ func actionHandler(token, root string, builds buildConfig) http.HandlerFunc {
 				logTaskDismissal(mcpDir, slug, dismissed)
 				// Dismissing a card is how the dashboard deletes one, so an idea
 				// card going means any build it started goes with it: the run is
-				// killed, the crontab entry removed, and the gate card retired.
+				// killed, the crontab entry removed, and the step card left
+				// standing says the build was stopped.
 				// Dismissing a gate card is how a feature is rejected, and that
 				// ends the build too — both while the user is still looking at the
 				// dashboard, rather than whenever cron next comes round.

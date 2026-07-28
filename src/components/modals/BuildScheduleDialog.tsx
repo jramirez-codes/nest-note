@@ -1,19 +1,30 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Modal, Pressable, Text, View } from 'react-native';
-import { CalendarClock } from 'lucide-react-native';
+import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { CalendarClock, CalendarCog, Hammer } from 'lucide-react-native';
 import { useTheme } from '../../theme/colors';
 import { startLabel } from '../../server/controllers/buildApi';
 
+/**
+ * Which of the three doors this sheet was opened from. The choice behind it is the
+ * same in all three — one time, with "Now" meaning now — so they share a dialog and
+ * differ only in what the sentences say is about to happen.
+ *
+ * - `start` — handing an idea over for the first time.
+ * - `edit` — moving the start of a build that hasn't begun.
+ * - `next` — starting the next feature of a build parked on a step card.
+ */
+export type BuildScheduleMode = 'start' | 'edit' | 'next';
+
 interface BuildScheduleDialogProps {
   visible: boolean;
-  /** The idea's title, quoted back so it's clear what is being handed over. */
+  /** The idea's title (or, for `next`, the project's slug), quoted back so it's
+   *  clear what is being handed over. */
   title: string;
   /** The request is in flight — the confirm button says so and stops repeating. */
   busy?: boolean;
-  /** Moving the start time of a build that's already waiting, rather than handing
-   *  the idea over for the first time. Only the wording differs — the choice, and
-   *  what "Now" means, are the same either way. */
-  reschedule?: boolean;
+  mode: BuildScheduleMode;
+  /** Which feature the `next` door is about to build. */
+  feature?: number;
   /** The time to open on. Null (the default) is "now"; rescheduling passes the
    *  start already set, so the dialog opens on the choice being changed. */
   initialAt?: Date | null;
@@ -62,16 +73,19 @@ function nextAt(hour: number): Date {
  * the nudges reach anything else in a few taps. Minute resolution, because the
  * crontab entry underneath cannot do better.
  *
- * `reschedule` opens the same sheet on a build that is already waiting, prefilled
- * with the time it's waiting for. One dialog rather than two, because the decision
- * is identical — including "Now", which on a waiting build means start it, not
- * move it to this minute — and only the wording around it changes.
+ * The other two doors (see BuildScheduleMode) open the same sheet on a build that
+ * already exists: `edit` moves the start it is waiting for, prefilled with it, and
+ * `next` starts the feature after the step the user is looking at. One dialog rather
+ * than three, because the decision is identical — including "Now", which on a build
+ * that already exists means run it, not move it to this minute — and only the
+ * wording around it changes.
  */
 export default function BuildScheduleDialog({
   visible,
   title,
   busy = false,
-  reschedule = false,
+  mode,
+  feature,
   initialAt = null,
   onConfirm,
   onCancel,
@@ -112,16 +126,48 @@ export default function BuildScheduleDialog({
   const sameMinute = (a: Date | null, b: Date | null) =>
     a === null || b === null ? a === b : a.getTime() === b.getTime();
 
-  // What the confirm button says: the time chosen crossed with which door this
-  // was opened from. Picking "Now" on a build that was waiting doesn't reschedule
-  // it to this minute — it starts it — so that button says so.
-  const confirm = at
-    ? reschedule
-      ? { label: 'Move it', busy: 'Moving…', hint: 'Move this build to the new start time' }
-      : { label: 'Schedule it', busy: 'Starting…', hint: 'Schedule this build' }
-    : reschedule
-      ? { label: 'Build it now', busy: 'Starting…', hint: 'Start this build now' }
-      : { label: 'Build it', busy: 'Starting…', hint: 'Build it now' };
+  // Everything that differs by door, in one place: the glyph, the two sentences
+  // either side of the picker, and what the confirm button promises. Written out
+  // per door rather than assembled from fragments — these are the sentences that
+  // tell someone what an unattended agent is about to do, and they read better
+  // whole. Note "Now" is never "move it to this minute": on a build that already
+  // exists it runs the thing, so those buttons say so.
+  const copy = {
+    start: {
+      Icon: Hammer,
+      title: 'Build this idea',
+      blurb: `Turn “${title}” into a project the server builds for you? It writes a plan, then builds one feature at a time, pausing after each for you to check the result.`,
+      consequence: at
+        ? 'The project folder is made now, but nothing runs until then — keep working on the idea, and whatever it says then is what gets built.'
+        : 'The idea locks while that runs.',
+      confirm: at
+        ? { label: 'Schedule it', busy: 'Starting…', hint: 'Schedule this build' }
+        : { label: 'Build it', busy: 'Starting…', hint: 'Build it now' },
+    },
+    edit: {
+      Icon: CalendarCog,
+      title: 'Change the start time',
+      blurb: `The build of “${title}” hasn't started yet, so it can start whenever you like — later, sooner, or right now.`,
+      consequence: at
+        ? 'Nothing has run yet, so only the start time moves — keep working on the idea, and whatever it says then is what gets built.'
+        : 'The idea locks while that runs.',
+      confirm: at
+        ? { label: 'Move it', busy: 'Moving…', hint: 'Move this build to the new start time' }
+        : { label: 'Build it now', busy: 'Starting…', hint: 'Start this build now' },
+    },
+    next: {
+      Icon: Hammer,
+      title: feature ? `Build feature ${feature}` : 'Build the next feature',
+      blurb: `Carry on building “${title}”? Choosing when the next feature runs is how you sign this step off — the build takes it as your yes and moves on.`,
+      consequence: at
+        ? 'This step is marked validated now. The next feature runs then, and pauses again at a step card of its own once it is built.'
+        : 'This step is marked validated and the next feature starts right away.',
+      confirm: at
+        ? { label: 'Schedule it', busy: 'Scheduling…', hint: 'Schedule the next feature' }
+        : { label: 'Build it now', busy: 'Starting…', hint: 'Build the next feature now' },
+    },
+  }[mode];
+  const confirm = copy.confirm;
 
   return (
     <Modal
@@ -133,53 +179,62 @@ export default function BuildScheduleDialog({
       <Pressable className="flex-1 items-center justify-center bg-crust/70 px-8" onPress={onCancel}>
         {/* Stop presses on the card from bubbling to the backdrop. */}
         <Pressable
-          className="w-full max-w-sm rounded-2xl border border-surface1 bg-surface0 p-6"
+          className="w-full max-w-sm rounded-2xl border border-surface1 bg-surface0 p-5"
           onPress={() => {}}>
-          <Text className="text-lg font-semibold text-text">
-            {reschedule ? 'Change the start time' : 'Build this idea'}
-          </Text>
-          <Text className="mt-2 text-sm leading-5 text-muted">
-            {reschedule
-              ? `The build of “${title}” hasn't started yet, so it can start whenever you like — later, sooner, or right now.`
-              : `Turn “${title}” into a project the server builds for you? It writes a plan, then builds one feature every so often — pausing each time for you to check the result on the dashboard before it goes on.`}
-          </Text>
+          {/* The icon says which of the doors this is before the title does, and
+              matches the glyph on the control that opened it. */}
+          <View className="flex-row items-center gap-2.5">
+            <View className="h-9 w-9 items-center justify-center rounded-xl bg-accent/15">
+              <copy.Icon size={17} color={colors.accent} strokeWidth={2.5} />
+            </View>
+            <Text className="flex-1 text-[17px] font-semibold text-text">{copy.title}</Text>
+          </View>
+          <Text className="mt-3 text-[13px] leading-[19px] text-muted">{copy.blurb}</Text>
 
-          <Text className="mt-5 text-[11px] font-bold uppercase tracking-wider text-faint">
+          <Text style={styles.eyebrow} className="mt-4 text-[10px] font-bold uppercase text-faint">
             Start
           </Text>
 
-          {/* The four shapes an overnight build actually gets scheduled in. */}
-          <View className="mt-2 flex-row flex-wrap gap-1.5">
-            {presets.map(p => {
-              const on = sameMinute(at, p.at);
-              return (
-                <Pressable
-                  key={p.label}
-                  onPress={() => setAt(p.at)}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Start ${p.label.toLowerCase()}`}
-                  accessibilityState={{ selected: on }}
-                  className={`rounded-full border px-3 py-1.5 active:opacity-70 ${
-                    on ? 'border-accent bg-accent/20' : 'border-surface1 bg-surface'
-                  }`}>
-                  <Text
-                    className={`text-[12px] font-semibold ${on ? 'text-accent' : 'text-muted'}`}>
-                    {p.label}
-                  </Text>
-                </Pressable>
-              );
-            })}
+          {/* The four shapes an overnight build actually gets scheduled in, on a
+              2×2 grid: equal halves read as one control, where a wrapping row of
+              text-width pills leaves a ragged edge down the sheet. */}
+          <View className="mt-2 gap-1.5">
+            {[presets.slice(0, 2), presets.slice(2)].map((row, i) => (
+              <View key={i} className="flex-row gap-1.5">
+                {row.map(p => {
+                  const on = sameMinute(at, p.at);
+                  return (
+                    <Pressable
+                      key={p.label}
+                      onPress={() => setAt(p.at)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Start ${p.label.toLowerCase()}`}
+                      accessibilityState={{ selected: on }}
+                      className={`h-9 flex-1 items-center justify-center rounded-lg border active:opacity-70 ${
+                        on ? 'border-accent bg-accent/15' : 'border-surface1 bg-surface'
+                      }`}>
+                      <Text
+                        className={`text-[12px] font-semibold ${on ? 'text-accent' : 'text-muted'}`}>
+                        {p.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            ))}
           </View>
 
           {/* What was actually chosen, and the way to anything the presets missed. */}
-          <View className="mt-3 rounded-xl border border-surface1 bg-surface px-3 py-2.5">
+          <View className="mt-2.5 rounded-xl border border-surface1 bg-surface p-2.5">
             <View className="flex-row items-center gap-2">
               <CalendarClock size={14} color={colors.accent} strokeWidth={2.5} />
               <Text className="flex-1 text-[13px] font-semibold text-text">
                 Starts {startLabel(at)}
               </Text>
             </View>
-            <View className="mt-2 flex-row justify-between">
+            {/* Even fifths, so the nudges read as one segmented strip under the
+                time they move rather than five loose chips. */}
+            <View className="mt-2.5 flex-row gap-1">
               {[
                 { label: '−1h', ms: -60 * 60 * 1000 },
                 { label: '−15m', ms: -15 * 60 * 1000 },
@@ -190,34 +245,27 @@ export default function BuildScheduleDialog({
                 <Pressable
                   key={n.label}
                   onPress={() => nudge(n.ms)}
-                  hitSlop={4}
                   accessibilityRole="button"
                   accessibilityLabel={`Move the start ${n.label}`}
-                  className="rounded-lg bg-surface1/70 px-2.5 py-1 active:opacity-70">
-                  <Text className="text-[12px] font-semibold text-muted">{n.label}</Text>
+                  className="h-7 flex-1 items-center justify-center rounded-lg bg-surface1/60 active:opacity-70">
+                  <Text className="text-[11px] font-semibold text-muted">{n.label}</Text>
                 </Pressable>
               ))}
             </View>
           </View>
 
-          {/* The consequence, which differs by exactly this choice — and, when the
-              folder already exists, by whether this is the first time round. */}
-          <Text className="mt-3 text-[12px] leading-4 text-faint">
-            {at
-              ? reschedule
-                ? 'Nothing has run yet, so only the start time moves — keep working on the idea, and whatever it says at that point is what gets built.'
-                : 'The project folder is made now, but nothing runs until then — so you can keep working on the idea, and whatever it says at that point is what gets built.'
-              : 'The idea locks while that runs.'}
-          </Text>
+          {/* The consequence, which differs by exactly this choice — and by which
+              door it was taken through. */}
+          <Text className="mt-2.5 text-[11px] leading-4 text-faint">{copy.consequence}</Text>
 
-          <View className="mt-6 flex-row justify-end gap-3">
+          <View className="mt-5 flex-row justify-end gap-3">
             <Pressable
               onPress={onCancel}
               accessibilityRole="button"
-              accessibilityLabel={reschedule ? 'Leave the start time alone' : 'Cancel'}
+              accessibilityLabel={mode === 'edit' ? 'Leave the start time alone' : 'Cancel'}
               className="rounded-xl px-4 py-2.5 active:opacity-70">
               <Text className="text-sm font-semibold text-muted">
-                {reschedule ? 'Leave it' : 'Cancel'}
+                {mode === 'edit' ? 'Leave it' : 'Cancel'}
               </Text>
             </Pressable>
             <Pressable
@@ -239,3 +287,9 @@ export default function BuildScheduleDialog({
     </Modal>
   );
 }
+
+const styles = StyleSheet.create({
+  // Matches the idea page's section labels: tracking-wider is too tight to keep
+  // 10px caps legible.
+  eyebrow: { letterSpacing: 1.1 },
+});

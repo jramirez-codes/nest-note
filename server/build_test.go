@@ -418,8 +418,18 @@ func TestTickFinishesWhenThePlanRunsOut(t *testing.T) {
 	if strings.Contains(cron.content, cronMarker(f.slug)) {
 		t.Fatalf("finished build kept its crontab line:\n%s", cron.content)
 	}
-	if card, _ := loadCard(f.mcpDir, f.source, gate); !card.Dismissed {
-		t.Fatal("the spent gate card is still on the dashboard")
+	// The step card stays — it is the user's record of that feature, and only the
+	// user takes one off the dashboard — but it stops reading as an open decision.
+	card, _ := loadCard(f.mcpDir, f.source, gate)
+	if card.Dismissed {
+		t.Fatal("the finished build dismissed its step card")
+	}
+	if !strings.HasPrefix(card.Body, "> Every feature in the plan is built") {
+		t.Fatalf("step card body = %q, want the outcome quoted at the top", card.Body)
+	}
+	stamp, _ := card.Payload["build"].(map[string]any)
+	if stamp == nil || stamp["status"] != buildDone {
+		t.Fatalf("step card build stamp = %+v, want status done", stamp)
 	}
 }
 
@@ -820,13 +830,13 @@ func TestBuildRescheduleToNowStartsIt(t *testing.T) {
 	}
 }
 
-// TestBuildRescheduleRefusesAStartedBuild: once planning has run, PROJECT_PLAN.md
-// exists and was written from the idea's wording. There is no start left to move,
-// and pretending otherwise would leave the phone showing a time that means
-// nothing. Stopping is the only way out of a build that has begun.
+// TestBuildRescheduleRefusesAStartedBuild: a build with no next run to place has
+// no start time to move. Planning and building are already running; done and
+// halted have nothing left to run. (awaiting-validation is the exception — it is
+// parked on a step with a next feature behind it, and gets its own tests below.)
 func TestBuildRescheduleRefusesAStartedBuild(t *testing.T) {
 	const token = "secret"
-	for _, status := range []string{buildPlanning, buildBuilding, buildAwaiting, buildDone, buildHalted} {
+	for _, status := range []string{buildPlanning, buildBuilding, buildDone, buildHalted} {
 		t.Run(status, func(t *testing.T) {
 			f := newBuildFixture(t)
 			f.writeState(t, buildState{Status: status, Feature: 1})
@@ -854,6 +864,364 @@ func TestBuildRescheduleRejectsAnUnparseableStartTime(t *testing.T) {
 	buildScheduleHandler(token, f.cfg).ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("got %d (%s), want 400", rec.Code, rec.Body.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Revising a step
+// ---------------------------------------------------------------------------
+
+// stubClaude stands a `claude` on PATH that writes one stream-json line and exits,
+// so a test can drive a real run to completion without an agent (or a network).
+func stubClaude(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	script := "#!/bin/sh\nprintf '{\"type\":\"stub\"}\\n'\n"
+	if err := os.WriteFile(filepath.Join(dir, "claude"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func (f *buildFixture) reviseReq(t *testing.T, token, note string) *httptest.ResponseRecorder {
+	t.Helper()
+	body, err := json.Marshal(map[string]string{"slug": f.slug, "note": note})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/build/revise", strings.NewReader(string(body)))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	buildReviseHandler(token, f.cfg).ServeHTTP(rec, req)
+	return rec
+}
+
+// TestBuildReviseRunsAndGatesAgain is the whole point of a step being something
+// you can talk to: "nearly, but the header is wrong" has to reach the agent that
+// built it, and land the user back at the same decision afterwards — not at the
+// next feature, and not at a build that has quietly moved on.
+func TestBuildReviseRunsAndGatesAgain(t *testing.T) {
+	const token = "secret"
+	stubClaude(t)
+	f := newBuildFixture(t)
+	f.writePlan(t, "## Feature 1: A\nx\n\n## Feature 2: B\ny\n")
+	gate := f.awaitingAStep(t, 1)
+	// Signed off and scheduled — then thought better of. Both have to come undone,
+	// or a tick would build feature 2 on top of a feature being revised.
+	if _, ok := updateCard(f.mcpDir, f.source, gate, func(c *dashCard) { c.Done = true }); !ok {
+		t.Fatal("could not validate the step")
+	}
+	f.writeState(t, buildState{
+		Status: buildAwaiting, Feature: 1, GateCardID: gate,
+		StartAt: time.Now().Add(4 * time.Hour).UTC().Format(time.RFC3339),
+	})
+
+	rec := f.reviseReq(t, token, "The header is the wrong colour — make it match the plan.")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+	var got buildResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != buildBuilding || got.Feature != 1 {
+		t.Fatalf("response = %q feature %d, want building feature 1", got.Status, got.Feature)
+	}
+	if got.StartAt != "" {
+		t.Fatalf("start_at = %q, want the pending next feature withdrawn", got.StartAt)
+	}
+	if card, _ := loadCard(f.mcpDir, f.source, gate); card.Done {
+		t.Fatal("the step is still signed off while it is being revised")
+	}
+
+	// The run is real (a stub `claude`), so wait for the re-gate its callback does.
+	deadline := time.Now().Add(30 * time.Second)
+	var st buildState
+	for time.Now().Before(deadline) {
+		st, _ = loadBuild(f.cfg.buildDir(f.slug))
+		if st.Status == buildAwaiting {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if st.Status != buildAwaiting || st.Feature != 1 {
+		t.Fatalf("state after the revision = %q feature %d, want it back at the same step", st.Status, st.Feature)
+	}
+	if !strings.Contains(st.Note, "revised at your request") {
+		t.Fatalf("note = %q, want it to say the revision landed", st.Note)
+	}
+	// Back to an open decision on the same card, not a new one.
+	card, ok := loadCard(f.mcpDir, f.source, gate)
+	if !ok || card.Done || card.Dismissed {
+		t.Fatalf("step card = %+v, want it asking again", card)
+	}
+}
+
+// TestBuildReviseRefusesWhenNothingIsPaused: revising means editing a tree an
+// agent may be working in. Outside the gate there is either a run in flight or
+// nothing paused to talk about, and either way a second agent in that directory is
+// the one thing the whole design refuses.
+func TestBuildReviseRefusesWhenNothingIsPaused(t *testing.T) {
+	const token = "secret"
+	for _, status := range []string{buildScheduled, buildPlanning, buildBuilding, buildDone, buildHalted} {
+		t.Run(status, func(t *testing.T) {
+			f := newBuildFixture(t)
+			f.writeState(t, buildState{Status: status, Feature: 1, GateCardID: gateCardID(f.slug, 1)})
+			rec := f.reviseReq(t, token, "make the header blue")
+			if rec.Code != http.StatusConflict {
+				t.Fatalf("got %d (%s), want 409", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+// TestBuildReviseRefusesAnEmptyNote: an empty box is not an instruction, and
+// sending one would spend a run asking an agent to do nothing in particular.
+func TestBuildReviseRefusesAnEmptyNote(t *testing.T) {
+	const token = "secret"
+	f := newBuildFixture(t)
+	f.awaitingAStep(t, 1)
+	rec := f.reviseReq(t, token, "   \n ")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("got %d (%s), want 400", rec.Code, rec.Body.String())
+	}
+}
+
+// TestBuildReviseRefusesASecondRun: the gate is the only quiet moment in a build,
+// and two revisions racing would put two agents in one working tree.
+func TestBuildReviseRefusesASecondRun(t *testing.T) {
+	const token = "secret"
+	f := newBuildFixture(t)
+	f.awaitingAStep(t, 1)
+	// A registered session whose process hasn't exited — what a live run leaves.
+	f.cfg.reg.findOrCreateForRun(buildSessionID(f.slug, 1), sessionKindBuild)
+
+	rec := f.reviseReq(t, token, "one more thing")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("got %d (%s), want 409", rec.Code, rec.Body.String())
+	}
+	st, _ := loadBuild(f.cfg.buildDir(f.slug))
+	if st.Status != buildAwaiting {
+		t.Fatalf("status = %q, want the refused revision to have changed nothing", st.Status)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Scheduling the next feature
+// ---------------------------------------------------------------------------
+
+// awaitingAStep parks the fixture's build on a step card the user hasn't answered
+// yet — the state the idea page offers "build the next feature" from.
+func (f *buildFixture) awaitingAStep(t *testing.T, feature int) string {
+	t.Helper()
+	gate := gateCardID(f.slug, feature)
+	f.writeState(t, buildState{Status: buildAwaiting, Feature: feature, GateCardID: gate})
+	if err := writeCard(f.mcpDir, f.source, dashCard{
+		ID: gate, Kind: buildCardKind, Priority: "high", Title: "Validate: feature 1",
+		Body: "Feature 1 of **greenhouse-tracker** is built and waiting on you.",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return gate
+}
+
+// TestBuildScheduleNextFeatureAtATime: picking a time on a step card is how the
+// user says "yes, and build the next one then". Both halves have to land — the
+// step marked validated, and the minute cron will act on — because either alone
+// is a build that stops: a validated step with no line never starts feature 2, and
+// a line with no validation ticks into a gate that is still closed.
+func TestBuildScheduleNextFeatureAtATime(t *testing.T) {
+	const token = "secret"
+	f := newBuildFixture(t)
+	cron := &fakeCrontab{}
+	f.cfg.cron = cron.io()
+	if err := installCronLine(cron.io(), f.slug, cronLineFor(f.root, f.slug)); err != nil {
+		t.Fatal(err)
+	}
+	f.writePlan(t, "## Feature 1: A\nx\n\n## Feature 2: B\ny\n")
+	gate := f.awaitingAStep(t, 1)
+	at := time.Now().Add(5 * time.Hour).UTC().Round(time.Minute)
+
+	rec := f.scheduleReq(t, token, at)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+	var got buildResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != buildAwaiting || got.StartAt != at.Format(time.RFC3339) {
+		t.Fatalf("response = %q at %q, want %q at %q",
+			got.Status, got.StartAt, buildAwaiting, at.Format(time.RFC3339))
+	}
+	if card, _ := loadCard(f.mcpDir, f.source, gate); !card.Done {
+		t.Fatal("the step was not validated, so the time would come round on a closed gate")
+	}
+	if !strings.Contains(cron.content, cronLineAt(f.root, f.slug, at)) {
+		t.Fatalf("no exact-minute line for the next feature:\n%s", cron.content)
+	}
+	if !strings.Contains(cron.content, "*/30 * * * *") {
+		t.Fatalf("the recurring safety net was dropped:\n%s", cron.content)
+	}
+	// Both cards say the same thing, so the page reads right whichever one the user
+	// opened — the step they were looking at, or the idea behind it.
+	for _, id := range []string{gate, "idea-4f2a"} {
+		card, ok := loadCard(f.mcpDir, f.source, id)
+		if !ok {
+			t.Fatalf("card %s vanished", id)
+		}
+		stamp, _ := card.Payload["build"].(map[string]any)
+		if stamp == nil || stamp["status"] != buildAwaiting || stamp["start_at"] != at.Format(time.RFC3339) {
+			t.Fatalf("%s stamp = %+v, want awaiting at %s", id, stamp, at.Format(time.RFC3339))
+		}
+	}
+	if f.cfg.reg.get(buildSessionID(f.slug, 2)) != nil {
+		t.Fatal("scheduling the next feature started it")
+	}
+}
+
+// TestBuildScheduleNextFeatureNowStartsIt: "Now" is the picker's default, and it
+// has to mean the same here as everywhere else — the next feature starts on this
+// request rather than at the next half-hourly tick.
+func TestBuildScheduleNextFeatureNowStartsIt(t *testing.T) {
+	const token = "secret"
+	f := newBuildFixture(t)
+	cron := &fakeCrontab{}
+	f.cfg.cron = cron.io()
+	f.writePlan(t, "## Feature 1: A\nx\n\n## Feature 2: B\ny\n")
+	gate := f.awaitingAStep(t, 1)
+	// Pre-registered so the transition is asserted without spawning an agent.
+	f.cfg.reg.findOrCreateForRun(buildSessionID(f.slug, 2), sessionKindBuild)
+
+	rec := f.scheduleReq(t, token, time.Time{})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+	st, _ := loadBuild(f.cfg.buildDir(f.slug))
+	if st.Status != buildBuilding || st.Feature != 2 {
+		t.Fatalf("state = %q feature %d, want building feature 2", st.Status, st.Feature)
+	}
+	if st.StartAt != "" {
+		t.Fatalf("start_at = %q, want nothing pending", st.StartAt)
+	}
+	if card, _ := loadCard(f.mcpDir, f.source, gate); !card.Done {
+		t.Fatal("the step was not validated")
+	}
+	// The step the build has moved past keeps its place on the dashboard, and its
+	// stamp follows the build rather than freezing on the state it was settled from
+	// — a settled step still advertising "awaiting, due at 21:00" would have the
+	// page offering to schedule a feature that is already running.
+	card, _ := loadCard(f.mcpDir, f.source, gate)
+	if card.Dismissed {
+		t.Fatal("starting the next feature dismissed the step before it")
+	}
+	if !strings.HasPrefix(card.Body, "> Validated. The build has moved on to feature 2.") {
+		t.Fatalf("step card body = %q, want the outcome quoted at the top", card.Body)
+	}
+	stamp, _ := card.Payload["build"].(map[string]any)
+	if stamp == nil || stamp["status"] != buildBuilding || stamp["start_at"] != nil {
+		t.Fatalf("step card stamp = %+v, want building with nothing pending", stamp)
+	}
+}
+
+// TestBuildScheduleRefusesARejectedStep: dismissing a step card rejects the
+// feature and stops the build. Scheduling the next one off that same card would
+// resurrect a build the user just turned down — and would answer the phone with a
+// start time nothing will ever honour.
+func TestBuildScheduleRefusesARejectedStep(t *testing.T) {
+	const token = "secret"
+	f := newBuildFixture(t)
+	gate := f.awaitingAStep(t, 1)
+	if _, ok := updateCard(f.mcpDir, f.source, gate, func(c *dashCard) { c.Dismissed = true }); !ok {
+		t.Fatal("could not dismiss the step card")
+	}
+	rec := f.scheduleReq(t, token, time.Now().Add(3*time.Hour))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("got %d (%s), want 409", rec.Code, rec.Body.String())
+	}
+	st, _ := loadBuild(f.cfg.buildDir(f.slug))
+	if st.StartAt != "" {
+		t.Fatalf("start_at = %q, want the refusal to have changed nothing", st.StartAt)
+	}
+}
+
+// TestTickHoldsTheNextFeatureUntilItsTime: the whole point of putting a time on a
+// validated step. The tick runs every half hour regardless, so if it didn't read
+// the clock the next feature would start at the next tick and the chosen time
+// would be decoration.
+func TestTickHoldsTheNextFeatureUntilItsTime(t *testing.T) {
+	f := newBuildFixture(t)
+	f.writePlan(t, "## Feature 1: A\nx\n\n## Feature 2: B\ny\n")
+	gate := gateCardID(f.slug, 1)
+	f.writeState(t, buildState{
+		Status: buildAwaiting, Feature: 1, GateCardID: gate,
+		StartAt: time.Now().Add(6 * time.Hour).UTC().Format(time.RFC3339),
+	})
+	if err := writeCard(f.mcpDir, f.source, dashCard{
+		ID: gate, Kind: buildCardKind, Title: "Validate: feature 1", Done: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := f.cfg.tick(f.slug, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Action != "wait" {
+		t.Fatalf("action = %q (%s), want wait", res.Action, res.Detail)
+	}
+	st, _ := loadBuild(f.cfg.buildDir(f.slug))
+	if st.Status != buildAwaiting {
+		t.Fatalf("status = %q, want it still parked at the step", st.Status)
+	}
+	if f.cfg.reg.get(buildSessionID(f.slug, 2)) != nil {
+		t.Fatal("the next feature started early")
+	}
+}
+
+// TestTickStartsTheNextFeatureWhenDue: and when the minute comes round it goes,
+// leaving the crontab back on the recurring line alone — a dated entry left behind
+// fires again a year later, against whatever that project has become by then.
+func TestTickStartsTheNextFeatureWhenDue(t *testing.T) {
+	f := newBuildFixture(t)
+	cron := &fakeCrontab{}
+	f.cfg.cron = cron.io()
+	due := time.Now().Add(-2 * time.Minute)
+	if err := installCronLine(cron.io(), f.slug, scheduledCronLines(f.root, f.slug, due)); err != nil {
+		t.Fatal(err)
+	}
+	f.writePlan(t, "## Feature 1: A\nx\n\n## Feature 2: B\ny\n")
+	gate := gateCardID(f.slug, 1)
+	f.writeState(t, buildState{
+		Status: buildAwaiting, Feature: 1, GateCardID: gate,
+		StartAt: due.UTC().Format(time.RFC3339),
+	})
+	if err := writeCard(f.mcpDir, f.source, dashCard{
+		ID: gate, Kind: buildCardKind, Title: "Validate: feature 1", Done: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	f.cfg.reg.findOrCreateForRun(buildSessionID(f.slug, 2), sessionKindBuild)
+
+	res, err := f.cfg.tick(f.slug, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Action != "busy" && res.Action != "feature" {
+		t.Fatalf("action = %q (%s), want the next feature to have been taken up", res.Action, res.Detail)
+	}
+	st, _ := loadBuild(f.cfg.buildDir(f.slug))
+	if st.Status != buildBuilding || st.Feature != 2 {
+		t.Fatalf("state = %q feature %d, want building feature 2", st.Status, st.Feature)
+	}
+	if st.StartAt != "" {
+		t.Fatalf("start_at = %q, want it spent", st.StartAt)
+	}
+	if strings.Contains(cron.content, cronLineAt(f.root, f.slug, due)) {
+		t.Fatalf("the dated line survived the run it triggered:\n%s", cron.content)
+	}
+	if !strings.Contains(cron.content, "*/30 * * * *") {
+		t.Fatalf("the recurring line was not left behind:\n%s", cron.content)
 	}
 }
 
@@ -1276,10 +1644,18 @@ func TestDismissingAnIdeaStopsItsBuild(t *testing.T) {
 	if st.Status != buildHalted || st.Note == "" {
 		t.Fatalf("state = %+v, want halted with a note saying why", st)
 	}
-	// And the card that was asking for a decision about it stops asking.
+	// And the card that was asking for a decision about it stops asking — without
+	// leaving the dashboard, which is the user's own call to make.
 	gate, ok := loadCard(f.mcpDir, f.source, gateCardID(f.slug, 1))
-	if !ok || !gate.Dismissed {
-		t.Fatalf("gate card = %+v, want it retired with the build", gate)
+	if !ok || gate.Dismissed {
+		t.Fatalf("step card = %+v, want it kept on the dashboard", gate)
+	}
+	if !strings.Contains(gate.Body, "This build was stopped") {
+		t.Fatalf("step card body = %q, want it to say the build stopped", gate.Body)
+	}
+	stamp, _ := gate.Payload["build"].(map[string]any)
+	if stamp == nil || stamp["status"] != buildHalted {
+		t.Fatalf("step card build stamp = %+v, want status halted", stamp)
 	}
 }
 
