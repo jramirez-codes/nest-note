@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -484,6 +485,230 @@ func TestTickOnTerminalBuildSweepsCron(t *testing.T) {
 	}
 	if strings.Contains(cron.content, cronMarker(f.slug)) {
 		t.Fatalf("a terminal build left its crontab line:\n%s", cron.content)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Scheduled starts
+// ---------------------------------------------------------------------------
+
+// TestTickWaitsForAScheduledStart: the recurring safety-net line ticks a
+// scheduled build every 30 minutes long before it is due, so the clock — not the
+// arrival of a tick — has to be what starts it.
+func TestTickWaitsForAScheduledStart(t *testing.T) {
+	f := newBuildFixture(t)
+	f.writeState(t, buildState{
+		Status:  buildScheduled,
+		StartAt: time.Now().Add(6 * time.Hour).UTC().Format(time.RFC3339),
+	})
+
+	res, err := f.cfg.tick(f.slug, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Action != "wait" {
+		t.Fatalf("action = %q (%s), want wait", res.Action, res.Detail)
+	}
+	st, _ := loadBuild(f.cfg.buildDir(f.slug))
+	if st.Status != buildScheduled {
+		t.Fatalf("status = %q, want it still scheduled", st.Status)
+	}
+}
+
+// TestTickStartsADueScheduledBuild: once the start time has passed the very next
+// tick plans it, and — asserted here because it is the part that rots silently —
+// the date-pinned crontab line is collapsed away, leaving only the recurring one.
+func TestTickStartsADueScheduledBuild(t *testing.T) {
+	f := newBuildFixture(t)
+	cron := &fakeCrontab{}
+	f.cfg.cron = cron.io()
+	due := time.Now().Add(-time.Minute)
+	if err := installCronLine(cron.io(), f.slug, scheduledCronLines(f.root, f.slug, due)); err != nil {
+		t.Fatal(err)
+	}
+	f.writeState(t, buildState{Status: buildScheduled, StartAt: due.UTC().Format(time.RFC3339)})
+
+	// Dry run first: it reports the planning run without starting an agent.
+	res, err := f.cfg.tick(f.slug, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Action != "plan" {
+		t.Fatalf("action = %q (%s), want plan", res.Action, res.Detail)
+	}
+	if !strings.Contains(res.Prompt, buildPlanName) {
+		t.Fatalf("dry run should report the planning prompt, got %q", res.Prompt)
+	}
+	if st, _ := loadBuild(f.cfg.buildDir(f.slug)); st.Status != buildScheduled {
+		t.Fatalf("a dry run moved the build to %q", st.Status)
+	}
+
+	// For real. The session is pre-registered so no agent is actually spawned —
+	// what this asserts is the state transition and the crontab rewrite, both of
+	// which happen before the run is handed off.
+	f.cfg.reg.findOrCreateForRun(buildSessionID(f.slug, 0), sessionKindBuild)
+	if _, err := f.cfg.tick(f.slug, false); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := loadBuild(f.cfg.buildDir(f.slug))
+	if st.Status != buildPlanning {
+		t.Fatalf("status = %q, want %q", st.Status, buildPlanning)
+	}
+	if st.StartAt != "" {
+		t.Fatalf("a started build still carries start_at = %q", st.StartAt)
+	}
+	var managed []string
+	for _, l := range strings.Split(strings.TrimSpace(cron.content), "\n") {
+		if strings.Contains(l, cronMarker(f.slug)) {
+			managed = append(managed, l)
+		}
+	}
+	if len(managed) != 1 {
+		t.Fatalf("want one line after starting, got %d — a date-pinned one left behind fires again next year:\n%s",
+			len(managed), cron.content)
+	}
+	if !strings.HasPrefix(managed[0], "*/30 * * * *") {
+		t.Fatalf("the surviving line is not the recurring one, so the build can never advance:\n%s", managed[0])
+	}
+}
+
+// TestTickStartsAScheduledBuildWithAnUnreadableStartAt: a timestamp that doesn't
+// parse must not strand a build in `scheduled` forever. Starting early is the
+// recoverable failure; never starting is not.
+func TestTickStartsAScheduledBuildWithAnUnreadableStartAt(t *testing.T) {
+	f := newBuildFixture(t)
+	f.writeState(t, buildState{Status: buildScheduled, StartAt: "sometime on Tuesday"})
+
+	res, err := f.cfg.tick(f.slug, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Action != "plan" {
+		t.Fatalf("action = %q (%s), want plan", res.Action, res.Detail)
+	}
+}
+
+// TestScheduledBuildHaltsIfTheIdeaIsDeleted: a scheduled build is the one case
+// where the idea can go away between asking for the build and the build starting.
+// There is nothing to write a plan from, so it stops and says so.
+func TestScheduledBuildHaltsIfTheIdeaIsDeleted(t *testing.T) {
+	f := newBuildFixture(t)
+	f.writeState(t, buildState{
+		Status:  buildScheduled,
+		StartAt: time.Now().Add(-time.Minute).UTC().Format(time.RFC3339),
+	})
+	if err := os.Remove(filepath.Join(cardsDirFor(f.mcpDir, f.source), "idea-4f2a.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := f.cfg.tick(f.slug, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Action != "halt" {
+		t.Fatalf("action = %q (%s), want halt", res.Action, res.Detail)
+	}
+	st, _ := loadBuild(f.cfg.buildDir(f.slug))
+	if st.Status != buildHalted || st.Note == "" {
+		t.Fatalf("state = %+v, want halted with a note saying why", st)
+	}
+}
+
+// TestBuildStartSchedulesForLater: the handler path. A start time in the future
+// leaves the build waiting with no run in flight, and arms both crontab lines.
+func TestBuildStartSchedulesForLater(t *testing.T) {
+	const token = "secret"
+	f := newBuildFixture(t)
+	cron := &fakeCrontab{}
+	f.cfg.cron = cron.io()
+	at := time.Now().Add(9 * time.Hour).UTC().Round(time.Minute)
+
+	body := fmt.Sprintf(`{"card_id":"idea-4f2a","source":"greenhouse","project":"Greenhouse Tracker","start_at":%q}`,
+		at.Format(time.RFC3339))
+	req := httptest.NewRequest(http.MethodPost, "/build/start", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	buildStartHandler(token, f.cfg).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+
+	var got buildResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != buildScheduled {
+		t.Fatalf("status = %q, want %q", got.Status, buildScheduled)
+	}
+	if got.StartAt != at.Format(time.RFC3339) {
+		t.Fatalf("start_at = %q, want %q", got.StartAt, at.Format(time.RFC3339))
+	}
+	if f.cfg.reg.get(buildSessionID(f.slug, 0)) != nil {
+		t.Fatal("a scheduled build started its planning run immediately")
+	}
+	if !strings.Contains(cron.content, cronLineAt(f.root, f.slug, at)) {
+		t.Fatalf("the exact-minute line was not installed:\n%s", cron.content)
+	}
+	if !strings.Contains(cron.content, "*/30 * * * *") {
+		t.Fatalf("the recurring safety net was not installed:\n%s", cron.content)
+	}
+
+	// And the idea card carries the schedule, so the phone can say when it starts
+	// without fetching the build.
+	card, ok := loadCard(f.mcpDir, f.source, "idea-4f2a")
+	if !ok {
+		t.Fatal("idea card vanished")
+	}
+	stamp, _ := card.Payload["build"].(map[string]any)
+	if stamp["status"] != buildScheduled || stamp["start_at"] != at.Format(time.RFC3339) {
+		t.Fatalf("idea stamp = %+v, want the scheduled status and start time", stamp)
+	}
+}
+
+// TestBuildStartTreatsAnImminentTimeAsNow: phone and server clocks disagree by
+// seconds, and "now" arrives from the phone as an actual timestamp. Anything
+// inside buildStartSoon takes the immediate path rather than pinning a cron entry
+// for a minute that may already have gone.
+func TestBuildStartTreatsAnImminentTimeAsNow(t *testing.T) {
+	const token = "secret"
+	for _, when := range []time.Duration{-time.Hour, 0, 20 * time.Second} {
+		t.Run(when.String(), func(t *testing.T) {
+			f := newBuildFixture(t)
+			// Pre-registered so the handler takes the immediate path without actually
+			// spawning an agent — the status is the assertion, not the run.
+			f.cfg.reg.findOrCreateForRun(buildSessionID(f.slug, 0), sessionKindBuild)
+			body := fmt.Sprintf(`{"card_id":"idea-4f2a","source":"greenhouse","project":"Greenhouse Tracker","start_at":%q}`,
+				time.Now().Add(when).UTC().Format(time.RFC3339))
+			req := httptest.NewRequest(http.MethodPost, "/build/start", strings.NewReader(body))
+			req.Header.Set("Authorization", "Bearer "+token)
+			rec := httptest.NewRecorder()
+			buildStartHandler(token, f.cfg).ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("got %d (%s), want 200", rec.Code, rec.Body.String())
+			}
+			st, _ := loadBuild(f.cfg.buildDir(f.slug))
+			if st.Status != buildPlanning {
+				t.Fatalf("status = %q, want %q — an imminent start is just now", st.Status, buildPlanning)
+			}
+			if st.StartAt != "" {
+				t.Fatalf("start_at = %q, want it cleared", st.StartAt)
+			}
+		})
+	}
+}
+
+// TestBuildStartRejectsAnUnparseableStartTime: better a 400 the phone can show
+// than a build silently starting now when the user asked for Saturday.
+func TestBuildStartRejectsAnUnparseableStartTime(t *testing.T) {
+	const token = "secret"
+	f := newBuildFixture(t)
+	req := httptest.NewRequest(http.MethodPost, "/build/start",
+		strings.NewReader(`{"card_id":"idea-4f2a","source":"greenhouse","project":"Greenhouse Tracker","start_at":"saturday-ish"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	buildStartHandler(token, f.cfg).ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("got %d (%s), want 400", rec.Code, rec.Body.String())
 	}
 }
 

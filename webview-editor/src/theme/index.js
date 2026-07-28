@@ -21,6 +21,7 @@ import { styles as pairStyles } from '../ai/cards/pair.js';
 import { styles as cleanStyles } from '../ai/cards/clean.js';
 import { styles as recordStyles } from '../ai/cards/record.js';
 import { styles as badgeStyles } from '../ai/shared/badge.js';
+import { styles as pillStyles } from '../ai/shared/pill.js';
 import { styles as runStyles } from '../ai/cards/run.js';
 import { styles as transcriptStyles } from '../ai/shared/transcript.js';
 import { styles as codeViewStyles } from '../ai/shared/codeView.js';
@@ -49,6 +50,7 @@ const components = {
   ...cleanStyles,
   ...recordStyles,
   ...badgeStyles,
+  ...pillStyles,
   ...runStyles,
   ...transcriptStyles,
   ...codeViewStyles,

@@ -18,6 +18,7 @@ import { post } from '../bridge.js';
 import { findAiLine, rerunRunById, appendChatTurnById, isChatKind } from './marker.js';
 import { runLiveField, codeLiveField, viewLiveField, askLiveField } from '../state.js';
 import { mountAnswerView, unmountAnswerView } from './answerView.js';
+import { makePill } from './shared/pill.js';
 import { mountCodeBlock, estimateCodeBlock } from './shared/transcript.js';
 import { createBlockList } from './shared/blockList.js';
 import { applyRunBadge } from './shared/badge.js';
@@ -431,13 +432,16 @@ export function openCardOverlay(view, obj) {
   head.appendChild(back);
 
   if (kind === 'code') {
-    // Same stylized project pill as the card (.cm-code-proj), with a flex spacer
-    // so the badge stays right-aligned — the enlarged view can't visually drift.
-    const title = document.createElement('span');
-    title.className = 'cm-code-proj cm-ov-proj';
-    title.textContent = '✦ ' + (obj.project || '');
-    title.title = 'Project: ' + (obj.project || '');
-    head.appendChild(title);
+    // Same stylized project pill as the card (shared/pill), with a flex spacer so
+    // the badge stays right-aligned — the enlarged view can't visually drift.
+    head.appendChild(
+      makePill({
+        icon: '✦',
+        label: obj.project || '',
+        title: 'Project: ' + (obj.project || ''),
+        className: 'cm-ov-proj',
+      }),
+    );
     const spacer = document.createElement('span');
     spacer.className = 'cm-code-spacer';
     head.appendChild(spacer);
@@ -612,8 +616,9 @@ export const styles = {
     overflow: 'hidden',
     textOverflow: 'ellipsis',
   },
-  // The project pill sits in taller overlay chrome, so scale it up a touch.
-  '.cm-ov-proj': { maxWidth: '75%', padding: '4px 12px', fontSize: '13px' },
+  // The project pill sits in taller overlay chrome, so scale it up a touch. The
+  // shared `.cm-pill` cap is in em, so its width scales with this on its own.
+  '.cm-ov-proj': { padding: '4px 12px', fontSize: '13px' },
   // A /chat page is titled by its opening question — prose, so it overrides the
   // monospace/teal code-title look with the card's question styling.
   '.cm-ov-title-chat': {

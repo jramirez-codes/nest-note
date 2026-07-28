@@ -21,8 +21,9 @@ Nothing runs unwatched for longer than a single feature. That's the whole design
 
 ## Starting one
 
-Open an idea from the dashboard's card grid and tap **Build** in the header.
-After a confirmation, the server:
+Open an idea from the dashboard's Ideas view and tap **Build** in the header. The
+dialog that opens asks one thing — **when** — and defaults to **now**, so starting
+straight away is still a single extra tap. Confirm it and the server:
 
 1. creates `projects/<slug>/` under your [`-root`](./flags.md), slugged from the
    idea's title exactly the way `/code <name>` slugs it;
@@ -34,14 +35,43 @@ After a confirmation, the server:
 You can watch the planning run live from the phone, the same way you watch a
 [`/code`](../commands/projects.mdx) session.
 
+Back in the Ideas view, that idea's row swaps its lightbulb for a **hammer** for as
+long as the build holds it — so a glance down the list says which ideas are projects
+now. It goes back to a lightbulb when the build finishes or you stop it.
+
+## Starting one later
+
+Picking a time instead of **Now** — one of the presets, or the `±15m / ±1h / +1d`
+nudges beside them — puts the build in a **`scheduled`** state. Step 1 still happens
+immediately, so the project folder exists and the dashboard shows the idea as spoken
+for. Steps 3 and 4 wait.
+
+Two things follow from nothing having run yet:
+
+- **The idea does not lock.** A live build locks it because `PROJECT_PLAN.md` was
+  written from its wording; a scheduled one hasn't written anything. So the chat
+  stays open, and whatever the idea says *at the start time* is what gets planned.
+  The composer carries a line saying when that is.
+- **Cancelling costs nothing.** Stop it before it starts and no plan is written and
+  no code is generated — just an empty folder left behind.
+
+The row's glyph is a **clock** rather than a hammer until it starts, and the idea
+page's header reads `Build · scheduled`.
+
+Times are minute-resolution, because the crontab entry underneath can't do better.
+A time that has all but arrived — anything within 90 seconds, which is mostly your
+phone's clock disagreeing with the server's — is simply treated as now.
+
 ## The loop
 
 Every 30 minutes, cron pokes the server and one of these happens:
 
 | Build state | What the tick does |
 | --- | --- |
+| Scheduled, not yet due | Nothing. The clock decides, not the tick. |
+| Scheduled and due | Writes the plan, then starts feature 1. |
 | A run is in flight | Nothing. One agent per project, ever. |
-| A feature just finished | Puts a **`build-step` card** on the dashboard asking you to validate it. |
+| A feature just finished | Puts a **`build-step` card** in the dashboard's [Ideas view](../commands/dashboard.mdx#organize-and-ideas) asking you to validate it. |
 | That card is untouched | Nothing. The build waits — indefinitely, if that's how long you take. |
 | You **completed** the card | Builds the next feature in the plan. |
 | You **dismissed** the card | Stops the build for good. |
@@ -54,9 +84,10 @@ learn.
 
 ## The idea locks
 
-While a build is live, the idea page's chat composer is disabled. The idea's
-wording is what `PROJECT_PLAN.md` was written from, so editing it afterwards
-would quietly diverge from what's actually being built.
+Once the planning run has started, the idea page's chat composer is disabled. The
+idea's wording is what `PROJECT_PLAN.md` was written from, so editing it afterwards
+would quietly diverge from what's actually being built. (A build still waiting for
+its start time hasn't planned anything yet, so it doesn't lock — see above.)
 
 Tapping the idea's header swaps the body between the idea and the plan, with each
 feature's state beside it. Stopping the build — or letting it finish — hands the
@@ -66,7 +97,8 @@ idea back.
 
 The **stop** button in the idea page's header removes the crontab entry, cancels
 any run in flight, and unlocks the idea. The project folder and every feature
-already built stay exactly where they are.
+already built stay exactly where they are. On a build that hasn't started, the
+same button cancels the schedule.
 
 Deleting the project with [`/delete`](../commands/projects.mdx) also removes its
 crontab entry, so a deleted project can't leave cron firing at a folder that no
@@ -127,6 +159,21 @@ carries a marker:
 which makes entries greppable and individually removable. Your own crontab lines
 are passed through untouched. Entries are removed when a build is stopped,
 rejected, finished, or its project deleted.
+
+A build scheduled for later carries **two** lines until it starts — the minute you
+picked, and the ordinary recurring line beneath it:
+
+```text
+5 21 3 8 * /srv/nest/bin/nestnote-tick greenhouse  # nestnote:greenhouse
+*/30 * * * * /srv/nest/bin/nestnote-tick greenhouse  # nestnote:greenhouse
+```
+
+The first is what makes a build asked for at 21:05 start at 21:05 rather than up to
+half an hour late. The second is the safety net, and it is the one that matters: a
+date in a crontab comes back around **every year**, so if the server happened to be
+down for that single minute the build would sit scheduled until next August. With the
+recurring line there, the next ordinary tick starts it instead — and the first tick
+to run collapses the pair back down to one line, so the dated entry can't linger.
 
 ## Limits worth knowing
 

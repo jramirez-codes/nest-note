@@ -57,17 +57,19 @@ const (
 
 // Build statuses, in the order a healthy build walks them.
 const (
-	buildPlanning = "planning"            // the planning agent is writing PROJECT_PLAN.md
-	buildBuilding = "building"            // a feature run is in flight
-	buildAwaiting = "awaiting-validation" // a gate card is up; nothing proceeds until the user answers
-	buildDone     = "done"                // every feature validated
-	buildHalted   = "halted"              // the user rejected a feature, or stopped the build
+	buildScheduled = "scheduled"           // start time is in the future; nothing has run yet
+	buildPlanning  = "planning"            // the planning agent is writing PROJECT_PLAN.md
+	buildBuilding  = "building"            // a feature run is in flight
+	buildAwaiting  = "awaiting-validation" // a gate card is up; nothing proceeds until the user answers
+	buildDone      = "done"                // every feature validated
+	buildHalted    = "halted"              // the user rejected a feature, or stopped the build
 )
 
 // buildActive reports whether a status means "this build still wants ticks". Both
 // terminal states (done, halted) give up their crontab line.
 func buildActive(status string) bool {
-	return status == buildPlanning || status == buildBuilding || status == buildAwaiting
+	return status == buildScheduled || status == buildPlanning ||
+		status == buildBuilding || status == buildAwaiting
 }
 
 // buildState is projects/<slug>/.nestnote/build.json — everything needed to
@@ -82,6 +84,10 @@ type buildState struct {
 	Feature    int    `json:"feature"` // the feature being built or validated (1-based; 0 while planning)
 	GateCardID string `json:"gate_card_id,omitempty"`
 	LastRun    string `json:"last_run,omitempty"`
+	// StartAt is when the planning run is due, RFC3339, for a build the user
+	// scheduled rather than started now. Cleared once planning actually begins, so
+	// it always reads as "still to come" rather than as history.
+	StartAt string `json:"start_at,omitempty"`
 	// Note carries the last thing that went wrong (a crashed run, a missing plan)
 	// so the phone can show why a build stalled instead of just sitting at a status.
 	Note string `json:"note,omitempty"`
@@ -139,6 +145,20 @@ func loadBuild(dir string) (buildState, bool) {
 		return buildState{}, false
 	}
 	return st, true
+}
+
+// startAtTime parses a scheduled build's start time. Reports false when there
+// isn't one, or when it doesn't parse — both of which mean "no reason to keep
+// waiting", so a build can never be stranded in `scheduled` by a bad timestamp.
+func startAtTime(st buildState) (time.Time, bool) {
+	if st.StartAt == "" {
+		return time.Time{}, false
+	}
+	t, err := time.Parse(time.RFC3339, st.StartAt)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t, true
 }
 
 func saveBuild(dir string, st buildState) error {
@@ -431,11 +451,17 @@ func stampIdeaCard(mcpDir string, st buildState) {
 		if c.Payload == nil {
 			c.Payload = map[string]any{}
 		}
-		c.Payload["build"] = map[string]any{
+		stamp := map[string]any{
 			"slug":    st.Slug,
 			"status":  st.Status,
 			"feature": st.Feature,
 		}
+		// Carried so the idea page can say when a scheduled build starts from the
+		// card alone, before it has fetched the build itself.
+		if st.StartAt != "" {
+			stamp["start_at"] = st.StartAt
+		}
+		c.Payload["build"] = stamp
 	})
 }
 
@@ -665,6 +691,17 @@ func (cfg buildConfig) tick(slug string, dryRun bool) (tickResult, error) {
 		res.Detail = "build is " + st.Status
 		return res, nil
 
+	case buildScheduled:
+		// The user picked a start time. Two lines in the crontab can bring us here —
+		// the exact-minute one and the ordinary recurring one — so the clock, not the
+		// line that fired, is what decides whether it's time.
+		if due, ok := startAtTime(st); ok && time.Now().Before(due) {
+			res.Action = "wait"
+			res.Detail = "scheduled to start at " + due.Local().Format(time.RFC3339)
+			return res, nil
+		}
+		return cfg.startPlanning(dir, projectDir, mcpDir, st, dryRun)
+
 	case buildPlanning, buildBuilding:
 		if cfg.runInFlight(slug, st.Feature) {
 			res.Action = "busy"
@@ -735,6 +772,83 @@ func (cfg buildConfig) tick(slug string, dryRun bool) (tickResult, error) {
 
 	res.Action = "none"
 	res.Detail = "unknown status " + st.Status
+	return res, nil
+}
+
+// startPlanning kicks off the planning run — the first thing that actually
+// happens to a build, and the point at which the idea it came from locks.
+//
+// Two paths reach it: straight from /build/start when the user took the default
+// "now", and from a tick once a scheduled build's start time has come round. One
+// function either way, so a build that waited until Saturday morning behaves
+// exactly like one started on the spot.
+func (cfg buildConfig) startPlanning(dir, projectDir, mcpDir string, st buildState, dryRun bool) (tickResult, error) {
+	res := tickResult{Status: st.Status, Feature: 0}
+
+	idea, ok := loadCard(mcpDir, st.Source, st.CardID)
+	if !ok {
+		// The idea was deleted between scheduling the build and its start time —
+		// only possible on the scheduled path, since the handler loads the card
+		// first. There is nothing to write a plan from, so stop and say why rather
+		// than run the planner against an empty prompt.
+		res.Action = "halt"
+		res.Detail = "the idea card is gone"
+		res.Status = buildHalted
+		if dryRun {
+			return res, nil
+		}
+		return res, cfg.halt(dir, mcpDir, st, "the idea was deleted before the build started")
+	}
+
+	prompt := planningPrompt(idea.Title, idea.Body)
+	res.Action = "plan"
+	res.Status = buildPlanning
+	res.Detail = "writing the project plan"
+	if dryRun {
+		res.Prompt = prompt
+		return res, nil
+	}
+
+	wasScheduled := st.StartAt != ""
+	st.Status = buildPlanning
+	st.Feature = 0
+	st.LastRun = nowStamp()
+	st.StartAt = "" // spent — from here on the build's own status says where it is
+	st.Note = ""
+	if err := saveBuild(dir, st); err != nil {
+		return res, err
+	}
+	if wasScheduled {
+		// Collapse the scheduled pair down to the recurring line: the exact-minute
+		// one has done its job, and a date-pinned crontab entry left behind would
+		// come back around in a year. Logged rather than fatal — the build has
+		// started, and refusing to advance it now would be the worse outcome.
+		if err := installCronLine(cfg.cron, st.Slug, cronLineFor(cfg.root, st.Slug)); err != nil {
+			log.Printf("build: %s cron: %v", st.Slug, err)
+		}
+	}
+	stampIdeaCard(mcpDir, st)
+
+	sess, created := cfg.reg.findOrCreateForRun(buildSessionID(st.Slug, 0), sessionKindBuild)
+	if !created {
+		res.Action = "busy"
+		res.Detail = "the planning run is already in flight"
+		return res, nil
+	}
+	logPath := filepath.Join(dir, "runs", "plan.log")
+	startBuildProcess(sess, projectDir, logPath, prompt, cfg.runTimeout, func(err error) {
+		if err != nil {
+			log.Printf("build: %s planning run: %v", st.Slug, err)
+		}
+		// The plan is on disk (or isn't) — either way the next tick decides what to
+		// do about it, using exactly the same recovery path a server restart would
+		// take. One code path, exercised on every build.
+		if r, terr := cfg.tick(st.Slug, false); terr != nil {
+			log.Printf("build: %s post-planning tick: %v", st.Slug, terr)
+		} else {
+			log.Printf("build: %s post-planning tick: %s (%s)", st.Slug, r.Action, r.Detail)
+		}
+	})
 	return res, nil
 }
 
@@ -881,7 +995,18 @@ type buildStartRequest struct {
 	CardID  string `json:"card_id"`
 	Source  string `json:"source"`
 	Project string `json:"project"`
+	// StartAt is when the user wants the build to begin, RFC3339. Empty — or a time
+	// that has effectively already arrived — means now, which is the default the
+	// phone offers and by far the common case.
+	StartAt string `json:"start_at,omitempty"`
 }
+
+// buildStartSoon is how near a requested start has to be to simply be "now". It
+// absorbs the clock skew between a phone and the server, and stops a start time
+// a few seconds out from pinning a crontab entry that would fire before the
+// crontab write had even settled. A constant, not a flag: it's a property of
+// clocks, not of the machine this runs on.
+const buildStartSoon = 90 * time.Second
 
 // buildResponse is the shape /build, /build/start and /build/stop all answer with,
 // so the phone parses one thing.
@@ -927,6 +1052,19 @@ func buildStartHandler(token string, cfg buildConfig) http.HandlerFunc {
 			http.Error(w, "bad card", http.StatusBadRequest)
 			return
 		}
+		// A start far enough ahead to be worth waiting for; anything nearer takes the
+		// immediate path. Zero means "now".
+		var startAt time.Time
+		if s := strings.TrimSpace(req.StartAt); s != "" {
+			t, perr := time.Parse(time.RFC3339, s)
+			if perr != nil {
+				http.Error(w, "bad start time", http.StatusBadRequest)
+				return
+			}
+			if time.Until(t) > buildStartSoon {
+				startAt = t
+			}
+		}
 		mcpDir, _ := rootDirs(cfg.root)
 		idea, ok := loadCard(mcpDir, req.Source, req.CardID)
 		if !ok {
@@ -954,6 +1092,15 @@ func buildStartHandler(token string, cfg buildConfig) http.HandlerFunc {
 			Feature: 0,
 			LastRun: nowStamp(),
 		}
+		if !startAt.IsZero() {
+			// Nothing has run and nothing will until the start time, so the build
+			// waits in `scheduled` with no last-run to report. The idea stays the
+			// user's to keep editing until then — the plan hasn't been written from
+			// it yet.
+			st.Status = buildScheduled
+			st.StartAt = startAt.UTC().Format(time.RFC3339)
+			st.LastRun = ""
+		}
 		if err := saveBuild(dir, st); err != nil {
 			http.Error(w, "could not create the build", http.StatusInternalServerError)
 			return
@@ -970,33 +1117,34 @@ func buildStartHandler(token string, cfg buildConfig) http.HandlerFunc {
 			http.Error(w, "could not write the tick driver: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if err := installCronLine(cfg.cron, slug, cronLineFor(cfg.root, slug)); err != nil {
-			// Without cron this build would never advance past its first gate, and
-			// the user would have no way to tell. Fail loudly and leave the folder.
+		// A scheduled build takes its exact-minute line and the recurring one; an
+		// immediate build just the recurring one.
+		line := cronLineFor(cfg.root, slug)
+		if !startAt.IsZero() {
+			line = scheduledCronLines(cfg.root, slug, startAt)
+		}
+		if err := installCronLine(cfg.cron, slug, line); err != nil {
+			// Without cron this build would never advance past its first gate — and a
+			// scheduled one would never start at all — with no way for the user to
+			// tell. Fail loudly and leave the folder.
 			http.Error(w, "could not schedule the build: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		stampIdeaCard(mcpDir, st)
 
-		sess, created := cfg.reg.findOrCreateForRun(buildSessionID(slug, 0), sessionKindBuild)
-		if created {
-			logPath := filepath.Join(dir, "runs", "plan.log")
-			startBuildProcess(sess, projectDir, logPath, planningPrompt(idea.Title, idea.Body), cfg.runTimeout, func(err error) {
-				if err != nil {
-					log.Printf("build: %s planning run: %v", slug, err)
-				}
-				// The plan is on disk (or isn't) — either way the next tick decides
-				// what to do about it, using exactly the same recovery path a server
-				// restart would take. One code path, exercised on every build.
-				if res, terr := cfg.tick(slug, false); terr != nil {
-					log.Printf("build: %s post-planning tick: %v", slug, terr)
-				} else {
-					log.Printf("build: %s post-planning tick: %s (%s)", slug, res.Action, res.Detail)
-				}
-			})
+		if startAt.IsZero() {
+			if _, perr := cfg.startPlanning(dir, projectDir, mcpDir, st, false); perr != nil {
+				log.Printf("build: %s planning: %v", slug, perr)
+			}
+			// startPlanning owns the transition, so answer with what it left on disk
+			// rather than the state assembled up here.
+			if fresh, ok := loadBuild(dir); ok {
+				st = fresh
+			}
+			log.Printf("build: started %s from card %s/%s", slug, req.Source, req.CardID)
+		} else {
+			log.Printf("build: scheduled %s from card %s/%s for %s", slug, req.Source, req.CardID, st.StartAt)
 		}
-
-		log.Printf("build: started %s from card %s/%s", slug, req.Source, req.CardID)
 		writeJSON(w, cfg.response(slug, st))
 	}
 }

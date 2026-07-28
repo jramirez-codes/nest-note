@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Scheduled builds are driven by real entries in the user's crontab, and the Go
@@ -141,6 +142,36 @@ func tickDriverPath(root string) string {
 func cronLineFor(root, slug string) string {
 	return fmt.Sprintf("*/%d * * * * %s %s  %s",
 		buildTickMinutes, tickDriverPath(root), slug, cronMarker(slug))
+}
+
+// cronLineAt fires a single tick at one specific minute — the start time the user
+// picked for a build. Day-of-week stays "*" because the day-of-month and month
+// fields already pin the date; in cron the two day fields are OR'd, so anything
+// but "*" there would fire on every matching weekday as well.
+//
+// The time is converted to the machine's local zone: the phone sends an instant
+// (UTC), and cron reads wall clock.
+func cronLineAt(root, slug string, at time.Time) string {
+	t := at.Local()
+	return fmt.Sprintf("%d %d %d %d * %s %s  %s",
+		t.Minute(), t.Hour(), t.Day(), int(t.Month()), tickDriverPath(root), slug, cronMarker(slug))
+}
+
+// scheduledCronLines is what a build waiting for its start time installs: the
+// exact-minute line, plus the ordinary recurring line underneath it.
+//
+// Both, not either. The exact line is what makes "build it at 9pm" start at 9pm
+// rather than up to buildTickMinutes late. The recurring line is the safety net,
+// and it is the one that matters in practice: a one-shot date in the crontab
+// repeats *annually*, so if the server happened to be down for that single minute
+// the build would sit scheduled until next year. With the recurring line there,
+// the next ordinary tick starts it instead, and the first tick to run rewrites
+// this pair down to the recurring line alone.
+//
+// One string, two lines — installCronLine appends it as written, and both carry
+// the marker, so removing the slug still takes the pair out together.
+func scheduledCronLines(root, slug string, at time.Time) string {
+	return cronLineAt(root, slug, at) + "\n" + cronLineFor(root, slug)
 }
 
 // tickDriverTmpl is the driver: read the token, poke the server, exit. That is

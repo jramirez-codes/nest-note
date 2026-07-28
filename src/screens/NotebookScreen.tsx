@@ -29,6 +29,7 @@ import type { PaperPagerHandle } from '../components/notepage/PaperPager';
 import ServerStatusDot from '../components/ServerStatusDot';
 import VirtualNotePage from '../components/notepage/VirtualNotePage';
 import { NotebookBadge, type NotebookOption } from '../components/dashboard/NotebookSwitcher';
+import { type DashboardView } from '../components/dashboard/DashboardViewToggle';
 import { useArchivedPages } from '../hooks/useArchivedPages';
 import { useCardDrag } from '../hooks/useCardDrag';
 import { useDictation } from '../hooks/useDictation';
@@ -115,6 +116,11 @@ export default function NotebookScreen() {
   // (its pages pulled from the server). The switcher on the dashboard sets this.
   const [selectedNb, setSelectedNb] = useState(SANDBOX_KEY);
   const subjectSlug = selectedNb === SANDBOX_KEY ? null : selectedNb;
+
+  // Which half of the dashboard is showing. Lives here rather than in DashboardPage
+  // because the toggle that swaps it sits in the header, which is chrome outside the
+  // pager. Organize is the default: it's the inbox you come back to work through.
+  const [dashboardView, setDashboardView] = useState<DashboardView>('organize');
   // Lazily-loaded pages for the selected subject notebook (empty in Sandbox mode). `ensure`
   // pulls a page + its neighbours; `bodies` holds whatever has been fetched so far.
   const { stubs, bodies, ensure, loading } = useNotebookPages(subjectSlug);
@@ -452,6 +458,7 @@ export default function NotebookScreen() {
             onLift={drag.lift}
             onRelease={drag.release}
             selectedNb={selectedNb}
+            view={dashboardView}
             archivedPages={archive.archived}
             onOpenArchived={archive.openArchived}
             onOpenIdea={setOpenIdea}
@@ -493,6 +500,7 @@ export default function NotebookScreen() {
       width,
       bodies,
       selectedNb,
+      dashboardView,
       subjectSlug,
       updateNoteContent,
       updateNoteTitle,
@@ -620,6 +628,8 @@ export default function NotebookScreen() {
                 totalPages={contentCount}
                 onDelete={deleteNote}
                 onCreateNote={handleCreate}
+                dashboardView={dashboardView}
+                onDashboardViewChange={setDashboardView}
                 readOnlyTitle={currentVirtual ? currentVirtual.title : undefined}
               />
             </View>

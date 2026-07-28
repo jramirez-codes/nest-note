@@ -16,7 +16,15 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronLeft, CircleStop, Hammer, Lightbulb, ListChecks, Undo2 } from 'lucide-react-native';
+import {
+  CalendarClock,
+  ChevronLeft,
+  CircleStop,
+  Hammer,
+  Lightbulb,
+  ListChecks,
+  Undo2,
+} from 'lucide-react-native';
 import { mocha } from '../../theme/catppuccin';
 import { useTheme } from '../../theme/colors';
 import { useKeyboardHeight } from '../../hooks/useKeyboardHeight';
@@ -24,15 +32,17 @@ import type { Note } from '../../types/note';
 import { fetchCard, type DashboardCard } from '../../server/controllers/aiController';
 import {
   buildIsLive,
+  buildLocksIdea,
   cardBuild,
   fetchBuild,
   planMarkdown,
   startBuild,
+  startLabel,
   stopBuild,
   type BuildInfo,
 } from '../../server/controllers/buildApi';
 import * as ideaChat from '../../server/ideaChat';
-import { prio } from '../dashboard/cardModel';
+import BuildScheduleDialog from '../modals/BuildScheduleDialog';
 import ConfirmDialog from '../modals/ConfirmDialog';
 import CardComposer from './CardComposer';
 import IdeaChatCard, { DEFAULT_CARD_HEIGHT, MIN_CARD_HEIGHT } from './IdeaChatCard';
@@ -62,7 +72,7 @@ const noop = () => {};
  * identical to reopening an archived page. The body — the "## Problem / ## Idea /
  * ## Project plan / ## Next steps" template — renders through the very same
  * NotePage editor the pad uses, so the Markdown looks exactly as it does on an
- * archived page. The header carries the kind, title, priority, and the idea's tags.
+ * archived page. The header carries the kind, the title, and the idea's tags.
  *
  * The page is read-only to the *user* (ideas are server cards authored by Claude —
  * no caret, no edits, nothing to persist), but it isn't a dead end: the composer
@@ -96,7 +106,6 @@ export default function IdeaPageOverlay({
   // This sheet is a Modal — its own window on Android — so nothing lifts the
   // composer off the keyboard by itself. Pad the sheet by the keyboard instead.
   const keyboard = useKeyboardHeight();
-  const p = prio(card.priority);
   const tags = card.tags ?? [];
   const kindLabel = card.kind === 'idea' ? 'Idea' : card.kind;
 
@@ -235,8 +244,17 @@ export default function IdeaPageOverlay({
   // survives an app restart and is the same on every device.
   const stamp = cardBuild(card);
   const buildSlug = stamp?.slug ?? null;
-  const locked = buildIsLive(stamp?.status);
+  const hasBuild = buildIsLive(stamp?.status);
+  // Holding the idea and locking it are different: a build the user scheduled for
+  // later hasn't planned anything from the idea's wording yet, so it stays theirs
+  // to work on right up to the start time.
+  const locked = buildLocksIdea(stamp?.status);
   const [build, setBuild] = useState<BuildInfo | null>(null);
+  // The build hasn't started yet, and when it will. Both prefer the fetched build
+  // but fall back to the card's stamp, so the page reads right on the first frame
+  // after opening rather than only once /build has answered.
+  const waiting = (build?.status ?? stamp?.status) === 'scheduled';
+  const startsAt = build?.start_at ?? stamp?.start_at;
   const [showPlan, setShowPlan] = useState(false);
   const [confirmStart, setConfirmStart] = useState(false);
   const [confirmStop, setConfirmStop] = useState(false);
@@ -322,7 +340,7 @@ export default function IdeaPageOverlay({
           }}>
           {/* The page header — title row, tags, and Claude's side of the chat. */}
           <View>
-            {/* Back to the dashboard, the kind + title, and a priority pill. */}
+            {/* Back to the dashboard, and the kind + title. */}
             <View className="flex-row items-center px-3 pb-2 pt-1">
               <Pressable
                 onPress={onClose}
@@ -349,9 +367,10 @@ export default function IdeaPageOverlay({
               </Pressable>
 
               {/* Hand the idea to the server as a project it builds on a
-                  schedule. Confirmed first: this starts an unattended agent, so
-                  it should feel deliberate. */}
-              {!build && !locked && (
+                  schedule. Never straight through: this arms an unattended agent,
+                  so the dialog behind it says what that means and takes the one
+                  decision worth taking first — when it should start. */}
+              {!build && !hasBuild && (
                 <Pressable
                   onPress={() => setConfirmStart(true)}
                   disabled={buildBusy}
@@ -386,7 +405,7 @@ export default function IdeaPageOverlay({
                 </Pressable>
               )}
 
-              {build ? (
+              {build && (
                 <Pressable
                   onPress={() => setShowPlan(v => !v)}
                   hitSlop={6}
@@ -399,13 +418,6 @@ export default function IdeaPageOverlay({
                     <ListChecks size={18} color={colors.accent} strokeWidth={2} />
                   )}
                 </Pressable>
-              ) : (
-                <View className={`flex-row items-center gap-1 rounded-full px-2.5 py-1 ${p.chip}`}>
-                  <View className={`h-1.5 w-1.5 rounded-full ${p.pip}`} />
-                  <Text className={`text-[10px] font-bold uppercase tracking-wide ${p.text}`}>
-                    {p.label}
-                  </Text>
-                </View>
               )}
             </View>
 
@@ -514,6 +526,22 @@ export default function IdeaPageOverlay({
             </View>
           ) : (
             <View className="border-t border-border px-3 pb-1">
+              {/* Scheduled, not started. The chat stays open on purpose — the plan
+                  is written from whatever the idea says at that point — so the
+                  strip says when the deadline is rather than that it's shut. */}
+              {waiting && (
+                <View className="flex-row items-center gap-2 px-1 pb-1 pt-2">
+                  <CalendarClock size={13} color={colors.accent} strokeWidth={2.5} />
+                  <Text className="flex-1 text-[11px] leading-4 text-faint">
+                    Building starts{' '}
+                    <Text className="font-semibold text-muted">
+                      {startLabel(startsAt ? new Date(startsAt) : null)}
+                    </Text>
+                    . Keep working on the idea until then — the plan is written from what it
+                    says at that point.
+                  </Text>
+                </View>
+              )}
               <CardComposer
                 value={thread.draft}
                 onChangeText={text => ideaChat.setDraft(id, text)}
@@ -550,16 +578,18 @@ export default function IdeaPageOverlay({
         />
 
         {/* Starting a build hands the idea to an agent that will run unattended
-            on a schedule, so it's spelled out rather than confirmed with a shrug. */}
-        <ConfirmDialog
+            on a schedule, so it's spelled out rather than confirmed with a shrug —
+            and picking when it starts is part of the same decision. The default is
+            now, so the quick path is still one tap. */}
+        <BuildScheduleDialog
           visible={confirmStart}
-          title="Build this idea"
-          message={`Turn “${card.title}” into a project the server builds for you? It writes a plan, then builds one feature every so often — pausing each time for you to check the result on the dashboard before it goes on. The idea itself locks while that runs.`}
-          confirmLabel="Build it"
-          cancelLabel="Cancel"
-          onConfirm={() => {
+          title={card.title}
+          busy={buildBusy}
+          onConfirm={startAt => {
             setConfirmStart(false);
-            runBuildAction(() => startBuild(card, card.title), true);
+            // Only show the plan straight away for a build that's actually about
+            // to write one; a scheduled build would flip to an empty page.
+            runBuildAction(() => startBuild(card, card.title, startAt), startAt === null);
           }}
           onCancel={() => setConfirmStart(false)}
         />
@@ -568,10 +598,14 @@ export default function IdeaPageOverlay({
             and a run in flight is killed. The code it already wrote is kept. */}
         <ConfirmDialog
           visible={confirmStop}
-          title="Stop this build"
-          message="Stop building this project? The schedule is removed and anything running now is cancelled. The project folder and every feature already built stay where they are, and the idea unlocks."
+          title={waiting ? 'Cancel this build' : 'Stop this build'}
+          message={
+            waiting
+              ? 'Call this build off before it starts? The crontab entry is removed and nothing ever runs — no plan is written and no code is generated. The empty project folder stays where it is.'
+              : 'Stop building this project? The schedule is removed and anything running now is cancelled. The project folder and every feature already built stay where they are, and the idea unlocks.'
+          }
           confirmLabel="Stop"
-          cancelLabel="Keep building"
+          cancelLabel={waiting ? 'Leave it scheduled' : 'Keep building'}
           destructive
           onConfirm={() => {
             setConfirmStop(false);

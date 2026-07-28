@@ -92,3 +92,6 @@ yarn-error.log
 !.yarn/releases
 !.yarn/sdks
 !.yarn/versions
+
+# Claude Code local settings (machine-specific paths)
+.claude/settings.local.json

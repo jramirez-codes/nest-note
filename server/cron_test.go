@@ -3,8 +3,10 @@ package main
 import (
 	"errors"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeCrontab stands in for the crontab binary. Every test in this package uses
@@ -156,6 +158,58 @@ func TestCronLineShape(t *testing.T) {
 	}
 	if strings.Contains(line, "\n") {
 		t.Fatalf("cron line must be a single line, got %q", line)
+	}
+}
+
+// TestCronLineAtShape pins the one-shot line a scheduled build installs: the
+// minute, hour, day-of-month and month of the chosen start, and day-of-week left
+// as "*". Cron ORs the two day fields, so anything but "*" there would quietly
+// turn a single start into a weekly one.
+func TestCronLineAtShape(t *testing.T) {
+	at := time.Date(2026, time.August, 3, 21, 5, 0, 0, time.Local)
+	line := cronLineAt("/srv/nest", "greenhouse", at)
+	if got, want := strings.Fields(line)[:5], []string{"5", "21", "3", "8", "*"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("schedule fields = %v, want %v (line %q)", got, want, line)
+	}
+	for _, want := range []string{"/srv/nest/bin/nestnote-tick greenhouse", "# nestnote:greenhouse"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("cron line %q is missing %q", line, want)
+		}
+	}
+}
+
+// TestScheduledCronLinesInstallAndRemoveTogether: a scheduled build puts TWO
+// lines in the crontab — the exact minute, and the ordinary recurring line as the
+// safety net for a server that was down for that minute. Both must carry the
+// marker, or removing the build would leave a date-pinned entry behind to fire
+// again in a year.
+func TestScheduledCronLinesInstallAndRemoveTogether(t *testing.T) {
+	f := &fakeCrontab{content: "0 9 * * * /usr/bin/backup  # mine\n"}
+	at := time.Date(2026, time.August, 3, 21, 5, 0, 0, time.Local)
+	if err := installCronLine(f.io(), "greenhouse", scheduledCronLines("/srv/nest", "greenhouse", at)); err != nil {
+		t.Fatal(err)
+	}
+	var managed int
+	for _, l := range strings.Split(strings.TrimSpace(f.content), "\n") {
+		if strings.Contains(l, cronMarker("greenhouse")) {
+			managed++
+		}
+	}
+	if managed != 2 {
+		t.Fatalf("want the exact-minute line and the recurring one, got %d:\n%s", managed, f.content)
+	}
+	if !strings.Contains(f.content, "*/30 * * * *") || !strings.Contains(f.content, "5 21 3 8 *") {
+		t.Fatalf("both schedules should be present:\n%s", f.content)
+	}
+
+	if err := removeCronLine(f.io(), "greenhouse"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(f.content, cronMarker("greenhouse")) {
+		t.Fatalf("removing the build left one of its lines behind:\n%s", f.content)
+	}
+	if !strings.Contains(f.content, "# mine") {
+		t.Fatalf("the user's own line was eaten:\n%s", f.content)
 	}
 }
 

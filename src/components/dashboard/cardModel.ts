@@ -209,6 +209,12 @@ export function formatCalendarDay(key: string): string {
 // rows' worth of fixed height (like Tasks), so it never resizes page to page.
 export const ARCHIVE_PAGE_SIZE = 3;
 
+// Idea / build-step rows per page in the Ideas view's card pagers. One short of
+// TASK_PAGE_SIZE — the Ideas view stacks two of these lists (ideas and build steps),
+// each with a tag bar and a pager of its own, so they're kept shorter than the Tasks
+// list that has the top of its view to itself.
+export const IDEA_PAGE_SIZE = 4;
+
 /**
  * The notebook picker's entries, derived from dashboard state: the Sandbox (the local
  * pad, which rolls up every notebook's open tasks) first, then one per subject server,
@@ -246,25 +252,6 @@ export function buildNotebookOptions(
 // from the notes (see the orchestrator's upsert_card guidance). Shared here so the
 // preview extractor and any future editor seed reference one definition.
 export const IDEA_TEMPLATE = '## Problem\n\n## Idea\n\n## Project plan\n\n## Next steps\n';
-
-// The idea grid's per-card preview: the first non-empty line under the body's
-// "## Problem" section, so a card surfaces the problem it frames rather than the
-// literal "## Problem" heading. Falls back to the first non-heading, non-empty line
-// (for an idea that skipped the template), or '' when there's nothing to show.
-export function ideaPreview(body?: string): string {
-  if (!body) return '';
-  const lines = body.split('\n');
-  const problemAt = lines.findIndex(l => /^#{1,6}\s+problem\b/i.test(l.trim()));
-  if (problemAt >= 0) {
-    for (let i = problemAt + 1; i < lines.length; i++) {
-      const t = lines[i].trim();
-      if (/^#{1,6}\s/.test(t)) break; // hit the next section without any content
-      if (t) return t.replace(/^[-*+]\s+/, '');
-    }
-  }
-  const first = lines.map(l => l.trim()).find(l => l && !/^#{1,6}\s/.test(l));
-  return first ? first.replace(/^[-*+]\s+/, '') : '';
-}
 
 // Roll a set of cards up into their distinct tags with a count each, ordered most-used
 // first then alphabetically — the source for the Ideas section's tag filter bar. Tags

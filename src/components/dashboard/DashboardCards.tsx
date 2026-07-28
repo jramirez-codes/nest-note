@@ -15,12 +15,14 @@ import {
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
 import {
+  CalendarClock,
   CalendarDays,
   Check,
   ChevronLeft,
   ChevronRight,
   Clock,
   FileText,
+  Hammer,
   Lightbulb,
   Search,
   Sparkles,
@@ -30,8 +32,9 @@ import {
 import type { ThemeColors } from '../../theme/colors';
 import type { DashboardCard } from '../../server/controllers/aiController';
 import type { CardDragShared } from '../../hooks/useCardDrag';
+import { buildIsLive, cardBuild } from '../../server/controllers/buildApi';
 import { deriveTitle, type Note } from '../../types/note';
-import { ideaPreview, prio, relDate, type TaskView } from './cardModel';
+import { prio, relDate, type TaskView } from './cardModel';
 
 // The bundle of drag callbacks + shared values every draggable card needs. The
 // dashboard builds this once and spreads it onto each card / section, so the wiring
@@ -249,6 +252,12 @@ export function TaskViewToggle({
   );
 }
 
+// Past this many pages the numbered buttons stop fitting on one line and the pager
+// wraps into a block of digits, which would defeat the fixed height of the card it
+// sits under. Beyond it the numbers collapse to a "3 / 24" readout between the same
+// two arrows — a one-card-per-page section (Ideas, Builds) reaches that easily.
+const MAX_NUMBERED_PAGES = 7;
+
 // A compact prev/next-with-numbers pager for a paginated card list. Renders nothing
 // for a single page so callers can mount it unconditionally — unless `alwaysShow`
 // is set, in which case a single page still shows "1" with both arrows disabled.
@@ -277,22 +286,32 @@ export function Pager({
         }`}>
         <ChevronLeft size={16} color={colors.muted} strokeWidth={2.5} />
       </Pressable>
-      {Array.from({ length: pageCount }, (_, i) => i).map(i => {
-        const active = i === page;
-        return (
-          <Pressable
-            key={i}
-            onPress={() => onChange(i)}
-            hitSlop={6}
-            className={`h-7 min-w-[28px] items-center justify-center rounded-full px-1.5 ${
-              active ? 'bg-accent' : 'active:bg-background'
-            }`}>
-            <Text className={`text-xs font-bold ${active ? 'text-background' : 'text-muted'}`}>
-              {i + 1}
-            </Text>
-          </Pressable>
-        );
-      })}
+      {pageCount <= MAX_NUMBERED_PAGES ? (
+        Array.from({ length: pageCount }, (_, i) => i).map(i => {
+          const active = i === page;
+          return (
+            <Pressable
+              key={i}
+              onPress={() => onChange(i)}
+              hitSlop={6}
+              className={`h-7 min-w-[28px] items-center justify-center rounded-full px-1.5 ${
+                active ? 'bg-accent' : 'active:bg-background'
+              }`}>
+              <Text className={`text-xs font-bold ${active ? 'text-background' : 'text-muted'}`}>
+                {i + 1}
+              </Text>
+            </Pressable>
+          );
+        })
+      ) : (
+        // Too many pages to number: the position reads as text instead. Not a button
+        // — with no page numbers to hit, the arrows are the only way through.
+        <View className="h-7 items-center justify-center rounded-full bg-surface1/60 px-3">
+          <Text className="text-xs font-bold text-muted">
+            {page + 1} / {pageCount}
+          </Text>
+        </View>
+      )}
       <Pressable
         disabled={page === pageCount - 1}
         onPress={() => onChange(page + 1)}
@@ -433,68 +452,76 @@ export function ArchivedList({
   );
 }
 
-// The generic card, used for ideas and — as the graceful fallback — any unknown
-// kind. A compact grid tile: a tinted priority chip carrying the kind glyph, a small
-// priority label, the title, a preview line drawn from the body's "## Problem"
-// section, and the card's tags as chips (overflow collapses to "+n"). Tapping it
-// opens the card as a full read-only page (see onPress → IdeaPageOverlay). This is
-// what makes the engine scalable: emit a novel kind and it renders.
-export function IdeaCard({
+// One row in a card list — ideas, build steps and, as the graceful fallback, any
+// unknown kind. Deliberately the same shape as TaskRow: a single line of fixed
+// height (so the list box can measure one row and hold five of them), reading as
+// the kind's glyph in a priority-tinted chip (a hammer once a build has the idea on
+// a schedule), the title, the due date when the card carries one, and a chevron for
+// the page behind it. The chip's colour IS the
+// priority — the tint and glyph say it without spending a row's width on the word
+// "Urgent". Tapping the row opens the card as a full read-only page (see onPress →
+// IdeaPageOverlay), which is where the body, tags and untruncated title live. This
+// is what makes the engine scalable: emit a novel kind and it renders.
+export function IdeaRow({
   card,
+  colors,
   dimmed,
   onPress,
 }: {
   card: DashboardCard;
+  colors: ThemeColors;
   dimmed: boolean;
   onPress?: (card: DashboardCard) => void;
 }) {
   const p = prio(card.priority);
-  const KindIcon = card.kind === 'idea' ? Lightbulb : Sparkles;
-  const preview = ideaPreview(card.body);
-  const tags = card.tags ?? [];
-  const shown = tags.slice(0, 2);
-  const extra = tags.length - shown.length;
+  // An idea with a build on the schedule stops being just a thought, so the row
+  // swaps its lightbulb for a hammer — the same signal the idea page's lock reads,
+  // taken off the card's own payload rather than any local state. Only a *live*
+  // build counts: done and halted release the schedule, and the idea goes back to
+  // being an idea. Build-step cards are stamped too, but with no status, so they
+  // keep their own glyph.
+  //
+  // A build the user scheduled for later gets a clock instead: it holds the idea,
+  // but nothing is being built yet, and a hammer would say otherwise.
+  const status = cardBuild(card)?.status;
+  const building = buildIsLive(status);
+  const scheduled = status === 'scheduled';
+  const KindIcon = scheduled
+    ? CalendarClock
+    : building
+    ? Hammer
+    : card.kind === 'idea'
+    ? Lightbulb
+    : Sparkles;
+  const due = card.date ? relDate(card.date) : null;
+  const overdue = !!due?.overdue;
   return (
+    // collapsable={false} keeps Android from view-flattening this node away, which
+    // the wrapping GestureDetector needs to attach the drag gesture reliably.
     <Pressable
       onPress={() => onPress?.(card)}
       disabled={!onPress}
       accessibilityRole="button"
-      accessibilityLabel={`Open idea: ${card.title}`}
+      accessibilityLabel={`Open ${card.kind === 'idea' ? 'idea' : card.kind}${
+        scheduled ? ', build scheduled' : building ? ', building' : ''
+      }: ${card.title}`}
       collapsable={false}
-      className={`mb-3 w-[48%] overflow-hidden rounded-2xl border border-surface1 bg-surface p-3 ${
+      className={`flex-row items-center gap-3 px-3 py-3 active:bg-background ${
         dimmed ? 'opacity-30' : ''
       }`}>
-      {/* Top row: priority as a tinted glyph chip (left) + a small label (right). */}
-      <View className="flex-row items-center justify-between">
-        <View className={`h-8 w-8 items-center justify-center rounded-xl ${p.chip}`}>
-          <KindIcon size={16} color={p.hex} strokeWidth={2} />
-        </View>
-        <View className="flex-row items-center gap-1">
-          <View className={`h-1.5 w-1.5 rounded-full ${p.pip}`} />
-          <Text className={`text-[9px] font-bold uppercase tracking-wide ${p.text}`}>{p.label}</Text>
-        </View>
+      <View className={`h-7 w-7 items-center justify-center rounded-lg ${p.chip}`}>
+        <KindIcon size={15} color={p.hex} strokeWidth={2} />
       </View>
-      <Text className="mt-2 text-sm font-semibold text-text" numberOfLines={2}>
+      <Text numberOfLines={1} className="flex-1 text-sm text-text">
         {card.title}
       </Text>
-      {!!preview && (
-        <Text className="mt-1 text-xs text-muted" numberOfLines={2}>
-          {preview}
-        </Text>
-      )}
-      {tags.length > 0 && (
-        <View className="mt-2 flex-row flex-wrap items-center gap-1.5">
-          {shown.map(t => (
-            <View
-              key={t}
-              className="flex-row items-center rounded-full bg-surface1/60 px-2 py-0.5">
-              <Text className="text-[10px] font-bold text-faint">#</Text>
-              <Text className="text-[10px] font-semibold text-muted">{t}</Text>
-            </View>
-          ))}
-          {extra > 0 && <Text className="text-[10px] font-semibold text-faint">+{extra}</Text>}
+      {due && (
+        <View className="flex-row items-center gap-1">
+          <Clock size={12} color={overdue ? colors.danger : colors.muted} strokeWidth={2} />
+          <Text className={`text-xs ${overdue ? 'text-danger' : 'text-muted'}`}>{due.label}</Text>
         </View>
       )}
+      <ChevronRight size={15} color={colors.faint} strokeWidth={2.5} />
     </Pressable>
   );
 }

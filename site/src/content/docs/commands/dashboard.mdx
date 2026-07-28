@@ -12,6 +12,32 @@ import Requires from '../../../components/Requires.astro';
 The dashboard is the app's second surface — where pages go once they're no
 longer the thing you're actively writing. These three commands feed it.
 
+## Organize and Ideas
+
+The dashboard shows one of two views at a time, chosen with the pair of bubbles
+at the left of the pad header:
+
+- **Organize** — the pile you work through: [Tasks](#reviewing-tasks), the
+  [Archived](#archive) pages, and the filing decisions Claude proposes (subject
+  merges and notebook reorganizations).
+- **Ideas** — the material you grow: [idea cards](#working-on-an-idea) and the
+  `build-step` cards a [scheduled build](../server/builds.mdx) files for you to
+  check.
+
+**Organize** is what you land on. The toggle sits in the header, so it stays put
+while the dashboard scrolls, and it's independent of the notebook badge beside
+it — switching views keeps you in the notebook you were in, and switching
+notebooks keeps the view you were in.
+
+Each kind in this view gets its own **paged list** — ideas in one, `build-step`
+cards in another — built like the [Tasks](#reviewing-tasks) card: four rows at a
+time in a card that holds its height, with a pager beneath. The view stays the same
+size however many of each pile up.
+
+Ideas is also where an unfamiliar card kind surfaces: it's the generic card list, so
+a kind the app has never seen appears there as a paged list of its own rather than
+being dropped.
+
 ## `/ingest`
 
 > File this page into your dashboard — sorts notes into subjects, then clears
@@ -38,7 +64,8 @@ Needs a paired server — the sorting is a model decision, not a rule.
 ```
 
 Takes the page out of the swipe order without deleting it. Archived pages live
-in the dashboard's Archived section and can be reopened at any time.
+in the Archived section of the dashboard's [Organize
+view](#organize-and-ideas) and can be reopened at any time.
 
 :::note[On-device]
 Archiving is a local state change. No server required.
@@ -68,10 +95,27 @@ Requires `-root`, like `/talk`, since it works through the orchestrator.
 ## Working on an idea
 
 Ideas — the cards Claude files with `kind="idea"` rather than `kind="task"` —
-get their own section under Tasks, with a tag-filter bar above the grid. Tap a
-card to open the idea as a **full-screen page**: the same editor the pad uses,
-rendering the card's `## Problem` / `## Idea` / `## Project plan` /
-`## Next steps` body, with its tags and priority in the header.
+fill the **Ideas** view, with a tag-filter bar above them. They read as a **list of
+rows, four to a page**, in the same fixed-height card the [Tasks](#reviewing-tasks)
+list uses: the arrows and page numbers step through your ideas without the section
+ever growing taller. Past seven pages the numbers give way to a **3 / 24** readout
+between the arrows. The pager stays put down to a single idea — the card is the same
+shape however few you have.
+
+Each row is the idea's title, its due date if it has one, and a tinted glyph on the
+left. That glyph carries the priority in its colour — red for urgent down to grey for
+low, the same scale the task pips use — so the row spends its width on the title
+rather than on the word *Urgent*. Its shape says what the card is: a lightbulb for an
+idea, a **clock** while a [build](../server/builds.mdx) is waiting for its start time,
+a **hammer** once that build has the idea in hand, and sparkles for a build step.
+Tapping a tag in the bar narrows the list to the
+ideas carrying it (and jumps back to the first page); tapping it again, or **All**,
+clears the filter.
+
+Tap a row to open that idea as a **full-screen page**, which is where the body and
+the full title live: the same editor the pad uses, rendering the card's
+`## Problem` / `## Idea` / `## Project plan` / `## Next steps` body, with its tags
+in the header.
 
 You can't type into that body — Claude owns it. You change it by **talking to
 Claude about it**, in the composer pinned to the bottom of the page:
@@ -123,10 +167,12 @@ Two things change on this page while a build is live:
 - **The header becomes a toggle.** Tapping it swaps the body between the idea and
   the build's plan, with each feature's state beside it.
 
-Each finished feature files a **`build-step`** card here asking you to check it.
-Completing that card starts the next feature; dismissing it stops the build. It's
-an ordinary card — the same complete and dismiss buttons every other card has do
-the whole job.
+Each finished feature files a **`build-step`** card in the **Ideas** view, in its
+own paged list under the ideas themselves — same four rows to a page, same pager, so
+a long build's steps fill pages rather than a growing wall of cards. Completing the
+step waiting on you starts the next feature; dismissing it stops the build. It's an
+ordinary card — the same complete and dismiss buttons every other card has do the
+whole job.
 
 Claude's side of the conversation appears in a card in the **page header**,
 under the tags — usually a question it needs you to answer before it can go
@@ -165,8 +211,9 @@ Needs a paired server — it's a conversation with Claude.
 
 ## Reviewing tasks
 
-The task cards these commands file land in the dashboard's **Tasks** section — a
-fixed-height, internally-scrolling card with a pager beneath. Tap a task's
+The task cards these commands file land in the **Tasks** section of the
+[Organize view](#organize-and-ideas) — a fixed-height, internally-scrolling card
+with a pager beneath. Tap a task's
 checkbox to complete it (it stays in place rather than jumping), or tap its title
 to expand the full text.
 
