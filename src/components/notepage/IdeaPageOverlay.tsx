@@ -25,7 +25,9 @@ import {
   Hammer,
   Lightbulb,
   ListChecks,
+  MessageSquare,
   Undo2,
+  X,
 } from 'lucide-react-native';
 import { mocha } from '../../theme/catppuccin';
 import { useTheme } from '../../theme/colors';
@@ -85,6 +87,13 @@ const noop = () => {};
  * as the conversation firms the idea up into a project plan. Claude's side of that
  * conversation — typically a question it needs answered — sits in a card in the
  * header, under the tags.
+ *
+ * A build scheduled for later gets a card of its own above that one, same width and
+ * same surface, saying when it starts. The square button down its right edge swaps
+ * the card underneath
+ * between Claude's replies and the two things that can still be done about the start
+ * time, so the schedule is edited where it's stated rather than from a control in
+ * the title row.
  *
  * Because those writes are Claude's and not the user's, they're undoable: once a
  * turn has changed the card, an Undo control appears over the body's top-right
@@ -270,6 +279,17 @@ export default function IdeaPageOverlay({
   const [confirmStop, setConfirmStop] = useState(false);
   const [buildBusy, setBuildBusy] = useState(false);
   const [buildError, setBuildError] = useState<string | null>(null);
+  // Which surface the header's card slot is showing: Claude's replies, or what
+  // can still be done about the start time. One slot, because both are about the
+  // same idea and the header can only give the height to one of them.
+  const [editingSchedule, setEditingSchedule] = useState(false);
+  const scheduleOpen = waiting && editingSchedule;
+  const showReplies = hasReplies && !scheduleOpen;
+  // Nothing left to edit once the build starts (or is called off), so the slot
+  // goes back to the conversation rather than stranding dead controls in it.
+  useEffect(() => {
+    if (!waiting) setEditingSchedule(false);
+  }, [waiting]);
 
   const refreshBuild = useCallback(async () => {
     if (!buildSlug) return;
@@ -398,9 +418,12 @@ export default function IdeaPageOverlay({
                 </Pressable>
               )}
 
-              {/* A live build can be called off from here — the same place it was
-                  started. The project and everything built so far stay put. */}
-              {build && buildIsLive(build.status) && (
+              {/* A build that has begun can be called off from here — the same
+                  place it was started. The project and everything built so far
+                  stay put. A build still waiting for its start time isn't stopped
+                  from up here: calling it off is one of the two things the
+                  schedule card below offers, next to the time it would undo. */}
+              {build && buildIsLive(build.status) && !waiting && (
                 <Pressable
                   onPress={() => setConfirmStop(true)}
                   disabled={buildBusy}
@@ -445,20 +468,116 @@ export default function IdeaPageOverlay({
               </View>
             )}
 
-            {/* Claude's side of the conversation, under the tags, as tall as the
-                header's edge has been dragged. */}
-            {hasReplies && (
-              <Animated.View style={[styles.cardWrap, cardStyle]}>
-                <IdeaChatCard turns={thread.turns} onDelete={() => ideaChat.clear(id)} />
-              </Animated.View>
+            {/* Scheduled, not started. The idea stays open for editing — the plan
+                is written from whatever it says at the start time — so this states
+                the deadline rather than that the page is shut. It's a card the
+                width of Claude's replies below it, and the same surface, because
+                it's the same kind of thing: the header telling you where this idea
+                stands. */}
+            {waiting && (
+              <View
+                style={styles.cardWrap}
+                className="flex-row items-stretch gap-2 rounded-xl border border-surface1 bg-surface/40 p-1.5">
+                <View className="flex-1 flex-row items-center gap-2 py-0.5 pl-1.5">
+                  <CalendarClock size={13} color={colors.accent} strokeWidth={2.5} />
+                  <Text className="flex-1 text-[11px] leading-4 text-faint">
+                    Building starts{' '}
+                    <Text className="font-semibold text-muted">
+                      {startLabel(startsAt ? new Date(startsAt) : null)}
+                    </Text>
+                    . Keep working on the idea until then — the plan is written from what it says
+                    at that point.
+                  </Text>
+                </View>
+
+                {/* The only way to that start time: it swaps the card below between
+                    Claude's replies and what can still be done about the schedule.
+                    A column of the card rather than a badge floating in its corner —
+                    stretched to the text's full height and kept square off that, so
+                    it reads as the card's own button, with the card's padding the
+                    only gap around it. */}
+                <Pressable
+                  onPress={() => setEditingSchedule(v => !v)}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    scheduleOpen
+                      ? hasReplies
+                        ? "Show Claude's replies"
+                        : 'Close the schedule'
+                      : 'Change when this build starts'
+                  }
+                  accessibilityState={{ expanded: scheduleOpen }}
+                  className="aspect-square items-center justify-center self-stretch rounded-lg border border-surface1 bg-surface active:opacity-70">
+                  {!scheduleOpen ? (
+                    <CalendarCog size={13} color={colors.accent} strokeWidth={2.5} />
+                  ) : hasReplies ? (
+                    <MessageSquare size={13} color={colors.faint} strokeWidth={2.5} />
+                  ) : (
+                    <X size={13} color={colors.faint} strokeWidth={2.5} />
+                  )}
+                </Pressable>
+              </View>
+            )}
+
+            {/* The header's one resizable slot. Either what can still be done
+                about the start time, or — the rest of the time — Claude's side of
+                the conversation, as tall as the header's edge has been dragged. */}
+            {scheduleOpen ? (
+              <View
+                style={styles.cardWrap}
+                className="rounded-xl border border-surface1 bg-surface/40 px-3 py-2">
+                <Text className="text-[11px] leading-4 text-faint">
+                  Nothing has run yet, so that time is still a choice rather than a commitment.
+                  Move it, or call the build off — either way the idea stays yours.
+                </Text>
+                {/* Cancelling goes through the same stop dialog the header used to
+                    offer, which already words the not-yet-started case. */}
+                <View className="mt-2 flex-row justify-center gap-1.5">
+                  <Pressable
+                    onPress={() => setScheduling('edit')}
+                    disabled={buildBusy || !slug}
+                    hitSlop={6}
+                    accessibilityRole="button"
+                    accessibilityLabel="Change when this build starts"
+                    accessibilityState={{ disabled: buildBusy || !slug }}
+                    className={`flex-row items-center gap-1.5 rounded-full border border-surface1 bg-surface px-2.5 py-1 active:opacity-70 ${
+                      buildBusy || !slug ? 'opacity-50' : ''
+                    }`}>
+                    <CalendarCog size={13} color={colors.accent} strokeWidth={2.5} />
+                    <Text className="text-[11px] font-semibold text-muted">Reschedule</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => setConfirmStop(true)}
+                    disabled={buildBusy || !slug}
+                    hitSlop={6}
+                    accessibilityRole="button"
+                    accessibilityLabel="Cancel this build before it starts"
+                    accessibilityState={{ disabled: buildBusy || !slug }}
+                    className={`flex-row items-center gap-1.5 rounded-full border border-surface1 bg-surface px-2.5 py-1 active:opacity-70 ${
+                      buildBusy || !slug ? 'opacity-50' : ''
+                    }`}>
+                    <CalendarX size={13} color={colors.faint} strokeWidth={2.5} />
+                    <Text className="text-[11px] font-semibold text-muted">Cancel build</Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : (
+              hasReplies && (
+                <Animated.View style={[styles.cardWrap, cardStyle]}>
+                  <IdeaChatCard turns={thread.turns} onDelete={() => ideaChat.clear(id)} />
+                </Animated.View>
+              )
             )}
           </View>
 
           {/* The header's bottom edge: the same hairline the dashboard's cards use,
               so the idea's body below reads as its own surface. With replies in the
               header it's also the grab handle that sizes them — drag it down for
-              more of the conversation, up for more of the idea. */}
-          {hasReplies ? (
+              more of the conversation, up for more of the idea. The schedule card
+              has a size of its own, so while it holds the slot the edge is just
+              the hairline again. */}
+          {showReplies ? (
             <GestureDetector gesture={resize}>
               <Animated.View
                 accessibilityRole="adjustable"
@@ -536,57 +655,6 @@ export default function IdeaPageOverlay({
             </View>
           ) : (
             <View className="border-t border-border px-3 pb-1">
-              {/* Scheduled, not started. The chat stays open on purpose — the plan
-                  is written from whatever the idea says at that point — so the
-                  strip says when the deadline is rather than that it's shut. */}
-              {waiting && (
-                <View className="px-1 pb-1 pt-2">
-                  <View className="flex-row items-center gap-2">
-                    <CalendarClock size={13} color={colors.accent} strokeWidth={2.5} />
-                    <Text className="flex-1 text-[11px] leading-4 text-faint">
-                      Building starts{' '}
-                      <Text className="font-semibold text-muted">
-                        {startLabel(startsAt ? new Date(startsAt) : null)}
-                      </Text>
-                      . Keep working on the idea until then — the plan is written from what it
-                      says at that point.
-                    </Text>
-                  </View>
-                  {/* Nothing has run yet, so that time is still a choice rather
-                      than a commitment — both ways out of it sit under the line
-                      that states it, where the user is already reading. Cancelling
-                      goes through the header's stop dialog, which already words
-                      the not-yet-started case. */}
-                  <View className="mt-1.5 flex-row justify-end gap-1.5">
-                    <Pressable
-                      onPress={() => setScheduling('edit')}
-                      disabled={buildBusy || !slug}
-                      hitSlop={6}
-                      accessibilityRole="button"
-                      accessibilityLabel="Change when this build starts"
-                      accessibilityState={{ disabled: buildBusy || !slug }}
-                      className={`flex-row items-center gap-1.5 rounded-full border border-surface1 bg-surface px-2.5 py-1 active:opacity-70 ${
-                        buildBusy || !slug ? 'opacity-50' : ''
-                      }`}>
-                      <CalendarCog size={13} color={colors.accent} strokeWidth={2.5} />
-                      <Text className="text-[11px] font-semibold text-muted">Reschedule</Text>
-                    </Pressable>
-                    <Pressable
-                      onPress={() => setConfirmStop(true)}
-                      disabled={buildBusy || !slug}
-                      hitSlop={6}
-                      accessibilityRole="button"
-                      accessibilityLabel="Cancel this build before it starts"
-                      accessibilityState={{ disabled: buildBusy || !slug }}
-                      className={`flex-row items-center gap-1.5 rounded-full border border-surface1 bg-surface px-2.5 py-1 active:opacity-70 ${
-                        buildBusy || !slug ? 'opacity-50' : ''
-                      }`}>
-                      <CalendarX size={13} color={colors.faint} strokeWidth={2.5} />
-                      <Text className="text-[11px] font-semibold text-muted">Cancel build</Text>
-                    </Pressable>
-                  </View>
-                </View>
-              )}
               <CardComposer
                 value={thread.draft}
                 onChangeText={text => ideaChat.setDraft(id, text)}
