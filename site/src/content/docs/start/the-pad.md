@@ -17,6 +17,36 @@ entire navigation model.
 Because a page is the unit of everything, there's no concept of "opening" or
 "closing" a note. Edits persist to SQLite as you type.
 
+## Switching notebooks
+
+The pill in the header names the notebook you're flipping through. Tap it and a
+dropdown lists every notebook with a search field on top, so typing narrows the
+list as you go. Picking one re-scopes the whole pad — its pages, and the tasks
+and cards on the [dashboard](../commands/dashboard.mdx#reviewing-tasks).
+
+Two of the entries aren't subjects:
+
+- **Sandbox** is the local pad itself — the notes on this device, plus a
+  dashboard rolling up every notebook's open tasks.
+- Every other entry is a **subject notebook** living on the companion server;
+  its pages are pulled down read-only.
+
+### Deleting a notebook
+
+**Swipe a subject's row left** in that dropdown and a red **Delete** action
+appears behind it. Tapping it asks you to confirm by name first — deleting a
+notebook removes its pages, its notes and its cards from the companion server
+for good, and there is no undo. Cancelling leaves everything as it was.
+
+Any [scheduled build](../server/builds.mdx#stopping-one) that notebook started
+stops with it, crontab entry and all — a build only ever existed to turn one of
+those cards into a project. The project folder and the code already built stay
+where they are.
+
+Sandbox can't be deleted this way: it's the local pad, not something on the
+server. Delete the notebook you're currently reading and the pad falls back to
+Sandbox.
+
 ## Live-preview markdown
 
 Text is edited with [CodeMirror 6](https://codemirror.net/) running inside a

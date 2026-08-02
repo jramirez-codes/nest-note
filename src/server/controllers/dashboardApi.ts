@@ -329,6 +329,15 @@ export async function applyReorgAction(
 }
 
 /**
+ * Delete a whole notebook on the server — its pages, its cards, and any pending
+ * proposals that named it. Irreversible, so callers confirm with the user first
+ * (the switcher's swipe-to-delete does). Throws when the slug is already gone.
+ */
+export async function deleteNotebook(slug: string): Promise<void> {
+  return postAction({ action: 'delete-notebook', subject: slug });
+}
+
+/**
  * Toggle a task card's done state (`done` chooses complete vs. uncomplete).
  * `source` (the card's notebook slug) lets the server jump straight to the file
  * instead of scanning every notebook; it's optional and safely omitted when unknown.

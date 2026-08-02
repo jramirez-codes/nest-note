@@ -626,3 +626,44 @@ func (cfg Config) StopForCard(mcpDir, source, cardID string) {
 		log.Printf("build: stopped %s — %s", st.Slug, why)
 	}
 }
+
+// StopForNotebook stops every live build a notebook was driving, and is what
+// deleting that notebook from the switcher calls. A build only ever existed to
+// turn one of the notebook's idea cards into a project, and deleting the notebook
+// takes that card — along with the step card the build files its state onto — with
+// it, so a build left running would tick a crontab line behind an idea nobody can
+// reach any more.
+//
+// This is StopForCard's other door: same scan, and the same reason for scanning
+// build.json rather than trusting the stamp on a card, but keyed on the owning
+// notebook instead of one card id. So a notebook is one directory read however
+// many cards it held, and — since the cards are about to be deleted wholesale —
+// there is no id left to key on anyway.
+//
+// Deliberately not gated on cfg.Enabled, for the same reason StopForCard isn't: a
+// server that can no longer start builds still has to clean up the crontab lines
+// an earlier run armed.
+func (cfg Config) StopForNotebook(mcpDir, source string) {
+	if cfg.ProjectsBase == "" || source == "" {
+		return
+	}
+	entries, err := os.ReadDir(cfg.ProjectsBase)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		dir := cfg.buildDir(e.Name())
+		st, ok := loadState(dir)
+		if !ok || st.Source != source || !activeStatus(st.Status) {
+			continue
+		}
+		if err := cfg.stop(dir, mcpDir, st, "its notebook was deleted from the dashboard"); err != nil {
+			log.Printf("build: %s stop after its notebook was deleted: %v", st.Slug, err)
+			continue
+		}
+		log.Printf("build: stopped %s — its notebook %s was deleted", st.Slug, source)
+	}
+}

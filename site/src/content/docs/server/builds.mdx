@@ -282,7 +282,7 @@ time — its own, or its next feature's — is ended with the button behind the
 schedule card's calendar button instead: the same action, kept next to the time it
 undoes.
 
-Three other things stop a build. Each takes effect on the spot — the crontab entry
+Four other things stop a build. Each takes effect on the spot — the crontab entry
 is gone by the time the request answers, not at the next tick.
 
 - **Rejecting a feature** — dismissing its `build-step` card — stops the build the
@@ -295,6 +295,11 @@ is gone by the time the request answers, not at the next tick.
   can't leave one running. (Only up to the first step card: after that the idea has
   moved onto the build and there is no idea row left to throw away. The server
   retiring it that way is *not* a deletion in this sense and stops nothing.)
+- **Deleting the notebook** the idea lived in — [swiping it away in the notebook
+  switcher](../start/the-pad.md#deleting-a-notebook) — stops every build that
+  notebook started. Deleting a notebook takes its idea and `build-step` cards with
+  it in one go, so the same rule applies for the same reason, and it applies to all
+  of them at once rather than card by card.
 - **Deleting the project** with [`/delete`](../commands/projects.mdx) removes its
   crontab entry too, so a deleted project can't leave cron firing at a folder
   that no longer exists.

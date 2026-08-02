@@ -51,6 +51,7 @@ export {
   setCachedDashboardState,
   applyDashboardAction,
   applyReorgAction,
+  deleteNotebook,
   completeCard,
   dismissCard,
   cardContent,
