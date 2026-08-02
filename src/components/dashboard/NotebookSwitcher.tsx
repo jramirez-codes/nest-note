@@ -9,6 +9,13 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import Animated, {
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import {
   Check,
   ChevronDown,
@@ -16,8 +23,11 @@ import {
   Layers,
   PenLine,
   Search,
+  Trash2,
   type LucideIcon,
 } from 'lucide-react-native';
+import ConfirmDialog from '../modals/ConfirmDialog';
+import { mocha } from '../../theme/catppuccin';
 import type { ThemeColors } from '../../theme/colors';
 
 /**
@@ -66,6 +76,92 @@ function HighlightedLabel({ text, query }: { text: string; query: string }) {
   );
 }
 
+// How far a notebook row slides aside to park its delete action open, and how far
+// the finger has to travel before releasing commits to that open position (rather
+// than springing the row shut again).
+const DELETE_WIDTH = 88;
+const OPEN_THRESHOLD = DELETE_WIDTH / 2;
+
+/**
+ * Wraps one notebook row in a horizontal swipe that reveals a Delete action parked
+ * behind its right edge — the same drag-to-destroy idiom the dashboard's cards use,
+ * scaled down to a list row. The row itself is opaque and rides over the action, so
+ * the action only shows as far as the row has been pulled aside.
+ *
+ * `open` is owned by the list rather than the row, so only one row can sit open at a
+ * time and closing the menu resets them all; a swipe past the threshold asks for it
+ * via `onOpenChange`, which takes `rowKey` so one stable callback serves every row —
+ * the list re-renders on every keystroke in its search field, and a fresh callback
+ * per render would rebuild these gestures out from under a finger. The gesture only
+ * activates after a deliberate horizontal drag (and fails outright on a vertical one)
+ * so scrolling the notebook list still works.
+ */
+function SwipeableRow({
+  rowKey,
+  open,
+  onOpenChange,
+  onDelete,
+  children,
+}: {
+  rowKey: string;
+  open: boolean;
+  onOpenChange: (key: string, open: boolean) => void;
+  onDelete: () => void;
+  children: React.ReactNode;
+}) {
+  const tx = useSharedValue(0);
+  const start = useSharedValue(0);
+
+  // The list closes rows by flipping `open`; follow it here so a row shut by a tap
+  // elsewhere animates back rather than snapping.
+  useEffect(() => {
+    if (!open) tx.value = withTiming(0, { duration: 160 });
+  }, [open, tx]);
+
+  const pan = useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetX([-12, 12])
+        .failOffsetY([-10, 10])
+        .onStart(() => {
+          start.value = tx.value;
+        })
+        .onUpdate(e => {
+          // Left-only: the row never pulls past its resting position to the right.
+          tx.value = Math.min(0, Math.max(-DELETE_WIDTH, start.value + e.translationX));
+        })
+        .onEnd(() => {
+          const shouldOpen = tx.value < -OPEN_THRESHOLD;
+          tx.value = withTiming(shouldOpen ? -DELETE_WIDTH : 0, { duration: 160 });
+          runOnJS(onOpenChange)(rowKey, shouldOpen);
+        }),
+    [onOpenChange, rowKey, start, tx],
+  );
+
+  const rowStyle = useAnimatedStyle(() => ({ transform: [{ translateX: tx.value }] }));
+
+  return (
+    <View collapsable={false}>
+      {/* Parked behind the row, revealed only by the row sliding off it. */}
+      <View style={styles.deleteAction} className="absolute bottom-0 right-0 top-0">
+        <Pressable
+          onPress={onDelete}
+          accessibilityRole="button"
+          accessibilityLabel="Delete notebook"
+          className="h-full w-full items-center justify-center bg-danger active:opacity-80">
+          <Trash2 size={16} color={mocha.crust} strokeWidth={2} />
+          <Text className="mt-0.5 text-[10px] font-semibold text-crust">Delete</Text>
+        </Pressable>
+      </View>
+      <GestureDetector gesture={pan}>
+        <Animated.View style={rowStyle} className="bg-surface">
+          {children}
+        </Animated.View>
+      </GestureDetector>
+    </View>
+  );
+}
+
 /** Where the dropdown card floats — absolute window coords, computed by each trigger. */
 interface MenuPosition {
   top: number;
@@ -80,6 +176,11 @@ interface MenuPosition {
  * (window coords) inside a transparent Modal so it floats over scrolling content and
  * gets native keyboard handling. Positioning is left to the caller so the same menu
  * can hang left-aligned under a wide control or right-aligned under a small badge.
+ *
+ * When `onDelete` is given, subject notebooks swipe aside to reveal a delete action;
+ * confirming it hands the slug up and closes the menu (the list the caller passed is
+ * stale the moment a notebook is gone). The Sandbox and the "all" roll-up never
+ * swipe — neither is a thing on the server that could be deleted.
  */
 function NotebookDropdown({
   visible,
@@ -88,6 +189,7 @@ function NotebookDropdown({
   options,
   selected,
   onSelect,
+  onDelete,
   colors,
 }: {
   visible: boolean;
@@ -96,12 +198,24 @@ function NotebookDropdown({
   options: NotebookOption[];
   selected: NotebookOption;
   onSelect: (key: string) => void;
+  onDelete?: (key: string) => void;
   colors: ThemeColors;
 }) {
   const [query, setQuery] = useState('');
-  // Start each opening from a clean search, so a stale query never hides the list.
+  // The one row currently swiped open, if any, and the notebook awaiting a delete
+  // confirmation. Both are owned here so a second swipe closes the first row, and
+  // so the confirm dialog can name the notebook it's about to destroy.
+  const [swipedKey, setSwipedKey] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<NotebookOption | null>(null);
+
+  // Start each opening from a clean search and no row left hanging open, so neither
+  // a stale query nor a half-swiped row carries over from last time.
   useEffect(() => {
-    if (visible) setQuery('');
+    if (visible) {
+      setQuery('');
+      setSwipedKey(null);
+      setPendingDelete(null);
+    }
   }, [visible]);
 
   const filtered = useMemo(() => {
@@ -110,77 +224,121 @@ function NotebookDropdown({
     return options.filter(o => o.label.toLowerCase().includes(q));
   }, [options, query]);
 
+  // Swiping a row open closes whichever one was open before; swiping it shut clears
+  // the selection outright, so at most one delete action is ever armed.
+  const handleRowOpenChange = useCallback((key: string, isOpen: boolean) => {
+    setSwipedKey(isOpen ? key : null);
+  }, []);
+
+  const confirmDelete = useCallback(() => {
+    if (pendingDelete) onDelete?.(pendingDelete.key);
+    setPendingDelete(null);
+    setSwipedKey(null);
+    onClose();
+  }, [onClose, onDelete, pendingDelete]);
+
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
-      {/* Full-screen scrim: a tap anywhere outside the card dismisses the menu. */}
-      <Pressable className="flex-1" style={styles.scrim} onPress={onClose}>
-        <View
-          style={[
-            styles.dropdownAnchor,
-            { top: position.top, left: position.left, width: position.width },
-          ]}>
-          {/* Inner Pressable swallows taps so they don't reach the scrim. */}
-          <Pressable
-            onPress={() => {}}
-            className="overflow-hidden rounded-2xl border border-surface1 bg-surface">
-            {/* Search field. */}
-            <View className="flex-row items-center gap-2 border-b border-surface1 px-3 py-2.5">
-              <Search size={16} color={colors.faint} strokeWidth={2} />
-              <TextInput
-                autoFocus
-                value={query}
-                onChangeText={setQuery}
-                placeholder="Search notebooks…"
-                placeholderTextColor={colors.faint}
-                className="flex-1 p-0 text-sm text-text"
-                returnKeyType="done"
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-            </View>
-            <ScrollView
-              keyboardShouldPersistTaps="handled"
-              style={styles.dropdownList}
-              contentContainerStyle={styles.dropdownListContent}>
-              {filtered.length === 0 ? (
-                <Text className="px-3 py-4 text-center text-sm text-muted">No notebooks match.</Text>
-              ) : (
-                filtered.map(o => {
-                  const RowIcon = nbIcon(o.kind);
-                  const isSel = o.key === selected.key;
-                  return (
-                    <Pressable
-                      key={o.key}
-                      onPress={() => {
-                        onSelect(o.key);
-                        onClose();
-                      }}
-                      className="flex-row items-center px-2.5 py-2.5 active:bg-surface1/50">
-                      <View className="mr-3 h-8 w-8 items-center justify-center rounded-lg bg-background">
-                        <RowIcon size={16} color={isSel ? colors.accent : colors.muted} strokeWidth={2} />
-                      </View>
-                      <View className="flex-1 pr-2">
-                        <HighlightedLabel text={o.label} query={query} />
-                        <Text className="mt-0.5 text-xs text-muted" numberOfLines={1}>
-                          {nbSubtitle(o)}
-                        </Text>
-                      </View>
-                      {o.kind === 'local' && (
-                        <View className="mr-2 rounded-full bg-overlay0/30 px-2 py-0.5">
-                          <Text className="text-[10px] font-semibold uppercase tracking-wide text-muted">
-                            Local
+      {/* A Modal is its own view hierarchy, so the app's root gesture handler doesn't
+          reach into it — the rows' swipe needs one in here. */}
+      <GestureHandlerRootView style={styles.root}>
+        {/* Full-screen scrim: a tap anywhere outside the card dismisses the menu. */}
+        <Pressable className="flex-1" style={styles.scrim} onPress={onClose}>
+          <View
+            style={[
+              styles.dropdownAnchor,
+              { top: position.top, left: position.left, width: position.width },
+            ]}>
+            {/* Inner Pressable swallows taps so they don't reach the scrim. */}
+            <Pressable
+              onPress={() => {}}
+              className="overflow-hidden rounded-2xl border border-surface1 bg-surface">
+              {/* Search field. */}
+              <View className="flex-row items-center gap-2 border-b border-surface1 px-3 py-2.5">
+                <Search size={16} color={colors.faint} strokeWidth={2} />
+                <TextInput
+                  autoFocus
+                  value={query}
+                  onChangeText={setQuery}
+                  placeholder="Search notebooks…"
+                  placeholderTextColor={colors.faint}
+                  className="flex-1 p-0 text-sm text-text"
+                  returnKeyType="done"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </View>
+              <ScrollView
+                keyboardShouldPersistTaps="handled"
+                style={styles.dropdownList}
+                contentContainerStyle={styles.dropdownListContent}>
+                {filtered.length === 0 ? (
+                  <Text className="px-3 py-4 text-center text-sm text-muted">No notebooks match.</Text>
+                ) : (
+                  filtered.map(o => {
+                    const RowIcon = nbIcon(o.kind);
+                    const isSel = o.key === selected.key;
+                    const deletable = !!onDelete && o.kind === 'server';
+                    const row = (
+                      <Pressable
+                        onPress={() => {
+                          // A tap on a swiped-open row puts it back rather than
+                          // swapping notebooks — the delete action is still armed.
+                          if (swipedKey === o.key) {
+                            setSwipedKey(null);
+                            return;
+                          }
+                          onSelect(o.key);
+                          onClose();
+                        }}
+                        className="flex-row items-center px-2.5 py-2.5 active:bg-surface1/50">
+                        <View className="mr-3 h-8 w-8 items-center justify-center rounded-lg bg-background">
+                          <RowIcon size={16} color={isSel ? colors.accent : colors.muted} strokeWidth={2} />
+                        </View>
+                        <View className="flex-1 pr-2">
+                          <HighlightedLabel text={o.label} query={query} />
+                          <Text className="mt-0.5 text-xs text-muted" numberOfLines={1}>
+                            {nbSubtitle(o)}
                           </Text>
                         </View>
-                      )}
-                      {isSel && <Check size={16} color={colors.accent} strokeWidth={2.5} />}
-                    </Pressable>
-                  );
-                })
-              )}
-            </ScrollView>
-          </Pressable>
-        </View>
-      </Pressable>
+                        {o.kind === 'local' && (
+                          <View className="mr-2 rounded-full bg-overlay0/30 px-2 py-0.5">
+                            <Text className="text-[10px] font-semibold uppercase tracking-wide text-muted">
+                              Local
+                            </Text>
+                          </View>
+                        )}
+                        {isSel && <Check size={16} color={colors.accent} strokeWidth={2.5} />}
+                      </Pressable>
+                    );
+                    if (!deletable) return <View key={o.key}>{row}</View>;
+                    return (
+                      <SwipeableRow
+                        key={o.key}
+                        rowKey={o.key}
+                        open={swipedKey === o.key}
+                        onOpenChange={handleRowOpenChange}
+                        onDelete={() => setPendingDelete(o)}>
+                        {row}
+                      </SwipeableRow>
+                    );
+                  })
+                )}
+              </ScrollView>
+            </Pressable>
+          </View>
+        </Pressable>
+
+        <ConfirmDialog
+          visible={!!pendingDelete}
+          title="Delete notebook?"
+          message={`“${pendingDelete?.label ?? ''}” and all of its pages, notes and cards will be permanently deleted from the companion server. This can’t be undone.`}
+          confirmLabel="Delete"
+          destructive
+          onConfirm={confirmDelete}
+          onCancel={() => setPendingDelete(null)}
+        />
+      </GestureHandlerRootView>
     </Modal>
   );
 }
@@ -196,11 +354,14 @@ export function NotebookSwitcher({
   options,
   selected,
   onSelect,
+  onDelete,
   colors,
 }: {
   options: NotebookOption[];
   selected: NotebookOption;
   onSelect: (key: string) => void;
+  /** Given, subject rows swipe to reveal a confirmed delete. Omitted, they don't. */
+  onDelete?: (key: string) => void;
   colors: ThemeColors;
 }) {
   const triggerRef = useRef<View>(null);
@@ -247,6 +408,7 @@ export function NotebookSwitcher({
         options={options}
         selected={selected}
         onSelect={onSelect}
+        onDelete={onDelete}
         colors={colors}
       />
     </>
@@ -270,6 +432,7 @@ export function NotebookBadge({
   selected,
   onSelect,
   onOpen,
+  onDelete,
   colors,
 }: {
   options: NotebookOption[];
@@ -277,6 +440,8 @@ export function NotebookBadge({
   onSelect: (key: string) => void;
   /** Called as the menu opens, so the owner can refresh the notebook list first. */
   onOpen?: () => void;
+  /** Given, subject rows swipe to reveal a confirmed delete. Omitted, they don't. */
+  onDelete?: (key: string) => void;
   colors: ThemeColors;
 }) {
   const triggerRef = useRef<View>(null);
@@ -325,6 +490,7 @@ export function NotebookBadge({
         options={options}
         selected={selected}
         onSelect={onSelect}
+        onDelete={onDelete}
         colors={colors}
       />
     </>
@@ -332,8 +498,10 @@ export function NotebookBadge({
 }
 
 const styles = StyleSheet.create({
+  root: { flex: 1 },
   scrim: { backgroundColor: 'rgba(0,0,0,0.45)' },
   dropdownAnchor: { position: 'absolute' },
   dropdownList: { maxHeight: 320 },
   dropdownListContent: { paddingVertical: 4 },
+  deleteAction: { width: DELETE_WIDTH },
 });

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"nestnote/server/internal/build"
 	"nestnote/server/internal/httpx"
@@ -15,14 +16,16 @@ import (
 // suggestion into a real consolidation request (drained by the scaffold on the next
 // run) and clears the suggestion; "dismiss" just clears it. Card verbs
 // ("complete"/"uncomplete", "dismiss" with an id, and "restore", which writes a
-// content snapshot back over a card) mutate a single card file. Subject slugs and
-// card ids are validated (store.ValidSlug) so an action can't write outside the
-// state dir.
+// content snapshot back over a card) mutate a single card file. "delete-notebook"
+// destroys a whole notebook. Subject slugs and card ids are validated
+// (store.ValidSlug) so an action can't write outside the state dir.
 //
 // It takes the build config because dismissing a card is how an idea is deleted
 // and how a built feature is rejected: neither an idea's scheduled build nor a
 // build whose feature was just turned down may outlive the card the user
-// dismissed — see build.Config.StopForCard.
+// dismissed — see build.Config.StopForCard. Deleting a notebook takes every one
+// of its cards at once, so it ends that notebook's builds the same way
+// (build.Config.StopForNotebook).
 func ActionHandler(token, root string, builds build.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !httpx.Guard(w, r, token) {
@@ -141,6 +144,36 @@ func ActionHandler(token, root string, builds build.Config) http.HandlerFunc {
 			os.Remove(reoPath)
 			httpx.WriteOK(w)
 			return
+		case "delete-notebook":
+			// Destroy a whole notebook the user swiped away in the switcher: its
+			// folder (manifest, notes pages and cards), the generated query binary
+			// built from it, and every orchestrator queue keyed on its slug.
+			// store.ValidSlug keeps this inside mcpDir and off the reserved names,
+			// so the orchestrator's own notebook can never be deleted from the phone.
+			if !store.ValidSlug(req.Subject) {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			// A missing notebook is a 404 rather than a silent success, so the phone
+			// can tell "already gone" from "removed" (as /projects/delete does).
+			if !store.IsNotebook(mcpDir, req.Subject) {
+				http.Error(w, "notebook not found", http.StatusNotFound)
+				return
+			}
+			// Before the cards go, not after: a build outliving them would keep a
+			// crontab line ticking behind an idea that no longer exists, and
+			// stopping one settles cards that live in the folder we're about to
+			// remove — doing it afterwards would write them back into a dead
+			// notebook's dir.
+			builds.StopForNotebook(mcpDir, req.Subject)
+			if err := os.RemoveAll(filepath.Join(mcpDir, req.Subject)); err != nil {
+				http.Error(w, "delete failed", http.StatusInternalServerError)
+				return
+			}
+			os.Remove(filepath.Join(mcpDir, "bin", req.Subject)) // its stale binary
+			purgeNotebookState(stateDir, req.Subject)
+			httpx.WriteOK(w)
+			return
 		}
 
 		if !store.ValidSlug(req.Into) {
@@ -180,5 +213,55 @@ func ActionHandler(token, root string, builds build.Config) http.HandlerFunc {
 		}
 
 		httpx.WriteOK(w)
+	}
+}
+
+// purgeNotebookState drops every orchestrator queue entry that names `slug`, so a
+// deleted notebook leaves no proposal behind that would offer to merge, reorganize
+// or consolidate a folder that no longer exists. That means both the files keyed on
+// the slug (suggestions/reorgs/consolidations named <slug>.json) and the references
+// to it inside *other* notebooks' suggestions — a suggestion whose remaining `from`
+// list empties out goes away with it. Best-effort: an unreadable queue is skipped
+// rather than failing the delete, since the notebook itself is already gone.
+func purgeNotebookState(stateDir, slug string) {
+	for _, queue := range []string{"suggestions", "reorgs", "consolidations"} {
+		os.Remove(filepath.Join(stateDir, queue, slug+".json"))
+	}
+
+	sugDir := filepath.Join(stateDir, "suggestions")
+	entries, err := os.ReadDir(sugDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		path := filepath.Join(sugDir, e.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var s Suggestion
+		if json.Unmarshal(data, &s) != nil {
+			continue
+		}
+		kept := make([]string, 0, len(s.From))
+		for _, f := range s.From {
+			if f != slug {
+				kept = append(kept, f)
+			}
+		}
+		if len(kept) == len(s.From) {
+			continue // this suggestion never mentioned the deleted notebook
+		}
+		if len(kept) == 0 {
+			os.Remove(path) // nothing left to merge in
+			continue
+		}
+		s.From = kept
+		if out, err := json.MarshalIndent(s, "", "  "); err == nil {
+			os.WriteFile(path, append(out, '\n'), 0o644)
+		}
 	}
 }

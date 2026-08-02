@@ -17,7 +17,10 @@ import Animated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../theme/colors';
 import DashboardPage from '../components/dashboard/DashboardPage';
-import type { DashboardCard } from '../server/controllers/aiController';
+import {
+  deleteNotebook as deleteNotebookOnServer,
+  type DashboardCard,
+} from '../server/controllers/aiController';
 import DeleteDragOverlay from '../components/modals/DeleteDragOverlay';
 import ArchivedPageOverlay from '../components/notepage/ArchivedPageOverlay';
 import IdeaPageOverlay from '../components/notepage/IdeaPageOverlay';
@@ -346,6 +349,22 @@ export default function NotebookScreen() {
     [selectedNb, pages],
   );
 
+  // Delete a subject notebook the user swiped away in the switcher (already confirmed
+  // there). If the pad is showing that notebook, fall back to Sandbox first so we're
+  // never rendering pages that are about to stop existing; then refresh the list so
+  // the deleted notebook drops out of the badge's menu.
+  const deleteNotebook = useCallback(
+    (key: string) => {
+      if (key === SANDBOX_KEY) return;
+      if (key === selectedNb) selectNotebook(SANDBOX_KEY);
+      fireAndForget(
+        deleteNotebookOnServer(key).then(refreshNbOptions),
+        'delete notebook',
+      );
+    },
+    [selectedNb, selectNotebook, refreshNbOptions],
+  );
+
   const handleCreate = useCallback(() => {
     // A new note belongs to the local pad, so creating one returns to Sandbox.
     setSelectedNb(SANDBOX_KEY);
@@ -608,6 +627,7 @@ export default function NotebookScreen() {
             selected={selectedNbOption}
             onSelect={selectNotebook}
             onOpen={refreshNbOptions}
+            onDelete={deleteNotebook}
             colors={colors}
           />
         </View>
