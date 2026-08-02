@@ -290,8 +290,11 @@ export default function NotebookScreen() {
   }, [dictationDisabled, dictating, stopDictation]);
 
   // The dashboard's voice chat (../server/dashboardChat), read here for the one
-  // part of it the footer owns: with a message waiting, the mic's slot sends it;
-  // while the reply streams, it stops it. Off the dashboard — or under an open
+  // part of it the footer owns: while the reply streams the mic's slot stops it,
+  // and with a message still waiting afterwards it sends it. Stopping the mic is
+  // what normally sends (the card does that), so a message only sits waiting when
+  // it was finished while an earlier turn was still streaming — the send button is
+  // how that one goes once the card is free. Off the dashboard — or under an open
   // idea page, whose own composer has the mic — the slot is just the mic again.
   const chat = useDashboardChat();
   const chatOnScreen = onDashboard && !openIdea;
@@ -743,7 +746,11 @@ export default function NotebookScreen() {
                 until the mic goes live, so the strip is the bare bubbles until
                 you actually start talking. */}
             {chatOnScreen && (
-              <DashboardChatCard dictating={dictating} onDictate={handleDictationRequest} />
+              <DashboardChatCard
+                dictating={dictating}
+                onDictate={handleDictationRequest}
+                scope={subjectSlug}
+              />
             )}
             <PageIndicator
               currentIndex={currentIndex}

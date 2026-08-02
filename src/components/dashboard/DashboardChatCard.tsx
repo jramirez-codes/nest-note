@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Pressable,
   ScrollView,
@@ -16,7 +16,7 @@ import Animated, {
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
-import { Mic, MessageSquare, X } from 'lucide-react-native';
+import { ArrowUp, Eraser, Mic, MessageSquare, X } from 'lucide-react-native';
 import { mocha } from '../../theme/catppuccin';
 import { useTheme } from '../../theme/colors';
 import { useDashboardChat } from '../../hooks/useDashboardChat';
@@ -30,6 +30,10 @@ interface DashboardChatCardProps {
   /** Ask the screen to stop that session — used when this card goes away with the
    *  mic still hot, so the transcript can't start landing in a note instead. */
   onDictate: (on: boolean) => void;
+  /** The notebook the dashboard is filtered to (a subject slug, or null on the
+   *  Sandbox's aggregate view) — where a card the turn creates gets filed. Needed
+   *  here because stopping the mic sends the message from this card. */
+  scope: string | null;
 }
 
 /** The card's height before anyone drags it: enough for a message and a short
@@ -69,6 +73,78 @@ function joinSpeech(base: string, chunk: string): string {
   return /\s$/.test(base) ? base + chunk : base + ' ' + chunk;
 }
 
+/** One word of the message: what it says, where it sits in the draft, and whether
+ *  a line break stands in front of it. */
+interface Word {
+  text: string;
+  /** Index the word starts at in the draft — its identity for a rub, and its key. */
+  start: number;
+  end: number;
+  breaks: boolean;
+}
+
+/**
+ * Split the message into the words the eraser can be dragged over.
+ *
+ * The indices are the point: a rub cuts the words back out of the original
+ * string rather than re-joining the survivors, so whatever the user (or the
+ * footer's New line button) put between two words is still there afterwards.
+ */
+function toWords(text: string): Word[] {
+  const out: Word[] = [];
+  const re = /\S+/g;
+  let m: RegExpExecArray | null;
+  let prevEnd = 0;
+  while ((m = re.exec(text)) !== null) {
+    out.push({
+      text: m[0],
+      start: m.index,
+      end: m.index + m[0].length,
+      breaks: text.slice(prevEnd, m.index).includes('\n'),
+    });
+    prevEnd = m.index + m[0].length;
+  }
+  return out;
+}
+
+/**
+ * Cut the rubbed-out words from the message, and tidy the gaps they leave —
+ * spaces that now sit next to each other collapse to one, and the ends are
+ * trimmed. Without it, rubbing a word out of the middle of a sentence leaves a
+ * visible hole in the box and sends Claude a prompt with a double space in it.
+ */
+function rubOut(text: string, words: Word[], rubbed: ReadonlySet<number>): string {
+  let out = '';
+  let cursor = 0;
+  for (const w of words) {
+    if (!rubbed.has(w.start)) continue;
+    out += text.slice(cursor, w.start);
+    cursor = w.end;
+  }
+  out += text.slice(cursor);
+  return out
+    .replace(/[^\S\n]+/g, ' ')
+    .replace(/ ?\n ?/g, '\n')
+    .trim();
+}
+
+/** The "nothing is rubbed out" set. A stable identity, so resetting to it when
+ *  it's already the state doesn't re-render. */
+const NO_WORDS: ReadonlySet<number> = new Set<number>();
+
+/** A measured rectangle in window coordinates — where a word, or the frame it's
+ *  drawn in, sits on the screen the finger is being dragged across. */
+interface Rect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+function within(r: Rect, x: number, y: number): boolean {
+  return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+}
+
 /**
  * The dashboard's voice chat, as a card over the bubble footer.
  *
@@ -98,10 +174,21 @@ function joinSpeech(base: string, chunk: string): string {
  * recognizer heard you — and it's the only way to catch a mishearing while you're
  * still mid-thought rather than after you've said the whole thing.
  *
- * Stopping the mic turns that transcript into an editable box (same type, same
- * frame, so nothing moves) and hands the footer's mic slot over as the send
- * button. Editing matters for the same reason: fixing one misheard word beats
- * saying the whole message again.
+ * **Stopping the mic sends what was said.** Talking is the whole interaction, so
+ * the tap that ends the sentence is the tap that posts it — a second tap on a
+ * second control to confirm a message the user has just watched land, word by
+ * word, is a step that only ever costs a tap. Getting it wrong is what the
+ * **eraser** in the bottom corner is for, and it corrects at both the sizes a
+ * misspoken instruction goes wrong at: **tap** it and the whole message goes, to
+ * be said again from the top; **drag** it across the transcript and it rubs out
+ * only the words it's pulled over, so one misheard phrase in the middle of a good
+ * sentence doesn't cost the sentence. (A single misheard character is smaller
+ * still — that's the footer's Delete button.)
+ *
+ * The one case where the message doesn't go is a reply still streaming — two
+ * concurrent turns would be two agents writing to the same cards. It stays in an
+ * editable box then (same type, same frame, so nothing moves), and the footer's
+ * mic slot becomes the send button for it once the reply lands.
  *
  * **How much of the dashboard it covers is the user's call.** The strip across
  * the card's top edge is a grab handle: drag it up for more of the conversation,
@@ -115,8 +202,17 @@ function joinSpeech(base: string, chunk: string): string {
  * reclaimed, and how the next question starts Claude fresh rather than threaded
  * through everything already said. Cards Claude has already created or changed are
  * on the dashboard and stay there; the dashboard's own controls take those back.
+ *
+ * That corner is a **send** button while the mic is live, though. Stopping to send
+ * is fine for one instruction, but a run of them shouldn't cost a recogniser
+ * teardown and restart between each — so mid-session the header posts what's been
+ * said and leaves the mic listening for the next one.
  */
-export default function DashboardChatCard({ dictating, onDictate }: DashboardChatCardProps) {
+export default function DashboardChatCard({
+  dictating,
+  onDictate,
+  scope,
+}: DashboardChatCardProps) {
   const colors = useTheme();
   const { draft, turns, running } = useDashboardChat();
   const thread = useRef<ScrollView>(null);
@@ -222,6 +318,11 @@ export default function DashboardChatCard({ dictating, onDictate }: DashboardCha
   // The last value this card put into the store, so a draft it didn't write (the
   // send that emptied the box) can be told apart from an echo of one it did.
   const emitted = useRef(draft);
+  // Set when the message is edited (cleared, or rubbed) with an utterance still
+  // open, to throw the rest of that utterance away. Without it, taking words out
+  // mid-sentence undoes itself: a partial result carries the whole utterance so
+  // far, so the very next one puts back what was just taken.
+  const dropUtterance = useRef(false);
 
   const emit = useCallback((text: string) => {
     emitted.current = text;
@@ -238,15 +339,202 @@ export default function DashboardChatCard({ dictating, onDictate }: DashboardCha
     [emit],
   );
 
+  // Put a different message in the box — the whole of it, as the eraser's two
+  // gestures both do (cleared, or with the rubbed-out words cut from it).
+  //
+  // The sentence in progress goes with it. Partial results carry the whole
+  // utterance so far, so anything rubbed out of one would be written straight back
+  // by its next partial; abandoning it is the only honest outcome, and it's the
+  // same rule for both gestures — what you take out stays out, and you carry on
+  // from a clean sentence.
+  const replaceMessage = useCallback(
+    (next: string) => {
+      if (spanRef.current) dropUtterance.current = true;
+      baseRef.current = next;
+      spanRef.current = '';
+      emit(next);
+    },
+    [emit],
+  );
+
+  // Start the message over. Speech appends to what's already there, so an
+  // instruction that came out wrong can only be fixed by saying it again from the
+  // top — this is what makes that possible without stopping the mic, which would
+  // send the bad one. The conversation above is untouched: it's this prompt being
+  // restarted, not the chat being dismissed (that's the ✕).
+  const clearPrompt = useCallback(() => replaceMessage(''), [replaceMessage]);
+
+  // Post what's been said so far and keep the mic running, so a second
+  // instruction can be started straight after the first without the recogniser
+  // being torn down and re-started between them. The draft emptying is what
+  // re-baselines the dictation (see the effect below) — including abandoning the
+  // sentence in progress, since a partial would otherwise write the message that
+  // just went straight back into the empty box.
+  const sendNow = useCallback(() => dashboardChat.send(scope), [scope]);
+  // Nothing said yet, or a turn already streaming — `send` would no-op, so the
+  // control says so rather than looking broken.
+  const canSend = !!draft.trim() && !running;
+
+  // The message as words, for the eraser to be dragged over. Mirrored into refs
+  // alongside the draft they were cut from, so the gesture's callbacks commit
+  // against the same string the indices below were taken from.
+  const words = useMemo(() => toWords(draft), [draft]);
+  const wordsRef = useRef(words);
+  wordsRef.current = words;
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+
+  // Words the eraser has been dragged across during this rub. They're struck
+  // through where they stand rather than removed on contact: taking them out
+  // under the finger would reflow the line mid-rub, so what the eraser covered
+  // next would be decided by the erasing itself. The release is what cuts them.
+  // The ref leads and the state follows, rather than the ref mirroring the state
+  // at render: the finger can lift in the same JS tick as the last word is marked,
+  // and a ref written on the next render would still be a word behind by the time
+  // the release reads it — the last thing rubbed out would come back.
+  const [rubbed, setRubbed] = useState<ReadonlySet<number>>(NO_WORDS);
+  const rubbedRef = useRef(rubbed);
+  const applyRubbed = useCallback((next: ReadonlySet<number>) => {
+    rubbedRef.current = next;
+    setRubbed(next);
+  }, []);
+
+  // Where each word is on screen, in window coordinates, and whether a rub is
+  // running. The finger's position arrives from the gesture in that same space,
+  // so the hit test never has to unpick the nesting between the card and the
+  // words (card → message → scroller) or the scroll offset inside it.
+  const wordNodes = useRef(new Map<number, React.ComponentRef<typeof Text>>());
+  const wordRects = useRef(new Map<number, Rect>());
+  const rubActive = useRef(false);
+  // The message's visible frame, measured with the words. A long transcript
+  // scrolls inside it, and a word scrolled out of sight still has a position —
+  // one that lands behind the header or the thread above. Without this the eraser
+  // could be dragged up there and take words the user can't see.
+  const messageBox = useRef<View>(null);
+  const boxRect = useRef<Rect | null>(null);
+
+  const measureWords = useCallback(() => {
+    wordRects.current.clear();
+    boxRect.current = null;
+    messageBox.current?.measureInWindow((x, y, w, h) => {
+      boxRect.current = { x, y, w, h };
+    });
+    for (const [key, node] of wordNodes.current) {
+      node.measureInWindow((x, y, w, h) => wordRects.current.set(key, { x, y, w, h }));
+    }
+  }, []);
+
+  // Mark whatever is under the eraser. Point-in-word rather than a radius around
+  // it: a word is a good 20px tall and the lines are stacked, so a disc wide
+  // enough to feel generous would take the line above as well.
+  const rubAt = useCallback(
+    (x: number, y: number) => {
+      const box = boxRect.current;
+      if (!box || !within(box, x, y)) return;
+      const hits: number[] = [];
+      for (const [key, r] of wordRects.current) {
+        if (within(r, x, y)) hits.push(key);
+      }
+      if (hits.length === 0) return;
+      const prev = rubbedRef.current;
+      if (hits.every(k => prev.has(k))) return; // still over what it just took
+      const next = new Set(prev);
+      for (const k of hits) next.add(k);
+      applyRubbed(next);
+    },
+    [applyRubbed],
+  );
+
+  const startRub = useCallback(() => {
+    rubActive.current = true;
+  }, []);
+
+  // The finger lifting is what cuts the struck-through words out. A drag that
+  // reached no word at all (or a tap, which finalizes without ever activating)
+  // leaves the message alone — clearing it wholesale is the tap's job, and doing
+  // it here would turn a rub that missed into a wiped box.
+  const commitRub = useCallback(() => {
+    rubActive.current = false;
+    const marks = rubbedRef.current;
+    if (marks.size === 0) return;
+    applyRubbed(NO_WORDS);
+    replaceMessage(rubOut(draftRef.current, wordsRef.current, marks));
+  }, [applyRubbed, replaceMessage]);
+
+  // The eraser's own travel while it's being dragged, and how far it's picked up.
+  const rubX = useSharedValue(0);
+  const rubY = useSharedValue(0);
+  const lifted = useSharedValue(0);
+
+  const rub = useMemo(
+    () =>
+      Gesture.Pan()
+        // Only where there are laid-out words to rub. With the mic stopped the
+        // message is a TextInput — there the box is edited by typing in it, and
+        // the eraser stays the plain clear-it-all button.
+        .enabled(dictating)
+        // Far enough that a tap meant for "clear the lot" can't become a rub on a
+        // wobble; close enough that a deliberate drag is picked up at once.
+        .minDistance(8)
+        // On touch-down rather than activation, so the rects are in hand by the
+        // time the finger has travelled that 8px and could be over a word.
+        .onBegin(() => runOnJS(measureWords)())
+        .onStart(() => {
+          lifted.value = withTiming(1, { duration: 120 });
+          runOnJS(startRub)();
+        })
+        .onUpdate(e => {
+          rubX.value = e.translationX;
+          rubY.value = e.translationY;
+          runOnJS(rubAt)(e.absoluteX, e.absoluteY);
+        })
+        // Finalize, not end: a rub the system interrupts still commits what the
+        // user watched it take, rather than silently putting the words back.
+        .onFinalize(() => {
+          rubX.value = withTiming(0, { duration: 180 });
+          rubY.value = withTiming(0, { duration: 180 });
+          lifted.value = withTiming(0, { duration: 180 });
+          runOnJS(commitRub)();
+        }),
+    [dictating, measureWords, rubAt, startRub, commitRub, rubX, rubY, lifted],
+  );
+
+  // The eraser follows the finger and swells a little as it's picked up, so it
+  // reads as an object being dragged over the words rather than a button that
+  // came loose. It springs back to its corner on release.
+  const rubStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: rubX.value },
+      { translateY: rubY.value },
+      { scale: 1 + lifted.value * 0.15 },
+    ],
+  }));
+
+  // Speech landing mid-rub moves the words out from under the rects measured at
+  // touch-down. Re-measure on the container's own relayout (once, not once per
+  // word) so what the eraser takes stays what it's actually over.
+  const onWordsLayout = useCallback(() => {
+    if (rubActive.current) measureWords();
+  }, [measureWords]);
+
   // The store changed the draft out from under us — sending, or the ✕ clearing
   // it. Re-baseline, or the next thing dictated would be appended to text that is
   // no longer in the box.
   useEffect(() => {
     if (draft === emitted.current) return;
+    // Emptied from outside with an utterance still open — the ✕ pressed
+    // mid-sentence. The rest of that utterance has to go too, or its next partial
+    // refills the box that was just emptied (see dropUtterance).
+    if (!draft && spanRef.current) dropUtterance.current = true;
     emitted.current = draft;
     baseRef.current = draft;
     spanRef.current = '';
-  }, [draft]);
+    // Marks index into the message that just went (the mic stopping sent it, say,
+    // mid-rub). Against the new one they'd point at whatever words now happen to
+    // sit at those offsets. NO_WORDS is a stable identity, so this is free when
+    // nothing was marked.
+    applyRubbed(NO_WORDS);
+  }, [draft, applyRubbed]);
 
   // Take the transcript for as long as the dashboard is on screen. This is the
   // whole reason the footer mic works here, so it is registered unconditionally —
@@ -255,6 +543,13 @@ export default function DashboardChatCard({ dictating, onDictate }: DashboardCha
     () =>
       registerDictationSink({
         text: (chunk, isFinal) => {
+          // Cleared mid-sentence: swallow the rest of that utterance rather than
+          // let its cumulative partials refill the box. The final closes it, and
+          // whatever is said next starts a new one that lands normally.
+          if (dropUtterance.current) {
+            if (isFinal) dropUtterance.current = false;
+            return;
+          }
           const next = joinSpeech(baseRef.current, chunk);
           if (isFinal) {
             baseRef.current = next;
@@ -265,6 +560,12 @@ export default function DashboardChatCard({ dictating, onDictate }: DashboardCha
           emit(next);
         },
         endUtterance: () => {
+          // The dropped utterance ended without a final (a no-match) — it's over
+          // either way, so stop swallowing and take the next one.
+          if (dropUtterance.current) {
+            dropUtterance.current = false;
+            return;
+          }
           if (!spanRef.current) return;
           baseRef.current = joinSpeech(baseRef.current, spanRef.current);
           spanRef.current = '';
@@ -277,8 +578,8 @@ export default function DashboardChatCard({ dictating, onDictate }: DashboardCha
           emit(next);
         },
         // The footer's recording-mode New line button. It breaks the line rather
-        // than submitting (as a card composer's does): sending is the footer's
-        // send button, and a message dictated in two sentences shouldn't post
+        // than submitting (as a card composer's does): stopping the mic is what
+        // sends here, and a message dictated in two sentences shouldn't post
         // itself halfway through.
         newline: () => {
           const next = joinSpeech(baseRef.current, spanRef.current) + '\n';
@@ -295,8 +596,24 @@ export default function DashboardChatCard({ dictating, onDictate }: DashboardCha
   // whatever page is now in front of them.
   const latestDictate = useRef(onDictate);
   latestDictate.current = onDictate;
+  // Read at the moment the mic stops rather than closed over, so a notebook
+  // swapped mid-sentence files the turn's cards under the one now on screen.
+  const latestScope = useRef(scope);
+  latestScope.current = scope;
   const wasDictating = useRef(false);
+
+  // The mic going off is the send. `send` reads the draft from the store itself,
+  // and no-ops on an empty one (nothing was said) or while a turn is still
+  // streaming — that message stays in the box for the footer's send button, since
+  // a second turn would be a second agent writing to the same cards.
   useEffect(() => {
+    if (wasDictating.current && !dictating) {
+      // A swallowed utterance dies with the session that was speaking it — the
+      // recognizer stops without a final, and left set this would eat the opening
+      // words of the next session instead.
+      dropUtterance.current = false;
+      dashboardChat.send(latestScope.current);
+    }
     wasDictating.current = dictating;
   }, [dictating]);
   useEffect(
@@ -369,14 +686,39 @@ export default function DashboardChatCard({ dictating, onDictate }: DashboardCha
                 ? 'Ready to send'
                 : 'Dashboard chat'}
         </Text>
-        <Pressable
-          onPress={() => dashboardChat.clear()}
-          hitSlop={8}
-          accessibilityRole="button"
-          accessibilityLabel="Dismiss this conversation"
-          className="active:opacity-70">
-          <X size={15} color={colors.faint} strokeWidth={2.5} />
-        </Pressable>
+        {/* While the mic is live this corner sends instead of dismissing. Mid-
+            session the message is the thing being worked on, and posting it
+            without stopping to tap the footer — then tapping again to start
+            talking — is what keeps a run of instructions one continuous session.
+            Throwing the conversation away isn't something you reach for
+            mid-sentence anyway, and the ✕ is back the moment the mic stops.
+
+            A bare icon at the same size either way: a filled chip would read as
+            more of a button, but it would also make the header taller when the
+            mic goes on, and nothing in this card is allowed to move under the
+            finger. Accent is what "live" already means here (the mic, the
+            Listening… label), so the arrow wears it too. */}
+        {dictating ? (
+          <Pressable
+            onPress={sendNow}
+            disabled={!canSend}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Send what's been said so far"
+            accessibilityState={{ disabled: !canSend }}
+            className={canSend ? 'active:opacity-70' : 'opacity-40'}>
+            <ArrowUp size={16} color={colors.accent} strokeWidth={2.5} />
+          </Pressable>
+        ) : (
+          <Pressable
+            onPress={() => dashboardChat.clear()}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Dismiss this conversation"
+            className="active:opacity-70">
+            <X size={15} color={colors.faint} strokeWidth={2.5} />
+          </Pressable>
+        )}
       </View>
 
       {hasTurns && (
@@ -429,8 +771,14 @@ export default function DashboardChatCard({ dictating, onDictate }: DashboardCha
           is just typing and nothing moves under the finger. */}
       {showMessage && (
         <Animated.View
+          ref={messageBox}
           style={messageStyle}
-          className={hasTurns ? 'border-t border-surface1 px-3 py-2.5' : 'px-3 py-2.5'}>
+          // The right gutter is the lane the clear button is pinned in (below).
+          // Reserved whether or not the button is currently in it, so the text
+          // doesn't reflow around a control appearing on the first word spoken.
+          className={
+            hasTurns ? 'border-t border-surface1 py-2.5 pl-3 pr-11' : 'py-2.5 pl-3 pr-11'
+          }>
           {dictating ? (
             <ScrollView
               ref={live}
@@ -441,14 +789,44 @@ export default function DashboardChatCard({ dictating, onDictate }: DashboardCha
               onContentSizeChange={pinLive}
               onLayout={pinLive}
               showsVerticalScrollIndicator={false}>
-              <Text
-                style={styles.text}
-                className={draft ? 'text-text' : 'text-faint'}
-                // Read out as it grows, so the transcript is followable without
-                // watching the screen.
-                accessibilityLiveRegion="polite">
-                {draft || 'Listening — say what you want changed…'}
-              </Text>
+              {draft ? (
+                // A word per Text, wrapped as a row, rather than one Text with the
+                // whole message in it: each word has to be measurable on its own
+                // for the eraser to know what it's over. The type and leading are
+                // the message's, and the gap is a space's width, so it reads as the
+                // sentence it is. Announced as one string — the words are an
+                // implementation detail, not thirty things to swipe through.
+                <View
+                  style={styles.words}
+                  onLayout={onWordsLayout}
+                  accessible
+                  accessibilityLiveRegion="polite"
+                  accessibilityLabel={draft}>
+                  {words.map(w => {
+                    const gone = rubbed.has(w.start);
+                    return (
+                      <React.Fragment key={w.start}>
+                        {/* A full-width nothing, to break the row where the user's
+                            own line break was. */}
+                        {w.breaks && <View style={styles.wordBreak} />}
+                        <Text
+                          ref={node => {
+                            if (node) wordNodes.current.set(w.start, node);
+                            else wordNodes.current.delete(w.start);
+                          }}
+                          style={[styles.text, gone && styles.rubbedWord]}
+                          className={gone ? 'text-faint' : 'text-text'}>
+                          {w.text}
+                        </Text>
+                      </React.Fragment>
+                    );
+                  })}
+                </View>
+              ) : (
+                <Text style={styles.text} className="text-faint" accessibilityLiveRegion="polite">
+                  Listening — say what you want changed…
+                </Text>
+              )}
             </ScrollView>
           ) : (
             <TextInput
@@ -462,6 +840,42 @@ export default function DashboardChatCard({ dictating, onDictate }: DashboardCha
             />
           )}
         </Animated.View>
+      )}
+
+      {/* The eraser. Pinned to the card's bottom-right rather than sat in the
+          header: it belongs to the message, so it sits at the message, in the
+          corner nearest the thumb that's about to use it. Absolute on the card —
+          not inside the scrollers — so it holds that corner however tall the card
+          is dragged and however far the conversation is scrolled.
+
+          It's also the far corner from the ✕, which is worth the distance: one
+          restarts a sentence, the other bins the whole conversation, and a
+          mis-tap between them isn't recoverable. Only shown once there's a
+          message to work on.
+
+          Tap it and the whole message goes. Drag it and it's an eraser in the
+          literal sense — the words it's pulled across strike through as it passes
+          and are cut out when it's let go, so a misheard phrase in the middle of a
+          good sentence costs a swipe rather than the whole prompt. The Pressable
+          inside the detector keeps the tap a real button press (a screen reader
+          activates it the ordinary way); the pan claims the touch off it as soon
+          as the finger travels, so a rub never also fires the tap. */}
+      {!!draft && (
+        <GestureDetector gesture={rub}>
+          <Animated.View style={[styles.clear, rubStyle]}>
+            <Pressable
+              onPress={clearPrompt}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Clear this message and start again"
+              accessibilityHint={
+                dictating ? 'Or drag across words to rub out just those' : undefined
+              }
+              className="h-7 w-7 items-center justify-center rounded-full border border-surface1 bg-background active:opacity-70">
+              <Eraser size={14} color={colors.faint} strokeWidth={2.5} />
+            </Pressable>
+          </Animated.View>
+        </GestureDetector>
       )}
     </Animated.View>
   );
@@ -485,4 +899,16 @@ const styles = StyleSheet.create({
   // wrapped text, exactly as CardComposer's does. What bounds it here is the
   // animated cap on the wrapper above, which the box shrinks to fit.
   input: { minHeight: LINE_HEIGHT },
+  // Held in the card's bottom-right corner, over the message rather than in it.
+  // Last child, so it draws above the text on both platforms; the message's right
+  // padding is what keeps the words out from under it.
+  clear: { position: 'absolute', right: 8, bottom: 8 },
+  // The message, laid out a word at a time. The column gap stands in for the
+  // space between words at this size; rows stack on the shared line height, so
+  // the block measures the same as the single Text it replaced.
+  words: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 4 },
+  wordBreak: { width: '100%', height: 0 },
+  // Struck through while the eraser is over it: still readable, so it's clear
+  // what's about to go, but plainly on its way out.
+  rubbedWord: { textDecorationLine: 'line-through' },
 });
