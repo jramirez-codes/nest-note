@@ -896,8 +896,8 @@ export default function IdeaPageOverlay({
                   undoing ? 'opacity-50' : ''
                 }`}>
                 <Undo2 size={13} color={colors.faint} strokeWidth={2.5} />
-                <Text className="text-[12px] font-semibold text-muted">
-                  {undoing ? 'Undoing…' : 'Undo AI changes'}
+                <Text className="text-[11px] font-semibold text-muted">
+                  {undoing ? 'Undoing…' : 'Undo'}
                 </Text>
               </Pressable>
             )}

@@ -367,10 +367,18 @@ export interface IdeaRef {
 
 // Frame one idea card as the whole subject of the conversation. Unlike /chat
 // (open-ended) or /talk (pinned to a notebook), this is pinned to a single card:
-// the model discusses it with the user and writes agreed changes back to that
-// exact card with upsert_card, so the page under the chat updates in place. The
-// reply lands in a small card in the page header, so it's asked to stay short and
-// to never echo the rewritten body — the page already shows it.
+// the model discusses it with the user and writes changes back to that exact card
+// with upsert_card, so the page under the chat updates in place. The reply lands
+// in a small card in the page header, so it's asked to stay short, to never echo
+// the rewritten body — the page already shows it — and to mark the reply up: the
+// card renders Markdown through ChatMarkdown, where bold reads heavy and inline
+// code reads green and monospaced, which is what makes a few sentences in a small
+// card scannable (rule 2).
+//
+// It's also asked to be decisive about writing rather than to negotiate first,
+// because the page can undo any edit it makes in one tap (see ../ideaChat): a
+// rewrite that lands wrong costs the user a tap, while a question they have to
+// answer costs them a whole turn. That asymmetry is the reason for rules 3 and 4.
 function buildIdeaPrompt(idea: IdeaRef, question: string, context?: AskContext): string {
   const tags = (idea.tags ?? []).join(', ');
   const instructions =
@@ -389,18 +397,33 @@ function buildIdeaPrompt(idea: IdeaRef, question: string, context?: AskContext):
     '1. Reply conversationally and BRIEFLY. Your reply is shown in a small card at the top of ' +
     "the idea's page — a few sentences, or a short list. Never paste the rewritten card body " +
     'into your reply; the page below it already shows the card.\n' +
-    '2. Ask the user for input whenever a decision is genuinely theirs to make (scope, which ' +
-    'approach, what matters most) — one question at a time, and make it easy to answer.\n' +
-    "3. When something is settled, write it into the card: call the orchestrator's upsert_card " +
+    '2. Mark the reply up in Markdown — the card renders it, so use it. Put **bold** on what ' +
+    'changed and on the decision you need from the user, and `inline code` on every concrete ' +
+    'literal you name: a section like `## Next steps`, a filename, a flag, an identifier, a ' +
+    'command. Inline code renders green and monospaced and bold renders heavy, so a handful of ' +
+    'marks makes a few sentences scannable at a glance. Do not decorate for its own sake: never ' +
+    "bold a whole sentence, and never mark up something that isn't a real literal.\n" +
+    '3. DEFAULT TO WRITING, NOT ASKING. The user can undo any change you make to this card with ' +
+    'one tap, so a rewrite that lands wrong is cheap for them and a question they have to answer ' +
+    'is not. On every turn where the conversation gives you anything to act on, write your best ' +
+    'current version of the idea into the card instead of describing what you would change and ' +
+    'waiting for permission. Never ask "shall I update the card?" — update it, then say what you ' +
+    'changed.\n' +
+    '4. Still ask when a decision is genuinely the user\'s and you cannot make a defensible call ' +
+    '(scope, a real fork between two approaches, what matters most) — but write your best guess ' +
+    'into the card FIRST and ask the question about what you wrote. One question at a time, and ' +
+    'make it easy to answer.\n' +
+    "5. To write, call the orchestrator's upsert_card " +
     `with id="${idea.id}", kind="idea"` +
     (idea.source ? `, source="${idea.source}"` : '') +
     ', and the FULL updated Markdown body, keeping the sections "## Problem", "## Idea", ' +
-    '"## Project plan", and "## Next steps". Preserve everything still true — only change what ' +
-    'the conversation changed. Update the title, tags (1–4 short lowercase), and priority too ' +
-    "when the user's steer implies it.\n" +
-    `4. NEVER file a second card for this idea — always reuse id="${idea.id}". Do not create ` +
+    '"## Project plan", and "## Next steps". Being decisive means rewriting what the conversation ' +
+    'touched — not discarding sections it never mentioned, which must be preserved as they are. ' +
+    'Update the title, tags (1–4 short lowercase), and priority too when the user\'s steer ' +
+    'implies it.\n' +
+    `6. NEVER file a second card for this idea — always reuse id="${idea.id}". Do not create ` +
     'task cards unless the user asks for them.\n' +
-    '5. As the plan firms up, fill "## Project plan" with concrete steps and "## Next steps" ' +
+    '7. As the plan firms up, fill "## Project plan" with concrete steps and "## Next steps" ' +
     'with the immediate ones. Whenever you write to the card, say in one short line what you ' +
     'changed.\n\n';
   const turns = context?.turns?.filter(t => t.q);
