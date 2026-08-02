@@ -318,10 +318,6 @@ export default function NotebookScreen() {
     chatWasRunning.current = chat.running;
   }, [chat.running]);
 
-  // The bubble footer's own width, measured as it lays out, so the chat card
-  // floating above it is exactly as wide as the strip it belongs to.
-  const [footerWidth, setFooterWidth] = useState(0);
-
   // The mic toggle inside an AI card's composer drives the very same session as
   // the footer mic — the editor has already focused that card's box, so the words
   // land there. Gated on the same condition as the footer button, so a card on a
@@ -739,17 +735,15 @@ export default function NotebookScreen() {
               bottom edge (solid background fills below them). The gradient only
               lives above the strip. */}
           <View pointerEvents="box-none" className="bg-background pb-6">
-            {/* The dashboard's voice chat, floating over the cards it's about.
-                Mounted for the whole time the dashboard is the page on screen —
-                that registration is what gives the footer mic somewhere to write
-                here — but it draws nothing until there's something to show, so
-                the strip is the bare bubbles until you actually say something. */}
+            {/* The dashboard's voice chat, floating over the cards it's about —
+                and laid out as one of them, at the same width and on the same
+                surface as a dashboard section. Mounted for the whole time the
+                dashboard is the page on screen (that registration is what gives
+                the footer mic somewhere to write here), but it draws nothing
+                until the mic goes live, so the strip is the bare bubbles until
+                you actually start talking. */}
             {chatOnScreen && (
-              <DashboardChatCard
-                width={footerWidth}
-                dictating={dictating}
-                onDictate={handleDictationRequest}
-              />
+              <DashboardChatCard dictating={dictating} onDictate={handleDictationRequest} />
             )}
             <PageIndicator
               currentIndex={currentIndex}
@@ -766,7 +760,6 @@ export default function NotebookScreen() {
               onNewline={dictationNewline}
               chatAction={chatAction}
               onChatAction={handleChatAction}
-              onMeasureWidth={setFooterWidth}
             />
           </View>
         </View>

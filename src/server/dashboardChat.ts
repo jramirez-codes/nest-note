@@ -41,9 +41,20 @@ export interface DashboardChatState {
    *  separate getter, as ideaChat has) because the footer button reads it to
    *  decide whether its slot sends the next message or stops this one. */
   running: boolean;
+  /** How tall the user dragged the card's top edge, if they did. Kept with the
+   *  conversation rather than in the card, which unmounts on every swipe off the
+   *  dashboard — a card sized to read a long answer should still be that size
+   *  when you come back to it. */
+  cardHeight?: number;
+  /** How much room the card is actually taking on screen right now, measured as
+   *  it lays out; 0 when there's no card. This is what the dashboard *under* it
+   *  pads its scroll by, so the last cards in the list can still be scrolled out
+   *  from behind it. Not the same number as `cardHeight`, which is only the
+   *  ceiling the drag set — a card holding one line is one line tall. */
+  overlayHeight: number;
 }
 
-const EMPTY: DashboardChatState = { draft: '', turns: [], running: false };
+const EMPTY: DashboardChatState = { draft: '', turns: [], running: false, overlayHeight: 0 };
 
 // An immutable snapshot: every mutation replaces the object, so
 // useSyncExternalStore subscribers re-render exactly when something changed.
@@ -86,6 +97,19 @@ export function subscribe(fn: () => void): () => void {
 export function setDraft(draft: string): void {
   if (state.draft === draft) return;
   update({ draft });
+}
+
+/** Remember the height the card's top edge was dragged to. */
+export function setCardHeight(cardHeight: number): void {
+  if (state.cardHeight === cardHeight) return;
+  update({ cardHeight });
+}
+
+/** Report how much room the card is taking on screen (0 when it isn't shown), so
+ *  the dashboard behind it can keep that much scroll clearance at the bottom. */
+export function setOverlayHeight(overlayHeight: number): void {
+  if (state.overlayHeight === overlayHeight) return;
+  update({ overlayHeight });
 }
 
 /**
@@ -149,9 +173,13 @@ export function stop(): void {
  * The draft goes with it: the card is one surface, and dismissing it to reclaim
  * the space over the dashboard means dismissing the message sitting in it too.
  * Nothing Claude already wrote to a card is affected — that's on the dashboard.
+ *
+ * The dragged height stays, though. That's how the user wants this card to sit
+ * over their dashboard, not something the conversation put there — throwing it
+ * away with the transcript would make them re-drag it on every new chat.
  */
 export function clear(): void {
   handle?.cancel();
   handle = null;
-  update(EMPTY);
+  update({ ...EMPTY, cardHeight: state.cardHeight });
 }

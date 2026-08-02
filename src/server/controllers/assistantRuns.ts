@@ -460,10 +460,11 @@ export function runIdeaChat(
 // It's dictated, which shapes two of the rules below. Speech is loose ("drop the
 // thing about the invoice"), so matching by meaning against the cards that
 // already exist has to come first — rule 1 — or a reworded task becomes a second
-// copy of itself. And the reply lands in a small card floating over the
-// dashboard, the same constraint the idea page's reply card has, so it's asked to
-// be short and to mark itself up (the card renders Markdown through
-// ChatMarkdown, where bold reads heavy and inline code green).
+// copy of itself. And the reply lands in a card over the dashboard, sharing the
+// screen with the cards it just changed — the same constraint the idea page's
+// reply card has, so it's asked to be short and to mark itself up (the card
+// renders Markdown through ChatMarkdown, where bold reads heavy and inline code
+// green).
 function buildDashboardPrompt(
   question: string,
   scope: string | null,
@@ -502,8 +503,9 @@ function buildDashboardPrompt(
     'on the dashboard behind this conversation — make it, then say what you did. Ask only ' +
     'when you genuinely cannot tell which card they mean and a guess would change the ' +
     'wrong one.\n' +
-    '7. Reply BRIEFLY: a sentence or two, or a short list. Your reply is shown in a small ' +
-    'card floating over the dashboard, so mark it up in Markdown to make it scannable — ' +
+    '7. Reply BRIEFLY: a sentence or two, or a short list. Your reply is shown in a card ' +
+    'over the dashboard, sharing the screen with the cards you changed, so mark it up in ' +
+    'Markdown to make it scannable — ' +
     '**bold** on what changed, `inline code` on the concrete things you name (a card ' +
     "title, a date, a tag). Never paste a card's whole body back at the user.\n\n";
   const turns = context?.turns?.filter(t => t.q);
