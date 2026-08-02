@@ -43,9 +43,10 @@ function TasksSection({
   subjectTitleFor: (source?: string) => string;
 }) {
   // The view toggle's current mode: the two list orders ('priority'/'date') or the
-  // month 'calendar'. The pager resets to page 0 whenever the list order changes,
-  // since the old page may no longer line up.
-  const [taskView, setTaskView] = useState<TaskView>('priority');
+  // month 'calendar'. Opens on 'date' — what's due soonest is the question the list
+  // is usually opened to answer. The pager resets to page 0 whenever the list order
+  // changes, since the old page may no longer line up.
+  const [taskView, setTaskView] = useState<TaskView>('date');
   const [taskPage, setTaskPage] = useState(0);
   const changeTaskView = useCallback((v: TaskView) => {
     setTaskView(v);

@@ -38,6 +38,106 @@ Ideas is also where an unfamiliar card kind surfaces: it's the generic card list
 a kind the app has never seen appears there as a paged list of its own rather than
 being dropped.
 
+## Talking to the dashboard
+
+The **mic** in the footer strip works on the dashboard, and what you say there
+doesn't go into a page — it goes to the cards. Creating a task, moving one,
+ticking one off, capturing an idea, throwing one away: all of it out loud, without
+finding the row first.
+
+> Add a task to call the plumber back on Friday, high priority — and drop the
+> one about the invoice, that's done.
+
+The sequence is one button. Tap the **mic** to start talking, and a card appears
+over the bubble footer — laid out as a **dashboard section card**, at the same
+width and on the same surface as Tasks or Archived, because that's what it is:
+another surface about the same cards. **The words land in it as you speak**, so
+you can see the recognizer keeping up and catch a mishearing while you're still
+mid-thought.
+
+Tap the mic again to stop, and **that sends it**. Talking is the whole
+interaction, so the tap that ends the sentence is the tap that posts it — there's
+no separate confirm for a message you've just watched land word by word. While
+the reply streams the mic's slot is a **Stop**. Then it's a mic again, and the
+next thing you say continues the same conversation, with the reply you're
+following up on still on screen while you say it.
+
+For a run of instructions there's a quicker way round than stopping and starting
+the mic each time: **while you're talking, the card's top-right corner is a ↑
+Send** — where the ✕ sits the rest of the time — and it posts what you've said so
+far **without touching the mic**. Say one thing, send it, carry straight on with
+the next. It dims when there's nothing to send yet, or while a reply is still
+streaming. The ✕ is back as soon as the mic stops.
+
+Said it wrong? The **eraser** pinned to the card's bottom-right corner fixes it
+**without stopping the mic**, at either of the sizes a spoken instruction goes
+wrong at:
+
+- **Tap it** and the whole message goes, to be said again from the top.
+- **Drag it across the words** and it's an eraser in the literal sense. Words
+  strike through as it's pulled over them, and are cut out when you let go — so
+  one misheard phrase in the middle of an otherwise good sentence costs a swipe
+  rather than the whole prompt. A drag that reaches no words changes nothing.
+
+Either way, the sentence you're part-way through goes with it: a half-finished
+utterance is still being rewritten by the recogniser, which would put back what
+you just took out. What you say next lands cleanly on what's left. The
+conversation above is untouched — it's this message being fixed, not the chat
+being dismissed. The eraser appears once there's something to work on, and holds
+its corner however far you drag the card or scroll the conversation.
+
+For a single misheard character the recording controls are quicker — **Delete**
+rubs out characters as it does anywhere else, and **New line** breaks the line
+rather than sending, so a message dictated in two sentences can't post itself
+halfway through.
+
+The one time stopping the mic *doesn't* send is when a reply is still streaming:
+two turns at once would be two agents writing to the same cards. The message
+waits in an **editable box** instead — same text, same place, nothing moves — and
+the mic's slot becomes an accent **↑ Send** for it as soon as the reply lands.
+
+How much of the dashboard the card covers is yours to set: the **strip across its
+top edge is a grab handle**. Drag it **up** for more of the conversation, **down**
+to give the room back to the cards underneath. The grip turns the accent colour
+and widens while you're dragging, so it's clear you have hold of the edge and not
+the page behind it. It stops at just over half the screen, and the height you
+leave it at is remembered — including across a **✕**, since that's how you want
+this card to sit rather than anything the conversation put there.
+
+It sets a *ceiling*, not a height: a card with one line in it is still one line
+tall, and the conversation grows into the room as it arrives.
+
+Claude's reply lands in the same card, as **rendered Markdown** — the same
+widgets the editor draws, so bullets, checkboxes and `inline code` read here as
+they do in a card. It's asked to keep replies to a sentence or two: the card
+floats over the dashboard, and the point is the change it made, which is on the
+dashboard behind it. The list re-reads itself as each turn lands, so you watch
+the cards move.
+
+It acts on the **notebook the dashboard is showing**, so
+[switching notebooks](../start/the-pad.md#switching-notebooks) re-scopes it: in a
+subject, cards are read and filed under that subject; on the Sandbox's aggregate
+view it works across all of them. Before writing anything it reads the cards that
+already exist and matches what you said against them by meaning — spoken
+instructions are loose, and without that step a reworded task becomes a second
+copy of itself.
+
+Like the [idea page's chat](#the-ideas-page), Claude is told to **act rather than
+ask**. It only comes back with a question when it genuinely can't tell which card
+you meant and a guess would change the wrong one.
+
+The **✕** in the card's top-right corner (once the mic is off — while it's on
+that corner is the ↑ Send above) is the bigger of the two controls, and sits in
+the opposite corner to the eraser to match: where the eraser works on the message
+you're saying, the ✕ **dismisses the whole conversation** — that message, the
+replies, all of it. That's how you get the space
+over the dashboard back, and how you start a fresh chat rather than one threaded
+through everything already said. A reply still streaming is cancelled. Cards
+Claude already created or changed are *cards* — they stay, and the dashboard's own
+controls (complete, dismiss, drag-to-delete) are what take those back.
+
+Needs a paired server — it's a conversation with Claude.
+
 ## `/ingest`
 
 > File this page into your dashboard — sorts notes into subjects, then clears
@@ -317,10 +417,10 @@ overdue tasks show their date in red (**Yesterday** for the day before).
 A row of bubbles above the card chooses how you view those tasks — exactly one is
 active at a time:
 
+- **Due date** — the one the section opens on. Orders the list by the soonest due
+  date first, with priority breaking ties.
 - **Priority** — orders the list by urgency (urgent → high → normal → low), with
   the soonest due date breaking ties.
-- **Due date** — orders the list by the soonest due date first, with priority
-  breaking ties.
 - **Calendar** — swaps the list for a **month grid** of the same size. Days that
   carry open tasks stand out as a filled disc tinted by that day's highest-priority
   task, with a badge counting the tasks due — so a busy or urgent day reads at a

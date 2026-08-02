@@ -4,6 +4,7 @@ import { useTheme } from '../../theme/colors';
 import type { CardDragShared } from '../../hooks/useCardDrag';
 import type { Note } from '../../types/note';
 import { type DashboardCard } from '../../server/controllers/aiController';
+import { useDashboardChatOverlayHeight } from '../../hooks/useDashboardChat';
 import { useDashboardData } from './useDashboardData';
 import { buildNotebookOptions } from './cardModel';
 import { type NotebookOption } from './NotebookSwitcher';
@@ -53,6 +54,14 @@ interface DashboardPageProps {
 // no code change" property of the list.
 const KIND_ORDER = ['idea', 'build-step'];
 
+/** Scroll clearance for the chrome the page is floated under: the bubble footer
+ *  and its background strip. Fixed, because that strip is. Anything else parked
+ *  over the bottom of the page — the chat card — adds its own measured height on
+ *  top, rather than this number being padded out to cover the tallest thing that
+ *  might ever be there (which is what leaves a short dashboard scrolling into
+ *  empty space every other time). */
+const FOOTER_CLEARANCE = 120;
+
 function compareKinds(a: string, b: string): number {
   const ia = KIND_ORDER.indexOf(a);
   const ib = KIND_ORDER.indexOf(b);
@@ -94,6 +103,16 @@ function DashboardPage({
   const colors = useTheme();
   const { state, error, loading, refreshing, busy, load, act, actReorg, onToggle, onDismiss } =
     useDashboardData(isActive, cardsVersion);
+  // The chat card parks over the bottom of this page, so the list has to be able
+  // to scroll clear of it — otherwise its last cards sit permanently underneath.
+  // Its real measured height, not a guess at the worst case: the card is anywhere
+  // from one line to half the screen depending on the conversation in it and how
+  // far its edge has been dragged, and it's 0 most of the time.
+  const chatHeight = useDashboardChatOverlayHeight();
+  const scrollContent = useMemo(
+    () => [styles.scrollContent, { paddingBottom: FOOTER_CLEARANCE + chatHeight }],
+    [chatHeight],
+  );
   // The card currently lifted, kept locally so only this page dims its source row
   // (the screen tracks its own copy for the floating clone).
   const [liftedId, setLiftedId] = useState<string | null>(null);
@@ -193,7 +212,7 @@ function DashboardPage({
         // Let a tap on a result / clear button register while the archive search
         // keyboard is up, instead of being swallowed to dismiss it first.
         keyboardShouldPersistTaps="handled"
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={scrollContent}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -272,7 +291,9 @@ function DashboardPage({
 }
 
 const styles = StyleSheet.create({
-  scrollContent: { padding: 20, paddingBottom: 120 },
+  // The bottom is set per-render (see scrollContent above) — it depends on what
+  // is parked over the page right now.
+  scrollContent: { padding: 20 },
 });
 
 export default React.memo(DashboardPage);

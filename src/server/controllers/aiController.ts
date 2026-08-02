@@ -31,6 +31,7 @@ export {
   runIngest,
   runNotesChat,
   runIdeaChat,
+  runDashboardChat,
   runAggTasks,
   type AskCallbacks,
   type AskHandle,

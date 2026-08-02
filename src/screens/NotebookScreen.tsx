@@ -16,6 +16,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../theme/colors';
+import DashboardChatCard from '../components/dashboard/DashboardChatCard';
 import DashboardPage from '../components/dashboard/DashboardPage';
 import {
   deleteNotebook as deleteNotebookOnServer,
@@ -35,7 +36,9 @@ import { NotebookBadge, type NotebookOption } from '../components/dashboard/Note
 import { type DashboardView } from '../components/dashboard/DashboardViewToggle';
 import { useArchivedPages } from '../hooks/useArchivedPages';
 import { useCardDrag } from '../hooks/useCardDrag';
+import { useDashboardChat } from '../hooks/useDashboardChat';
 import { useDictation } from '../hooks/useDictation';
+import * as dashboardChat from '../server/dashboardChat';
 import { DEFAULT_NOTEBOOK_ID } from '../storage/db';
 import { useNotes } from '../hooks/useNotes';
 import { useNotebookOptions } from '../hooks/useNotebookOptions';
@@ -261,9 +264,9 @@ export default function NotebookScreen() {
   const contentCount = subjectSlug ? stubs.length : notes.length;
 
   // Footer speech-to-text. The mic dictates into the on-screen note, so it's
-  // disabled with nowhere to write: on the trailing dashboard, or on a subject
-  // notebook (whose pages are read-only server pulls). Auto-stop if the user
-  // navigates onto one of those while the mic is live.
+  // disabled with nowhere to write — on a subject notebook, whose pages are
+  // read-only server pulls. Auto-stop if the user navigates onto one of those
+  // while the mic is live.
   // The footer's Delete / New line buttons replace the two nav bubbles while the mic
   // is live, editing the note being dictated into without stopping the recognizer.
   const {
@@ -274,15 +277,49 @@ export default function NotebookScreen() {
     backspace: dictationBackspace,
     newline: dictationNewline,
   } = useDictation();
-  // An open idea page is the exception: it's a Modal over the pad carrying its own
-  // composer, which registers itself as the dictation target — so there IS
-  // somewhere to write even though the page behind it is the dashboard. Closing it
-  // re-applies the gate, which stops a session left running.
+  // Two pages with no note of their own still have somewhere to write, so the mic
+  // works on both. An open idea page is a Modal over the pad carrying its own
+  // composer, which registers itself as the dictation target; and the dashboard
+  // has DashboardChatCard, which does the same so that what's dictated there
+  // becomes an instruction about the cards. Both are gone the moment you leave
+  // them, which re-applies the gate and stops a session left running.
   const onDashboard = currentIndex >= contentCount;
-  const dictationDisabled = !openIdea && (onDashboard || !!subjectSlug);
+  const dictationDisabled = !openIdea && !onDashboard && !!subjectSlug;
   useEffect(() => {
     if (dictationDisabled && dictating) stopDictation();
   }, [dictationDisabled, dictating, stopDictation]);
+
+  // The dashboard's voice chat (../server/dashboardChat), read here for the one
+  // part of it the footer owns: while the reply streams the mic's slot stops it,
+  // and with a message still waiting afterwards it sends it. Stopping the mic is
+  // what normally sends (the card does that), so a message only sits waiting when
+  // it was finished while an earlier turn was still streaming — the send button is
+  // how that one goes once the card is free. Off the dashboard — or under an open
+  // idea page, whose own composer has the mic — the slot is just the mic again.
+  const chat = useDashboardChat();
+  const chatOnScreen = onDashboard && !openIdea;
+  const chatAction = !chatOnScreen
+    ? null
+    : chat.running
+      ? ('stop' as const)
+      : chat.draft.trim()
+        ? ('send' as const)
+        : null;
+  const handleChatAction = useCallback(() => {
+    // Read the store rather than the render's snapshot: the reply may have landed
+    // between this button painting and the tap reaching it.
+    if (dashboardChat.getState().running) dashboardChat.stop();
+    else dashboardChat.send(subjectSlug);
+  }, [subjectSlug]);
+
+  // A turn that just landed may have created, changed or removed cards, so tell
+  // the dashboard under the chat card to re-read rather than keep showing what it
+  // fetched before the conversation.
+  const chatWasRunning = useRef(false);
+  useEffect(() => {
+    if (chatWasRunning.current && !chat.running) setCardsVersion(n => n + 1);
+    chatWasRunning.current = chat.running;
+  }, [chat.running]);
 
   // The mic toggle inside an AI card's composer drives the very same session as
   // the footer mic — the editor has already focused that card's box, so the words
@@ -701,6 +738,20 @@ export default function NotebookScreen() {
               bottom edge (solid background fills below them). The gradient only
               lives above the strip. */}
           <View pointerEvents="box-none" className="bg-background pb-6">
+            {/* The dashboard's voice chat, floating over the cards it's about —
+                and laid out as one of them, at the same width and on the same
+                surface as a dashboard section. Mounted for the whole time the
+                dashboard is the page on screen (that registration is what gives
+                the footer mic somewhere to write here), but it draws nothing
+                until the mic goes live, so the strip is the bare bubbles until
+                you actually start talking. */}
+            {chatOnScreen && (
+              <DashboardChatCard
+                dictating={dictating}
+                onDictate={handleDictationRequest}
+                scope={subjectSlug}
+              />
+            )}
             <PageIndicator
               currentIndex={currentIndex}
               prevIndex={prevIndexRef.current}
@@ -714,6 +765,8 @@ export default function NotebookScreen() {
               onToggleDictation={toggleDictation}
               onBackspace={dictationBackspace}
               onNewline={dictationNewline}
+              chatAction={chatAction}
+              onChatAction={handleChatAction}
             />
           </View>
         </View>

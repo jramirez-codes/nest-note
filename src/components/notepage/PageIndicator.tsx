@@ -8,7 +8,7 @@ import {
   View,
 } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import { CornerDownLeft, Delete, Mic } from 'lucide-react-native';
+import { ArrowUp, CornerDownLeft, Delete, Mic, Square } from 'lucide-react-native';
 import { useTheme } from '../../theme/colors';
 
 interface PageIndicatorProps {
@@ -37,6 +37,13 @@ interface PageIndicatorProps {
   onBackspace: () => void;
   /** Recording-mode New line — one Enter press in the note being dictated into. */
   onNewline: () => void;
+  /** What the mic's slot does instead of starting a session: 'send' the message
+   *  the dashboard's chat card is holding, or 'stop' the reply it's streaming.
+   *  Null (the usual case) leaves the slot a plain mic. Ignored while dictating —
+   *  stopping the recognizer is always what the button does then. */
+  chatAction: 'send' | 'stop' | null;
+  /** Run that action. Required in practice whenever `chatAction` can be set. */
+  onChatAction: () => void;
 }
 
 /** Displacement (px) from the press point before paging starts — a dead zone so
@@ -98,6 +105,13 @@ function pagesPerSecond(dx: number, scrubWidth: number) {
  * and a New line button — editing controls are what's wanted mid-utterance, and
  * paging away would only redirect the transcript. The mic itself stays put (it's
  * how the user stops), so it keeps its slot in both modes.
+ *
+ * That slot has one more job on the dashboard, where the mic dictates into a chat
+ * about the cards rather than into a page: with a message waiting to go it is the
+ * **send** button for it, and while the reply streams it is the **stop** button
+ * for that (see `chatAction`). One slot rather than a button that appears beside
+ * it, because it's one sequence — talk, send, read — and each step is what the
+ * same control does next.
  */
 function PageIndicator({
   currentIndex,
@@ -112,6 +126,8 @@ function PageIndicator({
   onToggleDictation,
   onBackspace,
   onNewline,
+  chatAction,
+  onChatAction,
 }: PageIndicatorProps) {
   const colors = useTheme();
   const onDashboard = currentIndex >= noteCount;
@@ -401,6 +417,12 @@ function PageIndicator({
   });
   const scale = lift.interpolate({ inputRange: [0, 1], outputRange: [1, 1.12] });
 
+  // The mic's slot is the dashboard chat's control whenever that chat has
+  // something for it to do — but never mid-session: while the recognizer is live
+  // the only thing this button can mean is "stop talking".
+  const chatting = !dictating && chatAction !== null;
+  const sending = chatAction === 'send';
+
   return (
     <View className="flex-row items-center justify-center gap-3 py-3">
       {dictating ? (
@@ -515,25 +537,49 @@ function PageIndicator({
 
       {/* Speech-to-text mic — starts/stops dictation into the active note. Sits
           next to the Dashboard bubble; disabled (dimmed, non-interactive) when
-          there's no editable note to dictate into (the dashboard, or a read-only
-          subject page). Accent-filled while live so it reads as "recording". */}
+          there's no editable note to dictate into (a read-only subject page).
+          Accent-filled while live so it reads as "recording".
+
+          On the dashboard the same slot carries the chat the mic dictates into
+          through its next two steps: an accent Send once there's a message
+          waiting (same fill as the live mic — both mean "this button is the
+          live one"), and a plain Stop while the reply streams. */}
       <Pressable
-        onPress={dictationDisabled ? undefined : onToggleDictation}
-        disabled={dictationDisabled}
+        onPress={chatting ? onChatAction : dictationDisabled ? undefined : onToggleDictation}
+        disabled={!chatting && dictationDisabled}
         accessibilityRole="button"
-        accessibilityLabel={dictating ? 'Stop dictation' : 'Start dictation'}
-        accessibilityState={{ disabled: dictationDisabled, selected: dictating }}
+        accessibilityLabel={
+          chatting
+            ? sending
+              ? 'Send this message'
+              : 'Stop the reply'
+            : dictating
+              ? 'Stop dictation'
+              : 'Start dictation'
+        }
+        accessibilityState={{
+          disabled: !chatting && dictationDisabled,
+          selected: dictating,
+        }}
         hitSlop={8}
         className={
           'h-9 w-9 items-center justify-center rounded-full ' +
-          (dictating ? 'bg-accent' : 'bg-surface') +
-          (dictationDisabled ? ' opacity-40' : ' active:opacity-70')
+          (dictating || sending ? 'bg-accent' : 'bg-surface') +
+          (!chatting && dictationDisabled ? ' opacity-40' : ' active:opacity-70')
         }>
-        <Mic
-          size={16}
-          strokeWidth={2.5}
-          color={dictating ? colors.background : colors.faint}
-        />
+        {chatting ? (
+          sending ? (
+            <ArrowUp size={17} strokeWidth={2.5} color={colors.background} />
+          ) : (
+            <Square size={13} strokeWidth={2} color={colors.faint} fill={colors.faint} />
+          )
+        ) : (
+          <Mic
+            size={16}
+            strokeWidth={2.5}
+            color={dictating ? colors.background : colors.faint}
+          />
+        )}
       </Pressable>
     </View>
   );
