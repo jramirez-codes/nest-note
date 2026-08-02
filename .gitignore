@@ -25,6 +25,9 @@ DerivedData
 # Android/IntelliJ
 #
 build/
+# ...but the Go server has a real package named build/ (the scheduled idea-build
+# pipeline). The rule above is for Gradle/Xcode output and would silently drop it.
+!server/internal/build/
 .idea
 .gradle
 local.properties

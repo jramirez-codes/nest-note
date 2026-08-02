@@ -34,6 +34,52 @@ works when the root `node_modules` is installed — that made the docs site
 unbuildable in CI, which installs only `site/`. See that file's header for the
 full explanation and the re-sync procedure on React Native upgrades.
 
+## Inside `server/`
+
+The companion server is one Go module laid out in layers. **Imports only ever
+point downward**, and that single rule is what keeps it navigable as it grows —
+`build` may use `store`, `store` may never use `build`.
+
+```
+main.go        flags → config → start the TLS listener
+routes.go      the route table: one line per endpoint
+```
+
+Start at `routes.go`. Every endpoint maps to the package that answers it, so
+going from "what does `/build/revise` do" to the right file is one hop.
+
+| Layer | Package | What it owns |
+| --- | --- | --- |
+| Features | `internal/build` | scheduled idea builds — the state machine and `/build/*` |
+| | `internal/dashboard` | `/state`, `/notebook`, `/page`, `/action` |
+| | `internal/agent` | `/code` agent sessions, `/projects` |
+| | `internal/exec` | `/exec` shell channel |
+| | `internal/run` | `/run` — one Claude turn against the MCP world |
+| | `internal/search` | `/search` across notebook pages |
+| | `internal/view` | `/viewstart` preview proxies |
+| | `internal/update` | `/update` self-update |
+| Services | `internal/session` | durable runs: process outlives the socket |
+| | `internal/claude` | spawning the Claude CLI |
+| | `internal/cron` | every mutation of the user's crontab |
+| | `internal/scaffold` | laying out and building the MCP world |
+| Data | `internal/store` | notebooks, pages, cards, reorgs — all on-disk state |
+| Plumbing | `internal/httpx` | auth check and the two response shapes |
+| | `internal/pairing` | TLS cert + SPKI pin, mDNS, pair code, token |
+| | `internal/procio` | process groups, signals, bounded stderr |
+| | `internal/project` | project name → `projects/<slug>` |
+
+Two conventions worth knowing before you add code here:
+
+**Cards live in `store`, not in `dashboard`.** The card type is the shared
+currency between two features that must not import each other — the dashboard
+renders cards, the build pipeline writes them. Putting the type at the bottom of
+the stack is what lets both work with it.
+
+**The build package is split by phase, not by size.** `state.go` → `project.go`
+→ `plan.go` → `cards.go` → `prompts.go` → `engine.go` → `handlers.go` follows the
+order a build actually moves through. `engine.go` holds the tick state machine
+and is the file to read first.
+
 ## Generated files that are committed
 
 Two build outputs live in git on purpose, so downstream builds don't need the
