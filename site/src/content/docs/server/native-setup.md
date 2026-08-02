@@ -63,7 +63,7 @@ prepends a fixed 26-byte P-256 SPKI header to reconstruct it.
 
 :::caution[This is correct only for P-256]
 It works because the server always generates an ECDSA P-256 key
-(`server/tlscert.go`). If that key type ever changes, this header must change
+(`server/internal/pairing/tlscert.go`). If that key type ever changes, this header must change
 too — otherwise the pins silently stop matching.
 :::
 

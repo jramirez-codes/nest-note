@@ -6,8 +6,9 @@
  */
 import React from 'react';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
-import { Inbox } from 'lucide-react-native';
+import { Inbox, Lightbulb } from 'lucide-react-native';
 import type { ThemeColors } from '../../../theme/colors';
+import type { DashboardView } from '../DashboardViewToggle';
 
 // The centered spinner shown on a cold load with nothing on screen yet.
 export function LoadingState({ colors }: { colors: ThemeColors }) {
@@ -42,14 +43,26 @@ export function InlineError({ message }: { message: string }) {
   );
 }
 
-// The empty state: connected fine, but nothing has been filed here yet.
-export function EmptyState({ colors }: { colors: ThemeColors }) {
+// The empty state: connected fine, but nothing has been filed into the view that's
+// showing. The copy names what would fill *this* view, so an empty Ideas tab doesn't
+// claim the whole dashboard is empty when Organize is full of tasks.
+export function EmptyState({ view, colors }: { view: DashboardView; colors: ThemeColors }) {
+  const Icon = view === 'ideas' ? Lightbulb : Inbox;
   return (
     <View className="items-center rounded-2xl border border-surface1 bg-surface px-6 py-10">
-      <Inbox size={32} color={colors.faint} strokeWidth={1.75} />
+      <Icon size={32} color={colors.faint} strokeWidth={1.75} />
       <Text className="mt-3 text-center text-sm text-muted">
-        Nothing here yet. Write some notes, then run <Text className="text-text">/ingest</Text> to
-        file tasks, reminders and subjects here.
+        {view === 'ideas' ? (
+          <>
+            No ideas yet. Write one down, then run <Text className="text-text">/ingest</Text> — ideas
+            filed here can be opened, refined in chat, and built out step by step.
+          </>
+        ) : (
+          <>
+            Nothing here yet. Write some notes, then run <Text className="text-text">/ingest</Text>{' '}
+            to file tasks, reminders and subjects here.
+          </>
+        )}
       </Text>
     </View>
   );

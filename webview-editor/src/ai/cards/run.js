@@ -7,6 +7,7 @@ import { post } from '../../bridge.js';
 import { updateAiMarker, deleteCardLine } from '../marker.js';
 import { openCardOverlay } from '../overlay.js';
 import { applyRunBadge } from '../shared/badge.js';
+import { makePill } from '../shared/pill.js';
 import { makeComposer } from '../shared/composer.js';
 import { growPre, nearBottom, scrollBottomSoon } from '../shared/streamLog.js';
 
@@ -44,11 +45,9 @@ export function renderRun(view, widget) {
   // `/run PROJECT <cmd>` ran the command inside a project folder — show it as a
   // small chip so the card records where the output came from.
   if (obj.dir) {
-    const dir = document.createElement('span');
-    dir.className = 'cm-run-dir';
-    dir.textContent = obj.dir;
-    dir.title = 'Project folder: ' + obj.dir;
-    head.appendChild(dir);
+    head.appendChild(
+      makePill({ label: obj.dir, title: 'Project folder: ' + obj.dir, className: 'cm-run-dir' }),
+    );
   }
 
   const cmd = document.createElement('code');
@@ -180,21 +179,13 @@ export const styles = {
   // monospace chip and a status badge (badge.js), the body is a scrolling
   // terminal log, and while live a footer holds the stdin box + interrupt/stop.
   '.cm-run-head': { gap: '8px' },
+  // Sizing/truncation come from the shared `.cm-pill` (shared/pill); the folder is
+  // secondary to the command beside it, so it only dials the chip down a notch.
   '.cm-run-dir': {
-    flexShrink: '0',
-    maxWidth: '38%',
     padding: '1px 7px',
     borderRadius: '6px',
-    backgroundColor: c.surface0,
-    border: `1px solid ${c.surface1}`,
     color: c.subtext0,
-    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
     fontSize: '11px',
-    fontWeight: '600',
-    lineHeight: '1.5',
-    whiteSpace: 'nowrap',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
   },
   '.cm-run-cmd': {
     flex: '1',

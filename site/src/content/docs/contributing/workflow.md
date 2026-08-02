@@ -97,8 +97,8 @@ CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
   go build -trimpath -ldflags '-s -w' -o nestnote-server .
 ```
 
-There is no Windows build: `procgroup.go` and `update.go` use POSIX process
-groups, which have no Windows equivalent.
+There is no Windows build: `internal/procio` and `internal/update` use POSIX
+process groups, which have no Windows equivalent.
 
 Then create the release and upload both files. Name them so it's obvious what
 they are and which tag they came from — the docs refer to them as

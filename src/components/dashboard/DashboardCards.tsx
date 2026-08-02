@@ -15,12 +15,15 @@ import {
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
 import {
+  CalendarClock,
   CalendarDays,
   Check,
   ChevronLeft,
   ChevronRight,
+  CircleStop,
   Clock,
   FileText,
+  Hammer,
   Lightbulb,
   Search,
   Sparkles,
@@ -30,8 +33,14 @@ import {
 import type { ThemeColors } from '../../theme/colors';
 import type { DashboardCard } from '../../server/controllers/aiController';
 import type { CardDragShared } from '../../hooks/useCardDrag';
+import {
+  buildBadge,
+  stepLabel,
+  type BuildBadge as BuildBadgeState,
+  type BuildBadgeTone,
+} from '../../server/controllers/buildApi';
 import { deriveTitle, type Note } from '../../types/note';
-import { ideaPreview, prio, relDate, type TaskView } from './cardModel';
+import { buildTone, prio, relDate, type TaskView } from './cardModel';
 
 // The bundle of drag callbacks + shared values every draggable card needs. The
 // dashboard builds this once and spreads it onto each card / section, so the wiring
@@ -249,6 +258,12 @@ export function TaskViewToggle({
   );
 }
 
+// Past this many pages the numbered buttons stop fitting on one line and the pager
+// wraps into a block of digits, which would defeat the fixed height of the card it
+// sits under. Beyond it the numbers collapse to a "3 / 24" readout between the same
+// two arrows — a one-card-per-page section (Ideas, Builds) reaches that easily.
+const MAX_NUMBERED_PAGES = 7;
+
 // A compact prev/next-with-numbers pager for a paginated card list. Renders nothing
 // for a single page so callers can mount it unconditionally — unless `alwaysShow`
 // is set, in which case a single page still shows "1" with both arrows disabled.
@@ -277,22 +292,32 @@ export function Pager({
         }`}>
         <ChevronLeft size={16} color={colors.muted} strokeWidth={2.5} />
       </Pressable>
-      {Array.from({ length: pageCount }, (_, i) => i).map(i => {
-        const active = i === page;
-        return (
-          <Pressable
-            key={i}
-            onPress={() => onChange(i)}
-            hitSlop={6}
-            className={`h-7 min-w-[28px] items-center justify-center rounded-full px-1.5 ${
-              active ? 'bg-accent' : 'active:bg-background'
-            }`}>
-            <Text className={`text-xs font-bold ${active ? 'text-background' : 'text-muted'}`}>
-              {i + 1}
-            </Text>
-          </Pressable>
-        );
-      })}
+      {pageCount <= MAX_NUMBERED_PAGES ? (
+        Array.from({ length: pageCount }, (_, i) => i).map(i => {
+          const active = i === page;
+          return (
+            <Pressable
+              key={i}
+              onPress={() => onChange(i)}
+              hitSlop={6}
+              className={`h-7 min-w-[28px] items-center justify-center rounded-full px-1.5 ${
+                active ? 'bg-accent' : 'active:bg-background'
+              }`}>
+              <Text className={`text-xs font-bold ${active ? 'text-background' : 'text-muted'}`}>
+                {i + 1}
+              </Text>
+            </Pressable>
+          );
+        })
+      ) : (
+        // Too many pages to number: the position reads as text instead. Not a button
+        // — with no page numbers to hit, the arrows are the only way through.
+        <View className="h-7 items-center justify-center rounded-full bg-surface1/60 px-3">
+          <Text className="text-xs font-bold text-muted">
+            {page + 1} / {pageCount}
+          </Text>
+        </View>
+      )}
       <Pressable
         disabled={page === pageCount - 1}
         onPress={() => onChange(page + 1)}
@@ -433,68 +458,152 @@ export function ArchivedList({
   );
 }
 
-// The generic card, used for ideas and — as the graceful fallback — any unknown
-// kind. A compact grid tile: a tinted priority chip carrying the kind glyph, a small
-// priority label, the title, a preview line drawn from the body's "## Problem"
-// section, and the card's tags as chips (overflow collapses to "+n"). Tapping it
-// opens the card as a full read-only page (see onPress → IdeaPageOverlay). This is
-// what makes the engine scalable: emit a novel kind and it renders.
-export function IdeaCard({
+// The glyph each build tone wears — the same four the idea page's header card uses
+// for the same states, so the row and the page it opens read as one thing at two
+// sizes. 'done' takes the checkmark the task list already means "finished" by.
+const TONE_ICON: Record<BuildBadgeTone, LucideIcon> = {
+  scheduled: CalendarClock,
+  running: Hammer,
+  waiting: Clock,
+  stopped: CircleStop,
+  done: Check,
+};
+
+// A card's build state as the row's leading chip: the same square the kind glyph
+// sits in, grown sideways to hold the state in a word and — for the two states
+// where a word isn't enough — the minute it's due or the reason it stopped.
+//
+// It *replaces* that glyph rather than following it. A badge beside the glyph spent
+// two icons, two paddings and a gap on the row's most expensive edge, and the two
+// icons were usually the same icon: the glyph already turned into a clock or a
+// hammer for exactly the states the badge names. So there is one chip, and it says
+// the more useful of the two things — a card a build has touched is better
+// described by where that build has got to than by being, once again, an idea.
+//
+// Held at h-7, the plain glyph chip's height to the pixel, because a group mixes
+// rows with badges and rows without: the list box measures its first row and holds
+// every other row to it, so a taller (or shorter) badge would clip the group.
+//
+// Capped and truncated, never wrapped — a build's note can be a sentence, and a row
+// is not where a sentence is read. The rest of it is one tap away on the card's
+// page, which is where the same note leads the header card.
+function BuildBadge({ badge }: { badge: BuildBadgeState }) {
+  const tone = buildTone(badge.tone);
+  const Icon = TONE_ICON[badge.tone] ?? Clock;
+
+  return (
+    <View
+      className={`h-7 max-w-[55%] shrink flex-row items-center gap-1 rounded-lg px-1.5 ${tone.chip}`}>
+      <Icon size={13} color={tone.hex} strokeWidth={2.5} />
+      <Text numberOfLines={1} className={`shrink-0 text-[10px] font-bold ${tone.text}`}>
+        {badge.label}
+      </Text>
+      {!!badge.detail && (
+        <Text numberOfLines={1} className={`shrink text-[10px] ${tone.dim}`}>
+          {badge.detail}
+        </Text>
+      )}
+    </View>
+  );
+}
+
+// One row in a card list — ideas, build steps and, as the graceful fallback, any
+// unknown kind. Deliberately the same shape as TaskRow: a fixed-height row (so the
+// list box can measure one and hold five of them), reading as one chip on the left,
+// the title, the due date when the card carries one, and a chevron for the page
+// behind it. Tapping the row opens the card as a full read-only page (see onPress →
+// IdeaPageOverlay), which is where the body, tags and untruncated title live. This
+// is what makes the engine scalable: emit a novel kind and it renders.
+//
+// That one chip is whichever of two things the card has to say. Ordinarily it is the
+// kind's glyph in a priority-tinted square — the chip's colour IS the priority, so
+// the row spends no width on the word "Urgent". For a card a build has touched it is
+// that build's state instead (see BuildBadge), tinted by the state rather than the
+// priority: those cards are read for what the build is doing, and a row has room for
+// one chip, not for a glyph and a badge saying the same thing beside each other.
+//
+// A **build step** is the one kind that takes two lines, because it is the one kind
+// that answers two questions. Its title is the *idea* — a build step is where an
+// idea lives once the project exists, and the Ideas section no longer has a card
+// for it — and under that, in the faint colour, the feature it is asking you to
+// validate. Titled by the feature alone (as it was) a list of steps read as a pile
+// of unrelated chores with no way to tell whose project each belonged to; titled by
+// the idea alone, every step of a build would be the same row repeated. Both lines
+// are always drawn for a step card, even one filed before steps carried what the
+// second line says, so the group keeps one row height for the box to measure.
+export function IdeaRow({
   card,
+  colors,
   dimmed,
   onPress,
 }: {
   card: DashboardCard;
+  colors: ThemeColors;
   dimmed: boolean;
   onPress?: (card: DashboardCard) => void;
 }) {
   const p = prio(card.priority);
+  const isStep = card.kind === 'build-step';
+  // Where this card's build has got to, for every card a build touches — the idea
+  // it was started from and each step card it filed alike. When there is one it is
+  // the row's leading chip, in place of the kind glyph: a card in a build's hands is
+  // better described by what the build is doing than by what kind of card it is, and
+  // the row has width for one chip, not two.
+  const badge = buildBadge(card);
+  // No build, so the glyph answers the only question left: what kind of card is
+  // this? It no longer bends for a scheduled or running build the way it used to —
+  // the badge that replaced it says that in words, and in the state's own colour.
   const KindIcon = card.kind === 'idea' ? Lightbulb : Sparkles;
-  const preview = ideaPreview(card.body);
-  const tags = card.tags ?? [];
-  const shown = tags.slice(0, 2);
-  const extra = tags.length - shown.length;
+  // What a step card is asking about, under the idea's name.
+  const step = isStep ? stepLabel(card) : null;
+  const due = card.date ? relDate(card.date) : null;
+  const overdue = !!due?.overdue;
   return (
+    // collapsable={false} keeps Android from view-flattening this node away, which
+    // the wrapping GestureDetector needs to attach the drag gesture reliably.
     <Pressable
       onPress={() => onPress?.(card)}
       disabled={!onPress}
       accessibilityRole="button"
-      accessibilityLabel={`Open idea: ${card.title}`}
+      // The badge's own words, rather than a second wording of the same state:
+      // what a screen reader announces is then exactly what is on the row.
+      accessibilityLabel={`Open ${card.kind === 'idea' ? 'idea' : card.kind}${
+        badge ? `, ${badge.label}${badge.detail ? ` ${badge.detail}` : ''}` : ''
+      }: ${card.title}${step ? `, ${step}` : ''}`}
       collapsable={false}
-      className={`mb-3 w-[48%] overflow-hidden rounded-2xl border border-surface1 bg-surface p-3 ${
+      className={`flex-row items-center gap-3 px-3 py-3 active:bg-background ${
         dimmed ? 'opacity-30' : ''
       }`}>
-      {/* Top row: priority as a tinted glyph chip (left) + a small label (right). */}
-      <View className="flex-row items-center justify-between">
-        <View className={`h-8 w-8 items-center justify-center rounded-xl ${p.chip}`}>
-          <KindIcon size={16} color={p.hex} strokeWidth={2} />
+      {/* One chip, whichever it is: the build's state when there is one, the kind's
+          glyph when there isn't. Both are h-7, so every row in a group is the one
+          height the list box measures off the first of them. */}
+      {badge ? (
+        <BuildBadge badge={badge} />
+      ) : (
+        <View className={`h-7 w-7 items-center justify-center rounded-lg ${p.chip}`}>
+          <KindIcon size={15} color={p.hex} strokeWidth={2} />
         </View>
-        <View className="flex-row items-center gap-1">
-          <View className={`h-1.5 w-1.5 rounded-full ${p.pip}`} />
-          <Text className={`text-[9px] font-bold uppercase tracking-wide ${p.text}`}>{p.label}</Text>
-        </View>
-      </View>
-      <Text className="mt-2 text-sm font-semibold text-text" numberOfLines={2}>
-        {card.title}
-      </Text>
-      {!!preview && (
-        <Text className="mt-1 text-xs text-muted" numberOfLines={2}>
-          {preview}
+      )}
+      {/* The idea's name leads, because that's what the card is a step of. The
+          feature under it is the decision being asked for, so it's the smaller,
+          fainter line — present but never competing with the project's name. */}
+      <View className="flex-1 gap-0.5">
+        <Text numberOfLines={1} className="text-sm text-text">
+          {card.title}
         </Text>
-      )}
-      {tags.length > 0 && (
-        <View className="mt-2 flex-row flex-wrap items-center gap-1.5">
-          {shown.map(t => (
-            <View
-              key={t}
-              className="flex-row items-center rounded-full bg-surface1/60 px-2 py-0.5">
-              <Text className="text-[10px] font-bold text-faint">#</Text>
-              <Text className="text-[10px] font-semibold text-muted">{t}</Text>
-            </View>
-          ))}
-          {extra > 0 && <Text className="text-[10px] font-semibold text-faint">+{extra}</Text>}
+        {step && (
+          <Text numberOfLines={1} className="text-[11px] leading-4 text-faint">
+            {step}
+          </Text>
+        )}
+      </View>
+      {due && (
+        <View className="flex-row items-center gap-1">
+          <Clock size={12} color={overdue ? colors.danger : colors.muted} strokeWidth={2} />
+          <Text className={`text-xs ${overdue ? 'text-danger' : 'text-muted'}`}>{due.label}</Text>
         </View>
       )}
+      <ChevronRight size={15} color={colors.faint} strokeWidth={2.5} />
     </Pressable>
   );
 }

@@ -27,9 +27,32 @@ src/server/
     execClient.ts      the /run shell channel
     status.ts          connection status for useServerStatus
     store.ts           persisted pairing (pin + token)
-  controllers/         one per feature: ai, agent, code, audio, view, update, dashboardApi
+  controllers/         one per feature: ai, agent, code, audio, view, update, dashboardApi, buildApi
   runRegistry.ts       long-lived ownership of in-flight runs
 ```
+
+## Plain-HTTP endpoints
+
+Not everything is a socket. `dashboardApi.ts` and `buildApi.ts` speak plain
+request/response over the same pinned tunnel and bearer token, because the
+server answers them straight from files without spinning up Claude:
+
+| Endpoint | Client | Purpose |
+| --- | --- | --- |
+| `/state`, `/notebook`, `/page`, `/search` | `dashboardApi.ts` | Reads of the scaffold. |
+| `/action` | `dashboardApi.ts` | Card verbs: complete, uncomplete, dismiss, restore; suggestion and reorg verbs. |
+| `/build`, `/build/start`, `/build/schedule`, `/build/revise`, `/build/stop`, `/build/resume` | `buildApi.ts` | [Scheduled builds](../server/builds.mdx) — read state, start, say when the next run happens, ask for changes to what was built, stop, and pick a stopped build back up. |
+| `/build/tick` | *(none — cron)* | Poked by `<root>/bin/nestnote-tick`, never by the app. |
+
+`/build/tick` is the odd one out: its caller is a shell script on the server's
+own machine, not the phone. It is authed identically all the same — it starts an
+unattended agent run, so localhost is a convention, not a trust boundary.
+
+A scheduled build's run *is* a normal durable session, keyed
+`build-<slug>-<feature>` (or `build-<slug>-plan`), emitting the same `cc` frames
+a `/code` session does. That's deliberate: the phone watches a 3am build with the
+transcript UI it already has, by connecting to `/code` with `resumeOnly` and that
+id.
 
 ## The pairing payload
 

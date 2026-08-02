@@ -42,6 +42,14 @@ of the bytes on the wire. The same code runs under Node in a proof harness and
 under React Native in the app; only the pinned-socket transport
 (`nativeTransport.ts`) is native. See [the protocol](./protocol.md).
 
+**Unattended work is triggered from outside, but never *runs* outside.**
+[Scheduled builds](../server/builds.mdx) (`server/internal/build/`, `server/internal/cron/`)
+put real entries in the user's crontab, and those entries do nothing but `POST
+/build/tick` on the local server. The agent run itself happens in the server
+process, so it inherits the same environment every other run gets — cron's
+stripped-down environment could never reproduce it. The Go server also owns every
+crontab mutation; the agent never touches it.
+
 ## Where new features slot in
 
 The seams are deliberate:

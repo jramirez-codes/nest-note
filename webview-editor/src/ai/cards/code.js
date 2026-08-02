@@ -6,6 +6,7 @@ import { post } from '../../bridge.js';
 import { updateAiMarker, deleteCardLine } from '../marker.js';
 import { openCardOverlay } from '../overlay.js';
 import { applyRunBadge } from '../shared/badge.js';
+import { makePill } from '../shared/pill.js';
 import { makeComposer } from '../shared/composer.js';
 import { mountCodeBlock, estimateCodeBlock } from '../shared/transcript.js';
 import { createBlockList } from '../shared/blockList.js';
@@ -41,14 +42,16 @@ export function renderCode(view, widget) {
   chev.textContent = '▶';
   head.appendChild(chev);
 
-  // The project name is shown as a stylized pill (mirrors the /run card's folder
-  // chip), with a flex spacer after it so the status badge + corner button stay
-  // right-aligned where /run's filling command chip would otherwise hold them.
-  const proj = document.createElement('span');
-  proj.className = 'cm-code-proj';
-  proj.textContent = '✦ ' + (obj.project || '');
-  proj.title = 'Project: ' + (obj.project || '');
-  head.appendChild(proj);
+  // The project name is shown as a stylized pill (shared/pill), with a flex
+  // spacer after it so the status badge + corner button stay right-aligned where
+  // /run's filling command chip would otherwise hold them.
+  head.appendChild(
+    makePill({
+      icon: '✦',
+      label: obj.project || '',
+      title: 'Project: ' + (obj.project || ''),
+    }),
+  );
 
   const spacer = document.createElement('span');
   spacer.className = 'cm-code-spacer';
@@ -213,22 +216,7 @@ export function updateCode(dom, view, widget) {
 export const styles = {
   // Reuses the run card's head/badge/footer classes (.cm-run-*); the body is a
   // scrolling transcript of typed blocks rather than a single terminal log.
-  '.cm-code-proj': {
-    flexShrink: '0',
-    maxWidth: '70%',
-    padding: '2px 9px',
-    borderRadius: '7px',
-    backgroundColor: c.surface0,
-    border: `1px solid ${c.surface1}`,
-    color: c.mauve,
-    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-    fontSize: '12px',
-    fontWeight: '600',
-    lineHeight: '1.5',
-    whiteSpace: 'nowrap',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-  },
+  // The project chip is the shared `.cm-pill` as-is (shared/pill) — no override.
   '.cm-code-spacer': { flex: '1', minWidth: '0' },
   '.cm-code-log': {
     margin: '10px 0 0 0',

@@ -1,3 +1,7 @@
+// Command server is the NestNote companion server. This file does three things
+// and nothing else: parse the flags, assemble the dependencies, and start the
+// TLS listener. The HTTP surface itself lives in routes.go, and each endpoint's
+// behaviour under internal/<feature>/.
 package main
 
 import (
@@ -13,6 +17,13 @@ import (
 	"time"
 
 	"github.com/mdp/qrterminal/v3"
+
+	"nestnote/server/internal/build"
+	"nestnote/server/internal/cron"
+	"nestnote/server/internal/pairing"
+	"nestnote/server/internal/scaffold"
+	"nestnote/server/internal/session"
+	"nestnote/server/internal/view"
 )
 
 func main() {
@@ -42,9 +53,9 @@ func main() {
 	// is for the startup banner and as a fallback; each /run re-scaffolds so
 	// servers the orchestrator creates mid-session go live on the next message.
 	runDir := *workdir
-	var boot mcpSetup
+	var boot scaffold.Setup
 	if *root != "" {
-		setup, err := scaffoldRoot(*root, *threshold)
+		setup, err := scaffold.Root(*root, *threshold)
 		if err != nil {
 			// Don't die here. This scaffold is a warm-up — every /run re-scaffolds,
 			// so a failure now is reported again (with the same error) at the next
@@ -54,7 +65,7 @@ func main() {
 			log.Printf("root scaffold failed, continuing without MCP (retried on the next /run): %v", err)
 		} else {
 			boot = setup
-			runDir = setup.projectsDir
+			runDir = setup.ProjectsDir
 		}
 	}
 
@@ -70,6 +81,10 @@ func main() {
 		}
 	}
 
+	// Computed before the routes because the build tick's generated driver script
+	// bakes this address in — cron curls back to exactly the listener we start.
+	listenAddr := net.JoinHostPort(bindIP, fmt.Sprintf("%d", *port))
+
 	// Addresses the cert is valid for. The client pins the SPKI and skips
 	// hostname checks, so which one the phone uses doesn't affect trust — but
 	// listing the real ones keeps any stricter client working, including over a
@@ -81,22 +96,22 @@ func main() {
 		}
 	}
 
-	cert, err := loadOrCreateCert(*dir, sans)
+	cert, err := pairing.LoadOrCreateCert(*dir, sans)
 	if err != nil {
 		log.Fatalf("cert: %v", err)
 	}
-	leaf, err := certLeaf(cert)
+	leaf, err := pairing.CertLeaf(cert)
 	if err != nil {
 		log.Fatalf("cert parse: %v", err)
 	}
 
-	token, err := loadOrCreateToken(*dir)
+	token, err := pairing.LoadOrCreateToken(*dir)
 	if err != nil {
 		log.Fatalf("token: %v", err)
 	}
 
-	pin := spkiPin(leaf)
-	pr, err := newPairing(token, *pairTTL)
+	pin := pairing.SPKIPin(leaf)
+	pr, err := pairing.New(token, *pairTTL)
 	if err != nil {
 		log.Fatalf("pairing: %v", err)
 	}
@@ -104,53 +119,44 @@ func main() {
 	// Durable-session registry shared by the three streaming endpoints (/run,
 	// /exec, /code): it keeps a run's process alive and buffering when the socket
 	// drops, so the phone can background/reconnect without killing the work.
-	sessions := newSessionRegistry()
+	sessions := session.NewRegistry()
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprintln(w, "ok")
-	})
-	mux.HandleFunc("/pair", pairHandler(pr))
-	mux.HandleFunc("/run", runHandler(token, *workdir, *root, *threshold, *runTimeout, boot, sessions))
-	// Direct shell channel for /run <cmd> — streams stdout/stderr live, no Claude.
-	// Runs in the same base workdir Claude uses. Gated behind -allow-exec.
-	mux.HandleFunc("/exec", execHandler(token, runDir, *allowExec, sessions))
-	// Persistent Claude Code agent session for /code <name>. Each session opens
-	// projects/<slug> (created if missing) under the projects dir — <root>/projects
-	// when -root is set, else <workdir>/projects. Gated behind -allow-code.
+	// The projects dir /code, /projects and builds all work under.
 	codeBase := filepath.Join(*workdir, "projects")
 	if *root != "" {
 		codeBase = runDir // already <root>/projects
 	}
-	mux.HandleFunc("/code", agentHandler(token, codeBase, *allowCode, sessions))
-	// Read-only listing of projects/<name> dirs so the phone can autocomplete
-	// `/code <name>`. Same base and enable flag as /code; empty list when off.
-	mux.HandleFunc("/projects", projectsHandler(token, codeBase, *allowCode))
-	// Destructive counterpart to /projects: POST a project name to remove its
-	// folder. Same base and enable flag; the phone confirms before calling it.
-	mux.HandleFunc("/projects/delete", deleteProjectHandler(token, codeBase, *allowCode))
-	// Read-only dashboard state + the optional merge-approval action. Both only
-	// touch the scaffold's data files, so they need no Claude run.
-	// On-demand page-preview proxies for /view: an authed /viewstart spins up (or
-	// reuses) a dedicated plaintext LAN listener per dev-server port and tells the
-	// phone which port to point its iframe at. See server/view.go.
-	viewMgr := newViewManager(bindIP)
-	mux.HandleFunc("/viewstart", viewStartHandler(token, *allowView, viewMgr))
-	// Self-update: check out a branch (main by default), rebuild this binary, and
-	// restart into it. Driven by a note's `/update server [branch]`. Always enabled
-	// — it runs one fixed recipe (never caller-supplied commands, only a validated
-	// branch name), gated by the pinned tunnel + token like everything else. See
-	// server/update.go.
-	mux.HandleFunc("/update", updateHandler(token, *root, *repoDir))
-	mux.HandleFunc("/state", stateHandler(token, *root))
-	mux.HandleFunc("/notebook", notebookHandler(token, *root))
-	mux.HandleFunc("/page", pageHandler(token, *root))
-	mux.HandleFunc("/action", actionHandler(token, *root))
-	// Read-only full-text search across every notebook's pages, backing the
-	// editor's `/search <query>` autocomplete. See server/search.go.
-	mux.HandleFunc("/search", searchHandler(token, *root))
 
-	listenAddr := net.JoinHostPort(bindIP, fmt.Sprintf("%d", *port))
+	builds := build.Config{
+		ProjectsBase: codeBase,
+		Root:         *root,
+		StateDir:     *dir,
+		ListenAddr:   listenAddr,
+		RunTimeout:   *runTimeout,
+		Enabled:      *allowCode && *allowExec,
+		Reg:          sessions,
+		Cron:         cron.RealIO(),
+	}
+
+	mux := newMux(deps{
+		token:      token,
+		root:       *root,
+		workdir:    *workdir,
+		codeBase:   codeBase,
+		runDir:     runDir,
+		repoDir:    *repoDir,
+		threshold:  *threshold,
+		runTimeout: *runTimeout,
+		allowExec:  *allowExec,
+		allowCode:  *allowCode,
+		allowView:  *allowView,
+		boot:       boot,
+		sessions:   sessions,
+		builds:     builds,
+		pair:       pr,
+		views:      view.NewManager(bindIP),
+	})
+
 	srv := &http.Server{
 		Addr:    listenAddr,
 		Handler: mux,
@@ -161,7 +167,7 @@ func main() {
 	}
 
 	// Advertise on the LAN so the phone can re-find us after an IP change.
-	mdns, err := advertise("NestNote", *port, pin)
+	mdns, err := pairing.Advertise("NestNote", *port, pin)
 	if err != nil {
 		log.Printf("mdns: advertise failed (discovery disabled): %v", err)
 	} else {
@@ -182,7 +188,7 @@ func main() {
 		Host: qrHost,
 		Port: *port,
 		Pin:  pin,
-		Code: pr.code,
+		Code: pr.Code(),
 	})
 
 	fmt.Println("NestNote server")
@@ -193,8 +199,8 @@ func main() {
 	fmt.Printf("  discovery  _nestnote._tcp on the LAN\n")
 	fmt.Printf("  workdir    %s\n", runDir)
 	if *root != "" {
-		fmt.Printf("  mcp servers %v (+ orchestrator, auto-grows at %d mentions)\n", boot.servers, *threshold)
-		fmt.Printf("  mcp config %v\n", boot.mcpConfigs)
+		fmt.Printf("  mcp servers %v (+ orchestrator, auto-grows at %d mentions)\n", boot.Servers, *threshold)
+		fmt.Printf("  mcp config %v\n", boot.MCPConfigs)
 	}
 	if *allowExec {
 		fmt.Printf("  exec       ENABLED at wss://%s/exec  (/run <cmd> runs arbitrary shell as this user)\n", listenAddr)
@@ -202,11 +208,14 @@ func main() {
 	if *allowCode {
 		fmt.Printf("  code       ENABLED at wss://%s/code  (/code <name> runs a Claude agent in projects/<name>, tools auto-accepted)\n", listenAddr)
 	}
+	if *allowCode && *allowExec && *root != "" {
+		fmt.Printf("  builds     ENABLED  (an idea can start a scheduled project build: cron pokes /build/tick every %d min, one feature per validation)\n", cron.TickMinutes)
+	}
 	if *allowView {
 		fmt.Printf("  view       ENABLED  (/view PORT opens an on-demand PLAINTEXT LAN preview of localhost:PORT — reachable by anyone on the LAN)\n")
 	}
 	fmt.Printf("  spki pin   %s\n", pin)
-	fmt.Printf("  pair code  %s  (valid %s, single use)\n", pr.code, *pairTTL)
+	fmt.Printf("  pair code  %s  (valid %s, single use)\n", pr.Code(), *pairTTL)
 	fmt.Println("\n  Scan to pair:")
 	qrterminal.GenerateHalfBlock(string(payload), qrterminal.L, os.Stdout)
 
@@ -258,6 +267,11 @@ func defaultStateDir() string {
 		}
 	}
 	return dir
+}
+
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 func mustCwd() string {

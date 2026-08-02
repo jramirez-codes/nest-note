@@ -1,21 +1,21 @@
 import React, { useCallback, useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Plus } from 'lucide-react-native';
 import type { Note } from '../../types/note';
 import { useTheme } from '../../theme/colors';
 import { formatNoteDate } from '../../utils/date';
 import ConfirmDialog from '../modals/ConfirmDialog';
+import DashboardViewToggle, { type DashboardView } from '../dashboard/DashboardViewToggle';
 
-/** Greetings for the dashboard header, rotated one per day. */
-const GREETINGS = [
-  'Welcome'
-];
-
-/** Pick today's greeting, stable for the whole day and rotating every 24h. */
-function greetingForToday(): string {
-  const dayIndex = Math.floor(Date.now() / 86_400_000);
-  return GREETINGS[dayIndex % GREETINGS.length];
-}
+/**
+ * The bar's height, fixed rather than derived from its contents. The note pages
+ * fill it with a single line of `text-xs` (a 16px line box, which with the old
+ * py-3 came to 40), while the dashboard fills it with the view toggle — a 30px
+ * pill. Left to grow, the bar would be two different heights and would visibly
+ * jump as you flipped onto the dashboard; pinning it keeps the chrome uniform and
+ * centers whichever content the page has inside the same box.
+ */
+const HEADER_HEIGHT = 40;
 
 interface NoteHeaderProps {
   /** The note on the current page, or null on the trailing dashboard page. */
@@ -26,6 +26,10 @@ interface NoteHeaderProps {
   onDelete: (id: string) => void;
   /** Create a fresh note — surfaced as the dashboard page's header action. */
   onCreateNote: () => void;
+  /** Which half of the dashboard is showing. Owned by the screen (the dashboard page
+   *  reads the same value), since the toggle that swaps it lives up here. */
+  dashboardView: DashboardView;
+  onDashboardViewChange: (view: DashboardView) => void;
   /**
    * Title of a read-only subject page (a virtual page pulled from a swapped-to notebook).
    * When set — and there's no editable `note` — the header shows the page number and title
@@ -37,7 +41,8 @@ interface NoteHeaderProps {
 /**
  * Fixed chrome above the pager, showing the current page's number, date and a
  * delete action. It stays put while pages turn beneath it, so it is not part of
- * the swipe gesture. On the trailing dashboard page it swaps the delete action
+ * the swipe gesture. On the trailing dashboard page it carries the dashboard's
+ * Organize/Ideas toggle instead of the page number, and swaps the delete action
  * for a "New note" action that sits in the same slot, at the same size.
  *
  * While a dashboard card is dragged, the screen fades this whole bar out and
@@ -49,6 +54,8 @@ function NoteHeader({
   totalPages,
   onDelete,
   onCreateNote,
+  dashboardView,
+  onDashboardViewChange,
   readOnlyTitle,
 }: NoteHeaderProps) {
   const colors = useTheme();
@@ -62,7 +69,9 @@ function NoteHeader({
   }, [note, onDelete]);
 
   return (
-    <View className="flex-row items-center justify-between border-b border-border px-6 py-3">
+    <View
+      style={styles.bar}
+      className="flex-row items-center justify-between border-b border-border px-6">
       {note ? (
         <>
           <Text className="text-xs font-semibold uppercase tracking-wider text-faint">
@@ -87,9 +96,11 @@ function NoteHeader({
         </>
       ) : (
         <>
-          <Text className="text-xs font-semibold uppercase tracking-wider text-faint">
-            {greetingForToday()}
-          </Text>
+          <DashboardViewToggle
+            view={dashboardView}
+            onChange={onDashboardViewChange}
+            colors={colors}
+          />
           <Pressable
             onPress={onCreateNote}
             hitSlop={12}
@@ -115,5 +126,9 @@ function NoteHeader({
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  bar: { height: HEADER_HEIGHT },
+});
 
 export default React.memo(NoteHeader);

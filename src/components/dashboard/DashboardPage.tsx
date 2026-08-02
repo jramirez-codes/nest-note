@@ -8,9 +8,10 @@ import { useDashboardData } from './useDashboardData';
 import { buildNotebookOptions } from './cardModel';
 import { type NotebookOption } from './NotebookSwitcher';
 import { type CardDragProps } from './DashboardCards';
+import { type DashboardView } from './DashboardViewToggle';
 import TasksSection from './sections/TasksSection';
 import ArchivedSection from './sections/ArchivedSection';
-import CardGridSection from './sections/CardGridSection';
+import CardListSection from './sections/CardListSection';
 import SuggestionsSection from './sections/SuggestionsSection';
 import ReorgSection from './sections/ReorgSection';
 import { EmptyState, ErrorState, InlineError, LoadingState } from './sections/DashboardStates';
@@ -29,6 +30,10 @@ interface DashboardPageProps {
   /** The notebook currently filling the pad: 'sandbox' (local) or a subject slug. Owned by
    *  the screen (swapped via the header switcher), and read here to filter the cards shown. */
   selectedNb: string;
+  /** Which half of the dashboard to show — 'organize' (tasks, archive, decisions) or
+   *  'ideas' (idea cards and their build steps). Owned by the screen, since the
+   *  toggle that swaps it sits in the header above this page. */
+  view: DashboardView;
   /** The local pad's archived pages (from `/archive`), shown in the Sandbox dashboard's
    *  Archived section. Owned by the screen so it can open one as a temporary page. */
   archivedPages: Note[];
@@ -41,6 +46,20 @@ interface DashboardPageProps {
   cardsVersion: number;
 }
 
+// The generic list's sections, in the order they sit on the page. Ideas lead:
+// they're the thing you read and edit, while a build step is the follow-up an
+// idea already spawned, so it belongs under the ideas it came from. Kinds not
+// named here fall in alphabetically behind these, keeping the "a new kind needs
+// no code change" property of the list.
+const KIND_ORDER = ['idea', 'build-step'];
+
+function compareKinds(a: string, b: string): number {
+  const ia = KIND_ORDER.indexOf(a);
+  const ib = KIND_ORDER.indexOf(b);
+  if (ia === ib) return a.localeCompare(b);
+  return (ia < 0 ? KIND_ORDER.length : ia) - (ib < 0 ? KIND_ORDER.length : ib);
+}
+
 /**
  * The dashboard: the trailing page of the pad. It's the home for the MCP world
  * `/ingest` builds up — its reminders and action items, each subject's notes, and
@@ -48,12 +67,16 @@ interface DashboardPageProps {
  * removed by pressing and holding, then dragging them up onto the header, which
  * turns into a delete target, so a delete is always deliberate.
  *
+ * The page shows one of two views at a time, picked by the header's bubble toggle:
+ * **Organize** — tasks, the archive, and the filing decisions (reorg proposals and
+ * merge suggestions) — and **Ideas** — idea cards and the build steps they spawn.
+ *
  * This component is the orchestrator: it owns the data layer and the drag/lift
  * plumbing, filters the cards down to the selected notebook, and splits them into
  * sections. Each section (./sections/*) owns its own view state — pagination, sort,
  * search — the card renderers live in ./DashboardCards, and the sorting/formatting
- * rules in ./cardModel. The notebook is swapped from the header switcher (this page
- * just reads `selectedNb` to filter).
+ * rules in ./cardModel. Both the notebook and the view are swapped from the header
+ * (this page just reads `selectedNb` and `view`).
  */
 function DashboardPage({
   width,
@@ -62,6 +85,7 @@ function DashboardPage({
   onLift,
   onRelease,
   selectedNb,
+  view,
   archivedPages,
   onOpenArchived,
   onOpenIdea,
@@ -119,7 +143,7 @@ function DashboardPage({
   const isSandbox = selected.key === 'sandbox';
 
   // Notifications are deprecated: any that still exist on the server (filed before
-  // the kind was retired) are hidden here rather than falling into the generic grid.
+  // the kind was retired) are hidden here rather than falling into the generic list.
   const cards = (isSandbox ? allCards : allCards.filter(c => c.source === selected.key)).filter(
     c => c.kind !== 'notification',
   );
@@ -128,7 +152,7 @@ function DashboardPage({
   const reorgs = isSandbox ? allReorgs : allReorgs.filter(r => r.subject === selected.key);
 
   // Split cards into their sections. Tasks are first-class; every other kind is
-  // grouped by kind and rendered through the generic grid, so a brand-new kind
+  // grouped by kind and rendered through the generic list, so a brand-new kind
   // appears immediately with no code change here.
   const tasks = cards.filter(c => c.kind === 'task');
   const otherKinds: Record<string, DashboardCard[]> = {};
@@ -136,13 +160,23 @@ function DashboardPage({
     if (c.kind === 'task') continue;
     (otherKinds[c.kind] ??= []).push(c);
   }
-  const otherKindNames = Object.keys(otherKinds).sort();
+  const otherKindNames = Object.keys(otherKinds).sort(compareKinds);
 
   // Archived pages are a local-pad concept, so they only surface on the Sandbox
   // dashboard (subjects have no local pages of their own here).
   const showArchived = isSandbox && archivedPages.length > 0;
-  const nothingAtAll =
-    cards.length === 0 && suggestions.length === 0 && reorgs.length === 0 && !showArchived;
+
+  // The two halves of the page (see DashboardViewToggle). Organize is the named,
+  // finite set — the things you work through and file. Ideas is the generic list,
+  // so an unrecognized kind lands there rather than in Organize: the list renders
+  // any kind with no code change, while every Organize section is a bespoke view of
+  // a specific shape, and a new kind is far likelier to be idea-shaped material than
+  // a new kind of decision.
+  const organizing = view === 'organize';
+  const showingIdeas = view === 'ideas';
+  const nothingHere = organizing
+    ? tasks.length === 0 && !showArchived && reorgs.length === 0 && suggestions.length === 0
+    : otherKindNames.length === 0;
 
   // The drag wiring handed to every draggable card / section, built once so the
   // memoized sections aren't re-rendered by a fresh object each time.
@@ -176,9 +210,9 @@ function DashboardPage({
             {/* A non-fatal error once data is on screen (e.g. an action failed). */}
             {error && <InlineError message={error} />}
 
-            {nothingAtAll && <EmptyState colors={colors} />}
+            {nothingHere && <EmptyState view={view} colors={colors} />}
 
-            {tasks.length > 0 && (
+            {organizing && tasks.length > 0 && (
               <TasksSection
                 tasks={tasks}
                 notebookKey={selected.key}
@@ -192,7 +226,7 @@ function DashboardPage({
             )}
 
             {/* Archived — pages lifted off the pad by /archive. Below Tasks; Sandbox only. */}
-            {showArchived && (
+            {organizing && showArchived && (
               <ArchivedSection
                 archivedPages={archivedPages}
                 onOpenArchived={onOpenArchived}
@@ -200,20 +234,24 @@ function DashboardPage({
               />
             )}
 
-            {/* Any future kind: grouped, rendered via the generic idea-card grid. */}
-            {otherKindNames.map(kind => (
-              <CardGridSection
-                key={kind}
-                kind={kind}
-                cards={otherKinds[kind]}
-                dragProps={dragProps}
-                liftedId={liftedId}
-                colors={colors}
-                onOpenIdea={onOpenIdea}
-              />
-            ))}
+            {/* Ideas, build steps, and any future kind: grouped by kind, each group
+                a paged, fixed-height row list (the generic card list). */}
+            {showingIdeas &&
+              otherKindNames.map(kind => (
+                <CardListSection
+                  key={kind}
+                  kind={kind}
+                  cards={otherKinds[kind]}
+                  dragProps={dragProps}
+                  liftedId={liftedId}
+                  colors={colors}
+                  onOpenIdea={onOpenIdea}
+                />
+              ))}
 
-            {reorgs.length > 0 && (
+            {/* The decisions — reorg proposals and merge suggestions are both
+                "how should this be filed?", so they close out the Organize view. */}
+            {organizing && reorgs.length > 0 && (
               <ReorgSection
                 reorgs={reorgs}
                 busy={busy}
@@ -223,7 +261,7 @@ function DashboardPage({
               />
             )}
 
-            {suggestions.length > 0 && (
+            {organizing && suggestions.length > 0 && (
               <SuggestionsSection suggestions={suggestions} busy={busy} act={act} colors={colors} />
             )}
           </>

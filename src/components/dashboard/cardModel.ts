@@ -29,6 +29,33 @@ const PRIORITY: Record<string, PriorityStyle> = {
 };
 export const prio = (p: string): PriorityStyle => PRIORITY[p] ?? PRIORITY.normal;
 
+// The build badge's five tones (see buildBadge), each a hue plus the classes a row
+// renders it with. Same shape and the same job as PRIORITY above: a state is a
+// colour, and the colour is written down once.
+//
+// `dim` is the tone at reading weight, for the second half of a badge — the start
+// time, or why a build stopped. Spelled out rather than composed as `${text}/70`,
+// because a class assembled at runtime is a class the Tailwind scanner never sees
+// and so never generates.
+export interface BuildToneStyle {
+  hex: string;
+  chip: string;
+  text: string;
+  dim: string;
+}
+const BUILD_TONE: Record<string, BuildToneStyle> = {
+  // Blue for a run that is placed but not going, matching the calendar/clock
+  // language the rest of the pad uses for "later".
+  scheduled: { hex: mocha.blue, chip: 'bg-blue/20', text: 'text-blue', dim: 'text-blue/70' },
+  // The accent, because a run in flight is the app doing the thing it exists to do.
+  running: { hex: mocha.mauve, chip: 'bg-mauve/20', text: 'text-mauve', dim: 'text-mauve/70' },
+  // Peach: not an error, but the one state that is waiting on the user to move.
+  waiting: { hex: mocha.peach, chip: 'bg-peach/20', text: 'text-peach', dim: 'text-peach/70' },
+  stopped: { hex: mocha.red, chip: 'bg-red/20', text: 'text-red', dim: 'text-red/70' },
+  done: { hex: mocha.green, chip: 'bg-green/20', text: 'text-green', dim: 'text-green/70' },
+};
+export const buildTone = (tone: string): BuildToneStyle => BUILD_TONE[tone] ?? BUILD_TONE.waiting;
+
 // The stable card sort key the spec calls for: priority rank desc, then soonest
 // `date` asc (dated cards ahead of undated), then `created_at` asc as a tiebreak.
 export function compareCards(a: DashboardCard, b: DashboardCard): number {
@@ -209,6 +236,12 @@ export function formatCalendarDay(key: string): string {
 // rows' worth of fixed height (like Tasks), so it never resizes page to page.
 export const ARCHIVE_PAGE_SIZE = 3;
 
+// Idea / build-step rows per page in the Ideas view's card pagers. One short of
+// TASK_PAGE_SIZE — the Ideas view stacks two of these lists (ideas and build steps),
+// each with a tag bar and a pager of its own, so they're kept shorter than the Tasks
+// list that has the top of its view to itself.
+export const IDEA_PAGE_SIZE = 4;
+
 /**
  * The notebook picker's entries, derived from dashboard state: the Sandbox (the local
  * pad, which rolls up every notebook's open tasks) first, then one per subject server,
@@ -246,25 +279,6 @@ export function buildNotebookOptions(
 // from the notes (see the orchestrator's upsert_card guidance). Shared here so the
 // preview extractor and any future editor seed reference one definition.
 export const IDEA_TEMPLATE = '## Problem\n\n## Idea\n\n## Project plan\n\n## Next steps\n';
-
-// The idea grid's per-card preview: the first non-empty line under the body's
-// "## Problem" section, so a card surfaces the problem it frames rather than the
-// literal "## Problem" heading. Falls back to the first non-heading, non-empty line
-// (for an idea that skipped the template), or '' when there's nothing to show.
-export function ideaPreview(body?: string): string {
-  if (!body) return '';
-  const lines = body.split('\n');
-  const problemAt = lines.findIndex(l => /^#{1,6}\s+problem\b/i.test(l.trim()));
-  if (problemAt >= 0) {
-    for (let i = problemAt + 1; i < lines.length; i++) {
-      const t = lines[i].trim();
-      if (/^#{1,6}\s/.test(t)) break; // hit the next section without any content
-      if (t) return t.replace(/^[-*+]\s+/, '');
-    }
-  }
-  const first = lines.map(l => l.trim()).find(l => l && !/^#{1,6}\s/.test(l));
-  return first ? first.replace(/^[-*+]\s+/, '') : '';
-}
 
 // Roll a set of cards up into their distinct tags with a count each, ordered most-used
 // first then alphabetically — the source for the Ideas section's tag filter bar. Tags
