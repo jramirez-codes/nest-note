@@ -68,9 +68,14 @@ final ones commit — and the soft keyboard stays suppressed so it never covers 
 page. The caret remains visible and tappable, so you can steer where the next
 words land. Tap the mic again to stop.
 
-The mic is disabled where there's nothing to dictate into: on the dashboard, and
-on subject-notebook pages (which are read-only pulls from the server). Walking
-onto one of those with the mic live stops it.
+The mic is disabled where there's nothing to dictate into: on subject-notebook
+pages, which are read-only pulls from the server. Walking onto one with the mic
+live stops it.
+
+The dashboard has no page to write to either, but it has something better — the
+cards themselves. The mic works there, and what you say becomes an instruction
+about your tasks and ideas. See [talking to the
+dashboard](../commands/dashboard.mdx#talking-to-the-dashboard).
 
 The footer isn't the only mic. Cards that take typed input — a `/chat` follow-up,
 a `/code` prompt — carry their own mic button, tucked into the bottom-right
@@ -124,6 +129,11 @@ inserting a newline — so on a list or quote line it continues the markup, on a
 slash-command line it *fires the command*, and inside a card composer it submits
 the box. Saying **"system new line"** as its own phrase does the same thing
 hands-free.
+
+Dictating [to the dashboard](../commands/dashboard.mdx#talking-to-the-dashboard)
+is the one place it just breaks the line: there's no editor there, and sending is
+its own button, so a message said in two sentences shouldn't post itself halfway
+through.
 
 ## Titles are derived, not stored
 

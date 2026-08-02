@@ -38,6 +38,58 @@ Ideas is also where an unfamiliar card kind surfaces: it's the generic card list
 a kind the app has never seen appears there as a paged list of its own rather than
 being dropped.
 
+## Talking to the dashboard
+
+The **mic** in the footer strip works on the dashboard, and what you say there
+doesn't go into a page — it goes to the cards. Creating a task, moving one,
+ticking one off, capturing an idea, throwing one away: all of it out loud, without
+finding the row first.
+
+> Add a task to call the plumber back on Friday, high priority — and drop the
+> one about the invoice, that's done.
+
+The sequence is one button. Tap the **mic** to start talking; tap it again to
+stop. On stop a card appears **above the bubble footer**, matched to its width,
+holding what you said — and the mic's slot becomes an accent **↑ Send**. Tap that
+and the message goes; while the reply streams the same slot is a **Stop**. Then
+it's a mic again, and the next thing you say continues the same conversation —
+with the reply you're following up on still on screen while you say it.
+
+The message is **editable** before it goes. Speech recognition mishears, and
+correcting one word in the box beats saying the whole thing over. The recording
+controls help here too: **Delete** rubs out characters as it does anywhere else,
+and **New line** breaks the line rather than sending — sending is the send
+button's job, so a message dictated in two sentences can't post itself halfway
+through.
+
+Claude's reply lands in the same card, as **rendered Markdown** — the same
+widgets the editor draws, so bullets, checkboxes and `inline code` read here as
+they do in a card. It's asked to keep replies to a sentence or two: the card
+floats over the dashboard, and the point is the change it made, which is on the
+dashboard behind it. The list re-reads itself as each turn lands, so you watch
+the cards move.
+
+It acts on the **notebook the dashboard is showing**, so
+[switching notebooks](../start/the-pad.md#switching-notebooks) re-scopes it: in a
+subject, cards are read and filed under that subject; on the Sandbox's aggregate
+view it works across all of them. Before writing anything it reads the cards that
+already exist and matches what you said against them by meaning — spoken
+instructions are loose, and without that step a reworded task becomes a second
+copy of itself.
+
+Like the [idea page's chat](#the-ideas-page), Claude is told to **act rather than
+ask**. It only comes back with a question when it genuinely can't tell which card
+you meant and a guess would change the wrong one.
+
+The **✕** in the card's top-right corner **dismisses the whole conversation** —
+the message waiting to send, the replies, all of it. That's how you get the space
+over the dashboard back, and how you start a fresh chat rather than one threaded
+through everything already said. A reply still streaming is cancelled. Cards
+Claude already created or changed are *cards* — they stay, and the dashboard's own
+controls (complete, dismiss, drag-to-delete) are what take those back.
+
+Needs a paired server — it's a conversation with Claude.
+
 ## `/ingest`
 
 > File this page into your dashboard — sorts notes into subjects, then clears

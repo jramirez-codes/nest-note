@@ -450,6 +450,90 @@ export function runIdeaChat(
   return runAsk(buildIdeaPrompt(idea, question, context), cb, session);
 }
 
+// Frame the dashboard itself as the subject of the conversation. Unlike /talk
+// (pinned to one notebook's notes) or the idea page's chat (pinned to one card),
+// this is pinned to the *cards*: the user is looking at their dashboard and
+// saying what should be on it, so every turn is an instruction about tasks and
+// ideas — create, change, or remove — carried out with the orchestrator's
+// list_cards / upsert_card / dismiss_card.
+//
+// It's dictated, which shapes two of the rules below. Speech is loose ("drop the
+// thing about the invoice"), so matching by meaning against the cards that
+// already exist has to come first — rule 1 — or a reworded task becomes a second
+// copy of itself. And the reply lands in a small card floating over the
+// dashboard, the same constraint the idea page's reply card has, so it's asked to
+// be short and to mark itself up (the card renders Markdown through
+// ChatMarkdown, where bold reads heavy and inline code green).
+function buildDashboardPrompt(
+  question: string,
+  scope: string | null,
+  context?: AskContext,
+): string {
+  const instructions =
+    "You are managing the user's dashboard — the task and idea cards held by the " +
+    'orchestrator MCP. They are looking at that dashboard and talking to you about it, ' +
+    'by voice, so treat what they say as an instruction about their cards rather than a ' +
+    'general question.\n\n' +
+    (scope
+      ? `They are viewing the "${scope}" notebook, so read and write cards with ` +
+        `source="${scope}" unless they name a different subject.\n\n`
+      : 'They are viewing every notebook at once, so the card they mean may belong to any ' +
+        "subject. Set a new card's source to the subject slug it belongs with, or leave it " +
+        'off when it belongs to no notebook in particular.\n\n') +
+    'How to work:\n' +
+    "1. ALWAYS call the orchestrator's list_cards" +
+    (scope ? ` with source="${scope}"` : '') +
+    ' before writing anything. Spoken instructions are loose, so this is how you find ' +
+    'which existing card the user means — match on meaning, not on exact wording.\n' +
+    '2. To add a task, call upsert_card with kind="task", an honest priority (urgent | ' +
+    'high | normal | low), and a date whenever one is stated or clearly implied ' +
+    '("Friday", "before the end of the month").\n' +
+    "3. To change one — retitle, reschedule, reprioritize, reword — call upsert_card " +
+    "again with that same card's id so it updates in place instead of duplicating. To " +
+    'mark one done or reopen it, pass that id with done=true / done=false.\n' +
+    '4. To remove one (the user says delete, drop, cancel, get rid of it), call ' +
+    'dismiss_card with its id.\n' +
+    '5. Ideas are the same three verbs on kind="idea" cards. File one with 1–4 short ' +
+    'lowercase tags and a Markdown body carrying the sections "## Problem", "## Idea", ' +
+    '"## Project plan" and "## Next steps" — filled in from what the user said, leaving ' +
+    'a section empty when it was not covered. Refine an idea by reusing its id; never ' +
+    'file a second card for an idea that already has one.\n' +
+    '6. Act, do not ask permission. The user asked out loud for a change whose result is ' +
+    'on the dashboard behind this conversation — make it, then say what you did. Ask only ' +
+    'when you genuinely cannot tell which card they mean and a guess would change the ' +
+    'wrong one.\n' +
+    '7. Reply BRIEFLY: a sentence or two, or a short list. Your reply is shown in a small ' +
+    'card floating over the dashboard, so mark it up in Markdown to make it scannable — ' +
+    '**bold** on what changed, `inline code` on the concrete things you name (a card ' +
+    "title, a date, a tag). Never paste a card's whole body back at the user.\n\n";
+  const turns = context?.turns?.filter(t => t.q);
+  if (turns && turns.length) {
+    const history = turns.map(t => `User: ${t.q}\n\nAssistant: ${t.a || ''}`).join('\n\n');
+    return instructions + `Conversation so far:\n\n${history}\n\nNow reply to:\n\n${question}`;
+  }
+  return instructions + question;
+}
+
+/**
+ * Stream a reply for one turn of the dashboard's voice chat. Runs on the same
+ * proven path as {@link runAsk} (reconnect, cancellation, delta/done handling);
+ * the prompt points the orchestrator at the user's cards, so what they say about
+ * a task or an idea lands on the dashboard rather than only in the reply.
+ *
+ * `scope` is the notebook the dashboard is filtered to (a subject slug), or null
+ * on the Sandbox's aggregate view — it decides which cards are read back and
+ * where a new one is filed.
+ */
+export function runDashboardChat(
+  question: string,
+  scope: string | null,
+  cb: AskCallbacks,
+  session: SessionOpts,
+  context?: AskContext,
+): AskHandle {
+  return runAsk(buildDashboardPrompt(question, scope, context), cb, session);
+}
+
 export interface IngestCallbacks {
   /** The run finished cleanly; `summary` is Claude's one-line report of what it filed. */
   onDone: (summary: string) => void;
