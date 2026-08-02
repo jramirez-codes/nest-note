@@ -80,11 +80,18 @@ Claude about it**, in the composer pinned to the bottom of the page:
 Split the project plan into a v1 and a v2 — v1 shouldn't need the server.
 ```
 
-Each turn goes to Claude with the whole card as context, and Claude writes
-anything you settle on back to that same card (`upsert_card`, reusing its id, so
-an idea is refined rather than duplicated). The page re-reads the card as each
-turn lands, so the body under the chat updates in place — that's the loop:
-talk, watch the plan firm up.
+Each turn goes to Claude with the whole card as context, and Claude writes back to
+that same card (`upsert_card`, reusing its id, so an idea is refined rather than
+duplicated). The page re-reads the card as each turn lands, so the body under the
+chat updates in place — that's the loop: talk, watch the plan firm up.
+
+Claude is told to **edit rather than ask permission**. If a turn gives it anything
+to act on it writes its best current version of the idea straight into the card,
+and if it still needs a decision from you it writes its best guess first and asks
+about *that* — you won't get "shall I update the card?". It's biased that way on
+purpose: undoing a change it got wrong is one tap (below), while answering a
+question it didn't need to ask costs you a whole turn. What it won't do is throw
+away sections the conversation never touched.
 
 ### Undoing a change Claude made
 
@@ -117,6 +124,12 @@ hairline under the header separates it from the idea's body.
 Replies are **rendered Markdown**, drawn the same way the editor draws it: list
 markers become real bullets, `- [ ]` becomes a checkbox, fenced code sits in its
 own recessed block, and links are blue and open on tap.
+
+Claude is asked to lean on that rather than reply in flat prose: **bold** on what
+it changed and on the decision it needs from you, and `inline code` — which draws
+green and monospaced — on the concrete literals it names, like a section such as
+`## Next steps`, a filename, or a flag. A reply is only a few sentences in a small
+card, so those marks are what let you find the point at a glance.
 
 With a reply card in the header, that hairline becomes a **drag handle** (it
 grows a grip): drag it **down** to give the conversation more room, **up** to
